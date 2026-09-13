@@ -92,6 +92,21 @@ function fallbackCopia(txt, fim) {
 
 /* ================= EMPREENDIMENTOS ================= */
 
+/* Quando o servidor compartilhado não respondeu a tempo (ex.: acordando de
+   hibernação no plano gratuito do Render), o sistema cai em silêncio para
+   armazenamento só deste navegador — e a lista de empreendimentos fica vazia
+   sem explicar por quê, como se ninguém tivesse criado nada ainda. Este
+   aviso é o que distingue "não há projetos" de "não consegui falar com o
+   servidor onde eles moram". Só aparece fora de localhost: em desenvolvimento
+   local sem `/server` no ar, rodar sem nuvem é o esperado, não um erro. */
+function avisoModoLocal() {
+  if (store.naNuvem()) return '';
+  let local = false;
+  try { local = /^(localhost|127\.0\.0\.1|\[::1\])$/i.test(location.hostname); } catch { /* sem window */ }
+  if (local) return '';
+  return `<div class="aviso-faixa"><span>⚠</span><div><b>Não consegui falar com o servidor compartilhado.</b> O que aparece abaixo é só deste navegador — pode não ser a mesma lista que outra pessoa (ou você, em outro navegador) vê. Se o servidor estava hibernando, ele já deve ter acordado: <button class="btn pequeno" data-acao="recarregarPagina" style="margin-left:4px">recarregar a página</button> costuma resolver.</div></div>`;
+}
+
 function statusProcessamento(e) {
   if (!e.documentos.length) return { rotulo: 'Sem documentos', tom: 'neutro' };
   const faltam = e.documentos.filter(d => !d.processadoEm).length;
@@ -232,6 +247,8 @@ const empreendimentos = {
       <p class="desc">Tudo começa aqui: crie o empreendimento, defina o tipo e só então envie os documentos. O tipo escolhido configura os níveis, o menu e os campos do projeto.</p></div>
       <div class="acoes"><button class="btn primario" data-acao="criarEmp">Criar empreendimento</button></div></div>
 
+      ${avisoModoLocal()}
+
       ${lista.length ? `<div class="grade-cartoes">${cartoes}</div>`
         : `<div class="cartao"><div class="vazio">
             <h3>Nenhum empreendimento ainda</h3>
@@ -241,6 +258,7 @@ const empreendimentos = {
   },
   acoes: {
     criarEmp() { formEmpreendimento(null); },
+    recarregarPagina() { location.reload(); },
     editarEmp({ id }) { formEmpreendimento(estado.emps.find(x => x.id === id)); },
     async abrirDocumentos({ id }) {
       await hidratar(id);

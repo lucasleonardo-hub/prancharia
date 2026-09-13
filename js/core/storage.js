@@ -165,20 +165,32 @@ function valeSondar() {
   return !/^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(NUVEM.base || '');
 }
 
+/* Uma sondagem, com prazo. Devolve o /api/health ou null. */
+async function sondar(prazoMs) {
+  const prazo = comPrazo(prazoMs);
+  try {
+    const r = await fetch(NUVEM.base + '/api/health', { signal: prazo.signal });
+    return r.ok ? await r.json() : null;
+  } catch { return null; }
+  finally { prazo.cancelar(); }
+}
+
 export async function iniciar() {
   if (_pronto) return _pronto;
   _pronto = (async () => {
     if (valeSondar()) {
-      try {
-        const prazo = comPrazo(5000);
-        const r = await fetch(NUVEM.base + '/api/health', { signal: prazo.signal });
-        prazo.cancelar();
-        const s = r.ok ? await r.json() : null;
-        /* health que responde mas sem banco não serve: melhor cair no local do
-           que gravar contra um servidor que não persiste. */
-        NUVEM.ligada = !!(s && s.ok && s.banco);
-        if (s && s.ok && !s.banco) console.warn('[nuvem] BFF no ar mas sem banco:', s.erroBanco || 'motivo não informado');
-      } catch { NUVEM.ligada = false; }
+      /* O Render free tier hiberna sem uso: a primeira sondagem pode chegar
+         num servidor dormindo e estourar antes dele acordar. Uma segunda
+         tentativa, mais paciente, resolve — a primeira já serviu de "toque de
+         despertar", então a segunda geralmente encontra o servidor de pé.
+         Sem isso, quem abre o site com o servidor hibernando cai direto no
+         modo local, silenciosamente, e não vê os empreendimentos de ninguém. */
+      let s = await sondar(6000);
+      if (!s) s = await sondar(25000);
+      /* health que responde mas sem banco não serve: melhor cair no local do
+         que gravar contra um servidor que não persiste. */
+      NUVEM.ligada = !!(s && s.ok && s.banco);
+      if (s && s.ok && !s.banco) console.warn('[nuvem] BFF no ar mas sem banco:', s.erroBanco || 'motivo não informado');
     }
     if (NUVEM.ligada) {
       console.info(`[nuvem] ligada em ${NUVEM.base}`);
