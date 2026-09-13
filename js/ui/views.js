@@ -796,7 +796,7 @@ function fichaAmbiente(e, id) {
   const a = acharAmbiente(id);
   if (!a) return '<div class="vazio"><h3>Local não encontrado</h3></div>';
   const itens = itensDo(e, a.id);
-  const itensOrd = ordenarAchados(itens);
+  const itensOrd = semVaziosRedundantes(ordenarAchados(itens));
   itens.length = 0; itens.push(...itensOrd);
   const ev = (a.evidencias || [])[0];
   const cats = CATEGORIAS.filter(c => itens.some(i => i.categoria === c));
@@ -886,12 +886,13 @@ function fichaAmbiente(e, id) {
       <div class="acoes">
       <button class="btn pequeno primario" data-acao="copiarPlanilhaLocal" data-amb="${a.id}">Copiar planilha</button>
       <button class="btn pequeno" data-acao="adicionarItem" data-amb="${a.id}">Adicionar item</button></div></header>
-      ${tabela([{ nome: 'Local' }, { nome: 'Categoria' }, { nome: 'Sistema' }, { nome: 'Descrição' }, { nome: 'Fornecedores' }, { nome: 'Evidências' }],
+      ${tabela([{ nome: 'Local' }, { nome: 'Categoria' }, { nome: 'Produto' }, { nome: 'Sistema' }, { nome: 'Descrição' }, { nome: 'Fornecedores' }, { nome: 'Evidências' }],
         itens.length ? [itens.map(i => `<tr>
           <td>${esc(a.nome)}</td>
           <td><span class="cat" style="color:var(--${corCat(i.categoria)})" data-editavel="categoria" data-id="${i.id}">${esc(i.categoria || '—')}</span></td>
-          <td style="max-width:230px"><span data-editavel="sistema" data-id="${i.id}">${celula(i.sistema)}</span></td>
-          <td style="max-width:420px">${celula(descricaoSemProduto(i))}</td>
+          <td><span data-editavel="produto" data-id="${i.id}">${celula(i.produto)}</span></td>
+          <td style="max-width:200px"><span data-editavel="sistema" data-id="${i.id}">${celula(i.sistema)}</span></td>
+          <td style="max-width:380px">${celula(descricaoSemProduto(i))}</td>
           <td>${celula(fornecedoresCelula(i))}</td>
           <td style="white-space:nowrap"><button class="btn pequeno" data-acao="verEvidencia" data-id="${i.id}">Evidências</button></td>
         </tr>`).join('')] : [],
@@ -956,6 +957,29 @@ function nomeNivel(e, nivel, id) {
   return it ? it.nome : '';
 }
 const corCat = c => ({ Teto: 'circulo', Paredes: 'triangulo', Piso: 'quadrado', 'Pedras naturais': 'pentagono' }[c] || 'ink-2');
+
+/* Nesta prancha o mesmo desenho vira duas leituras: a tag geométrica perto do
+   ambiente (que aqui só marca "isto é Piso/Parede/Teto", sem legenda com
+   material) e a linha correta no MEMORIAL DE ACABAMENTOS por nome de
+   ambiente. Sem a legenda para traduzir, a leitura da tag chega vazia — e
+   como a informação de verdade já está na outra linha, a vazia não soma
+   nada, só duplica a categoria à toa. Ela só fica se for a ÚNICA linha da
+   categoria: aí é a lacuna real que precisa aparecer para revisão. */
+function semVaziosRedundantes(itens) {
+  const porCategoria = new Map();
+  for (const i of itens) {
+    const k = i.categoria || '';
+    if (!porCategoria.has(k)) porCategoria.set(k, []);
+    porCategoria.get(k).push(i);
+  }
+  const informativo = i => !!(i.produto || i.descricao || i.marca || i.modelo);
+  const fora = new Set();
+  for (const grupo of porCategoria.values()) {
+    if (grupo.length < 2 || !grupo.some(informativo)) continue;
+    for (const i of grupo) if (!informativo(i)) fora.add(i.id);
+  }
+  return itens.filter(i => !fora.has(i.id));
+}
 
 /* "Fornecedores": marca e fornecedor juntos — são campos independentes (um
    não preenche o outro), mas a planilha enxuta do local mostra os dois numa
@@ -2282,9 +2306,9 @@ const ACOES_COMUNS = {
      página, já que célula de planilha não tem botão). */
   copiarPlanilhaLocal({ amb }) {
     const e = emp(); const a = acharAmbiente(amb); if (!a) return;
-    const its = ordenarAchados(itensDo(e, amb));
-    const linhas = [['Local', 'Categoria', 'Sistema', 'Descrição', 'Fornecedores', 'Evidências']];
-    for (const i of its) linhas.push([a.nome, i.categoria || '', i.sistema || '', descricaoSemProduto(i), fornecedoresCelula(i), refsDe(i) || '']);
+    const its = semVaziosRedundantes(ordenarAchados(itensDo(e, amb)));
+    const linhas = [['Local', 'Categoria', 'Produto', 'Sistema', 'Descrição', 'Fornecedores', 'Evidências']];
+    for (const i of its) linhas.push([a.nome, i.categoria || '', i.produto || '', i.sistema || '', descricaoSemProduto(i), fornecedoresCelula(i), refsDe(i) || '']);
     copiarTsv(linhas, `Planilha de ${a.nome}`);
   },
   copiarFiltrados() {
