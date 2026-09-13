@@ -1,4 +1,4 @@
-/* Cadeia de provedores de IA multimodal: Gemini -> Groq -> OpenAI.
+/* Cadeia de provedores de IA multimodal: Gemini -> Groq -> Hugging Face -> Cohere.
 
    O motor híbrido do frontend e as rotas deste servidor não sabem qual
    provedor respondeu — só que ALGUÉM respondeu. Quando o primeiro da
@@ -7,13 +7,17 @@
    nunca percebe a troca: ele recebe de volta o mesmo formato de sempre.
 
    Gemini fala com o SDK oficial e usa Structured Output nativo
-   (responseSchema) — é o mais confiável dos três para não fugir do
-   contrato. Groq e OpenAI falam a mesma API (Chat Completions) e nem todo
-   modelo deles garante um schema JSON estrito, então os dois pedem um
-   OBJETO (response_format: json_object) com a lista dentro de uma chave
-   nomeada — e essa chave já é uma das formas que prompt.js/sanear() aceita
-   (ver `especificacoes` / `atualizacoes` / `itens`), então nada mais no
-   sistema precisa saber que a resposta não veio do Gemini. */
+   (responseSchema) — é o mais confiável dos quatro para não fugir do
+   contrato. Os outros três falam a mesma API (Chat Completions, formato
+   OpenAI) e nem todo modelo deles garante um schema JSON estrito, então
+   pedem um OBJETO (response_format: json_object) com a lista dentro de uma
+   chave nomeada — e essa chave já é uma das formas que prompt.js/sanear()
+   aceita (ver `especificacoes` / `atualizacoes` / `itens`), então nada mais
+   no sistema precisa saber que a resposta não veio do Gemini.
+
+   Sem OpenAI de propósito: a chave que tínhamos ficou sem crédito, e as
+   duas que a entraram no lugar (Cohere, Hugging Face) já resolvem o mesmo
+   papel de reserva sem custo. */
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import OpenAI from 'openai';
@@ -27,11 +31,18 @@ const GROQ_KEY = (process.env.GROQ_API_KEY || '').trim();
    "input_modalities" contendo "image" (os Llama Vision antigos já foram
    descontinuados; em set/2026 quem tem imagem é a família Qwen). */
 const GROQ_MODEL = process.env.GROQ_MODEL || 'qwen/qwen3.8-27b';
-const OPENAI_KEY = (process.env.OPENAI_API_KEY || '').trim();
-const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+const COHERE_KEY = (process.env.COHERE_API_KEY || '').trim();
+/* Aya Vision é o modelo com visão do catálogo Cohere (confira em
+   `curl https://api.cohere.com/v1/models`, procure "vision" em features). */
+const COHERE_MODEL = process.env.COHERE_MODEL || 'c4ai-aya-vision-32b';
+const HF_KEY = (process.env.HUGGINGFACE_API_KEY || '').trim();
+/* O router da Hugging Face muda de catálogo com frequência — confira em
+   `curl https://router.huggingface.co/v1/models` e procure "vision"/"-VL"
+   no id. Qwen3-VL-235B é hoje o maior/mais forte com entrada de imagem. */
+const HF_MODEL = process.env.HUGGINGFACE_MODEL || 'Qwen/Qwen3-VL-235B-A22B-Instruct';
 
 export const PROVEDORES_CONFIGURADOS = {
-  gemini: !!GEMINI_KEY, groq: !!GROQ_KEY, openai: !!OPENAI_KEY,
+  gemini: !!GEMINI_KEY, groq: !!GROQ_KEY, cohere: !!COHERE_KEY, huggingface: !!HF_KEY,
 };
 
 /* ------------------------------------------------------------------ */
@@ -116,14 +127,16 @@ async function comGemini({ instrucaoSistema, schema, partes, limiteMs, chaveCach
 }
 
 /* ------------------------------------------------------------------ */
-/* GROQ e OPENAI — mesma API (Chat Completions)                        */
+/* GROQ, COHERE e HUGGING FACE — mesma API (Chat Completions)           */
 /* ------------------------------------------------------------------ */
 
 let clienteGroq = null;
-let clienteOpenAI = null;
+let clienteCohere = null;
+let clienteHF = null;
 
 const groq = () => (clienteGroq ||= new OpenAI({ apiKey: GROQ_KEY, baseURL: 'https://api.groq.com/openai/v1' }));
-const openai = () => (clienteOpenAI ||= new OpenAI({ apiKey: OPENAI_KEY }));
+const cohere = () => (clienteCohere ||= new OpenAI({ apiKey: COHERE_KEY, baseURL: 'https://api.cohere.com/compatibility/v1' }));
+const huggingface = () => (clienteHF ||= new OpenAI({ apiKey: HF_KEY, baseURL: 'https://router.huggingface.co/v1' }));
 
 /** Converte as partes no formato do Gemini ({text} / {inlineData}) para o
     formato de conteúdo multimodal da Chat Completions API. */
@@ -168,8 +181,8 @@ async function comChatCompletions({ nome, cliente, modelo, chave, instrucaoSiste
 
 /**
  * Gera o JSON pedido tentando cada provedor configurado, na ordem
- * Gemini -> Groq -> OpenAI. Para no primeiro que responder; só cai pro
- * próximo em erro (cota, rede, tempo limite, chave ausente/inválida).
+ * Gemini -> Groq -> Hugging Face -> Cohere. Para no primeiro que responder;
+ * só cai pro próximo em erro (cota, rede, tempo limite, chave ausente/inválida).
  *
  * @param {object} p
  * @param {object} p.schema           SCHEMA do modo — só o Gemini usa (Structured Output nativo)
@@ -179,7 +192,7 @@ async function comChatCompletions({ nome, cliente, modelo, chave, instrucaoSiste
  * @param {number} p.limiteMs         tempo limite POR TENTATIVA (cada provedor da cadeia tem o seu)
  * @param {string} p.chaveCache       chave de cache do modelo Gemini (modo + assinatura de empresa)
  * @param {number} p.maxOutputTokens
- * @returns {Promise<{ bruto: any, tokens: number, modelo: string, provedor: 'gemini'|'groq'|'openai' }>}
+ * @returns {Promise<{ bruto: any, tokens: number, modelo: string, provedor: 'gemini'|'groq'|'cohere'|'huggingface' }>}
  */
 export async function gerarComCadeia(p) {
   const erros = [];
@@ -199,16 +212,30 @@ export async function gerarComCadeia(p) {
       };
     } catch (err) { erros.push(`groq: ${err.message}`); }
   }
-  if (OPENAI_KEY) {
+  /* Hugging Face antes do Cohere de propósito: em teste, o aya-vision-32b da
+     Cohere ora recusou imagem com "no valid response", ora travou sem
+     responder nada — o Qwen3-VL da HF leu a prancha de primeira. Cohere
+     continua na cadeia (pode ter sido instabilidade pontual, e para o
+     memorial — que é só texto — ele respondeu bem), só que por último. */
+  if (HF_KEY) {
     tentativas++;
     try {
       return {
-        ...(await comChatCompletions({ ...p, nome: 'openai', cliente: openai(), modelo: OPENAI_MODEL, chave: OPENAI_KEY })),
-        provedor: 'openai',
+        ...(await comChatCompletions({ ...p, nome: 'huggingface', cliente: huggingface(), modelo: HF_MODEL, chave: HF_KEY })),
+        provedor: 'huggingface',
       };
-    } catch (err) { erros.push(`openai: ${err.message}`); }
+    } catch (err) { erros.push(`huggingface: ${err.message}`); }
+  }
+  if (COHERE_KEY) {
+    tentativas++;
+    try {
+      return {
+        ...(await comChatCompletions({ ...p, nome: 'cohere', cliente: cohere(), modelo: COHERE_MODEL, chave: COHERE_KEY })),
+        provedor: 'cohere',
+      };
+    } catch (err) { erros.push(`cohere: ${err.message}`); }
   }
 
-  if (!tentativas) throw new Error('nenhum provedor de IA configurado (defina GEMINI_API_KEY, GROQ_API_KEY ou OPENAI_API_KEY)');
+  if (!tentativas) throw new Error('nenhum provedor de IA configurado (defina GEMINI_API_KEY, GROQ_API_KEY, COHERE_API_KEY ou HUGGINGFACE_API_KEY)');
   throw new Error(`todos os provedores da cadeia falharam — ${erros.join(' | ')}`);
 }

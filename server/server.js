@@ -63,7 +63,7 @@ const PORTA = Number(process.env.PORT || 3000);
    rodam é provedores.js, lendo suas próprias env vars. */
 const CHAVE = (process.env.GEMINI_API_KEY || '').trim();
 const MODELO = process.env.GEMINI_MODEL || 'gemini-3.1-pro-preview';
-const ALGUM_PROVEDOR = PROVEDORES_CONFIGURADOS.gemini || PROVEDORES_CONFIGURADOS.groq || PROVEDORES_CONFIGURADOS.openai;
+const ALGUM_PROVEDOR = Object.values(PROVEDORES_CONFIGURADOS).some(Boolean);
 const SIMULAR = /^(1|true|sim)$/i.test(process.env.SIMULAR || '');
 const TEMPO_LIMITE = Number(process.env.GEMINI_TIMEOUT_MS || 90000);
 const TEMPO_LIMITE_MEMORIAL = Number(process.env.GEMINI_TIMEOUT_MEMORIAL_MS || 180000);
@@ -124,7 +124,7 @@ function registrar(info) {
 
 const INSTRUCAO_DO_MODO = { memorial: INSTRUCAO_MEMORIAL, quadro: INSTRUCAO_QUADRO, visao: INSTRUCAO };
 const SCHEMA_DO_MODO = { memorial: SCHEMA_MEMORIAL, quadro: SCHEMA_QUADRO, visao: SCHEMA };
-/* Como cada modo embrulha o array quando quem responde é Groq/OpenAI (ver
+/* Como cada modo embrulha o array quando quem responde é Groq/Cohere/HF (ver
    provedores.js) — a mesma chave que prompt.js/sanear() já sabe ler. */
 const CHAVE_ENVOLTORIA_DO_MODO = { memorial: 'atualizacoes', quadro: 'itens', visao: 'especificacoes' };
 
@@ -139,7 +139,7 @@ async function empresaDaRequisicao(req) {
 }
 
 /** Uma geração, com tempo limite por tentativa. Tenta Gemini, depois Groq,
-    depois OpenAI (ver provedores.js) — devolve { bruto, tokens, modelo, provedor }.
+    depois Cohere/Hugging Face (ver provedores.js) — devolve { bruto, tokens, modelo, provedor }.
 
     A EMPRESA ENTRA AQUI, NO SYSTEM INSTRUCTION, e não no texto do usuário. As
     regras da construtora são política permanente da conversa, não dado de uma
@@ -325,7 +325,7 @@ app.post('/api/vision/process-local', async (req, res) => {
     const ms = agora() - t0;
     registrar({ ok: false, ms, local: local.nome, erro: 'nenhum provedor de IA configurado' });
     return res.status(503).json({
-      ok: false, erro: 'nenhuma chave de IA configurada no servidor (GEMINI_API_KEY, GROQ_API_KEY ou OPENAI_API_KEY)',
+      ok: false, erro: 'nenhuma chave de IA configurada no servidor (GEMINI_API_KEY, GROQ_API_KEY, COHERE_API_KEY ou HUGGINGFACE_API_KEY)',
       dica: 'crie server/.env com pelo menos uma delas, ou rode com SIMULAR=1 para testar a ligação',
       especificacoes: [],
     });
@@ -400,7 +400,7 @@ app.post('/api/text/process-memorial', async (req, res) => {
     const ms = agora() - t0;
     registrar({ ok: false, ms, local: rotulo, erro: 'nenhum provedor de IA configurado' });
     return res.status(503).json({
-      ok: false, erro: 'nenhuma chave de IA configurada no servidor (GEMINI_API_KEY, GROQ_API_KEY ou OPENAI_API_KEY)',
+      ok: false, erro: 'nenhuma chave de IA configurada no servidor (GEMINI_API_KEY, GROQ_API_KEY, COHERE_API_KEY ou HUGGINGFACE_API_KEY)',
       dica: 'crie server/.env com pelo menos uma delas, ou rode com SIMULAR=1',
       atualizacoes: [],
     });
@@ -510,7 +510,7 @@ app.post('/api/vision/process-sheet', async (req, res) => {
     const ms = agora() - t0;
     registrar({ ok: false, ms, local: rotulo, erro: 'nenhum provedor de IA configurado' });
     return res.status(503).json({
-      ok: false, erro: 'nenhuma chave de IA configurada no servidor (GEMINI_API_KEY, GROQ_API_KEY ou OPENAI_API_KEY)',
+      ok: false, erro: 'nenhuma chave de IA configurada no servidor (GEMINI_API_KEY, GROQ_API_KEY, COHERE_API_KEY ou HUGGINGFACE_API_KEY)',
       dica: 'crie server/.env com pelo menos uma delas, ou rode com SIMULAR=1',
       itens: [],
     });
