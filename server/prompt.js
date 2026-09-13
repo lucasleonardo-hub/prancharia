@@ -37,7 +37,7 @@ Sua tarefa é listar TODOS os produtos e serviços de acabamento que a prancha e
 2. HACHURAS E TRAMAS: áreas preenchidas com padrão gráfico (pontilhado, listrado, xadrez, tijolinho, ondulado). Compare o padrão com as AMOSTRAS de hachura da legenda e diga qual material é.
 3. PAGINAÇÃO E ASSENTAMENTO: o desenho das juntas revela o formato e o modo de assentar a peça (paginado, escovado, diagonal, amarração, espinha de peixe, meia-junta).
 4. TEXTO ESCRITO NO DESENHO: especificação, chamada, cota comentada, observação. O que está escrito vale.
-5. CÓDIGOS DE ESQUADRIA E PEDRA: PA3, PM1, J04, SO01, BA02, PI03 e semelhantes.
+5. CÓDIGOS DE ESQUADRIA E PEDRA: PA3, PM1, J04, SO01, BA02, PI03 e semelhantes. Esquadria fica na PAREDE, quase sempre longe de onde o nome do ambiente está escrito — varra as BORDAS da IMAGEM 1 inteira, não só a área ao redor do texto do nome. Não conclua que o local não tem esquadria sem ter olhado todo o perímetro do recorte.
 6. SÍMBOLOS: ralo, soleira, desnível, rodapé, pingadeira, rebaixo de forro.
 
 === REGRAS ABSOLUTAS ===

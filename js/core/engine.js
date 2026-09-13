@@ -145,7 +145,10 @@ export async function analisarFolha(doc, numero, docMeta, aoProgredir = () => {}
 /* ------------------------------------------------------------------ */
 
 export const OPCOES_RECORTE = {
-  larguraLocal: 1200,      // Nível 2 — a região do local
+  /* A janela do local cresce bem mais que antes (ver janelaDoLocal) para
+     alcançar esquadria longe do rótulo do ambiente; sem subir a largura de
+     saída junto, essa área maior perderia nitidez no texto miúdo. */
+  larguraLocal: 1600,      // Nível 2 — a região do local
   larguraDetalhe: 900,     // Nível 3 — o zoom no ponto exato
   larguraLegenda: 1000,
   /* Um quadro de acabamentos tem texto de 7,8 pt numa folha de 3370 pt. Para a
@@ -166,13 +169,36 @@ function limitar(caixa, base) {
   return [Math.max(0, x0), Math.max(0, y0), Math.min(base.width, x1), Math.min(base.height, y1)];
 }
 
-/** Janela de leitura em volta do rótulo do local — Nível 2. */
-export function janelaDoLocal(caixaRotulo, base, folga = 4.5) {
+/** Janela de leitura em volta do rótulo do local — Nível 2.
+
+    NÃO existe polígono de parede neste sistema: o que temos é a caixa do
+    TEXTO do nome do ambiente. Esquadria fica na parede, quase sempre longe
+    de onde o nome está escrito — então a janela precisa alcançar bem mais
+    que o texto para não cortar a porta/janela fora da imagem que a IA vê.
+    O contrapeso é `outrasCaixas`: os rótulos dos ambientes VIZINHOS nesta
+    mesma folha. A janela cresce generosamente, mas encolhe antes de
+    engolir o nome de outro local — é isso que preserva a R3 (isolamento
+    estrito do local) sem depender de escala ou de detecção de parede. */
+export function janelaDoLocal(caixaRotulo, base, opts = {}) {
   if (!caixaRotulo) return [0, 0, base.width, base.height];
+  const { folga = 9, outrasCaixas = [] } = Array.isArray(opts) ? { outrasCaixas: opts } : opts;
   const [x0, y0, x1, y1] = caixaRotulo;
-  const l = Math.max(360, (x1 - x0) * folga), a = Math.max(260, (y1 - y0) * folga * 1.6);
+  const l = Math.max(520, (x1 - x0) * folga), a = Math.max(420, (y1 - y0) * folga * 1.6);
   const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
-  return limitar([cx - l / 2, cy - a / 2, cx + l / 2, cy + a / 2], base);
+  let [wx0, wy0, wx1, wy1] = [cx - l / 2, cy - a / 2, cx + l / 2, cy + a / 2];
+
+  for (const outra of outrasCaixas) {
+    if (!outra) continue;
+    const [ox0, oy0, ox1, oy1] = outra;
+    const ocx = (ox0 + ox1) / 2, ocy = (oy0 + oy1) / 2;
+    if (ocx <= wx0 || ocx >= wx1 || ocy <= wy0 || ocy >= wy1) continue; // fora da janela, não ameaça
+    // o rótulo vizinho caiu dentro da janela: encolhe o lado dele até sobrar folga mínima
+    if (ocx >= cx) wx1 = Math.min(wx1, Math.max(cx + 60, ocx - 16));
+    else wx0 = Math.max(wx0, Math.min(cx - 60, ocx + 16));
+    if (ocy >= cy) wy1 = Math.min(wy1, Math.max(cy + 60, ocy - 16));
+    else wy0 = Math.max(wy0, Math.min(cy - 60, ocy + 16));
+  }
+  return limitar([wx0, wy0, wx1, wy1], base);
 }
 
 /** Janela fechada no ponto exato de onde o dado saiu — Nível 3. */
@@ -687,11 +713,16 @@ function casarLocais(emp, folha, docMeta) {
       emp.locais.push(local); porChave.set(k, local); criados.push(local);
     }
     if (!local.poligonoOriginal && a.bboxTexto) local.poligonoOriginal = a.bboxTexto;
+    const outrasCaixasRotulo = folha.ambientes
+      .filter(o => o !== a && o.bboxTexto)
+      .map(o => o.bboxTexto);
     const rotulo = criarEvidencia({
       documentoOrigem: { docId: docMeta.id, pagina: folha.pagina, nomeDoc: docMeta.nome },
       tipo: 'rotulo',
       coordenadas: a.bboxTexto || null,
-      regiao: a.bboxTexto ? janelaDoLocal(a.bboxTexto, { width: folha.largura, height: folha.altura }) : null,
+      regiao: a.bboxTexto
+        ? janelaDoLocal(a.bboxTexto, { width: folha.largura, height: folha.altura }, { outrasCaixas: outrasCaixasRotulo })
+        : null,
       texto: a.nome + (a.area ? '  ' + a.area : ''),
       proveniencia: { motor_ia: 'fallback_vetorial', metodo: 'leitura_rotulo', confianca: a.confianca || 'alta' },
     });
@@ -744,9 +775,18 @@ export async function consolidar(emp, folha, docMeta) {
     }
   }
 
+  // caixa do rótulo de cada ambiente desta folha, para nenhuma janela de
+  // local engolir o nome do vizinho (ver janelaDoLocal)
+  const caixasDaFolha = (folha.ambientes || [])
+    .filter(a => a.bboxTexto)
+    .map(a => ({ id: a.__local ? a.__local.id : null, caixa: a.bboxTexto }));
+
   const tarefas = [...porLocal.values()].map(({ local, itens }) => async () => {
+    const outrasCaixas = local
+      ? caixasDaFolha.filter(c => c.id !== local.id).map(c => c.caixa)
+      : [];
     const imgLocal = local && local.poligonoOriginal
-      ? () => recorteBase64(folha.page, janelaDoLocal(local.poligonoOriginal, base), { largura: OPCOES_RECORTE.larguraLocal })
+      ? () => recorteBase64(folha.page, janelaDoLocal(local.poligonoOriginal, base, { outrasCaixas }), { largura: OPCOES_RECORTE.larguraLocal })
       : null;
     return processarComIAHibrida(imgLocal, imgLegenda, {
       itens, legendas: folha.legendas, local, docMeta, pagina: folha.pagina, tipologia, base,
