@@ -1,0 +1,51 @@
+import {chromium} from '/home/claude/.npm-global/lib/node_modules/playwright/index.mjs';
+import http from 'http'; import fs from 'fs'; import path from 'path';
+const root='/home/claude/prancharia';
+const types={'.html':'text/html','.js':'text/javascript','.css':'text/css','.pdf':'application/pdf'};
+const srv=http.createServer((req,res)=>{let p=decodeURIComponent(req.url.split('?')[0]); if(p==='/')p='/local.html';
+  const f=path.join(root,p); if(!fs.existsSync(f)||fs.statSync(f).isDirectory()){res.writeHead(404);return res.end('nf');}
+  res.writeHead(200,{'Content-Type':types[path.extname(f)]||'application/octet-stream'}); fs.createReadStream(f).pipe(res);});
+await new Promise(r=>srv.listen(8092,r));
+const b=await chromium.launch({executablePath:'/opt/pw-browsers/chromium-1194/chrome-linux/chrome',args:['--no-sandbox']});
+const pg=await b.newPage({viewport:{width:1440,height:1000},deviceScaleFactor:1.35});
+const err=[]; pg.on('pageerror',e=>err.push(e.message));
+pg.on('console',m=>{if(m.type()==='error'&&!/fonts|TUNNEL|404/.test(m.text()))err.push(m.text().slice(0,200));});
+await pg.goto('http://localhost:8092/local.html');
+await pg.waitForSelector('[data-acao="criarEmp"]');
+console.log('MENU inicial:', await pg.$$eval('#nav button span:not(.cont)',n=>n.map(x=>x.textContent).join(' | ')));
+await pg.click('[data-acao="criarEmp"]');
+await pg.waitForSelector('#modal .modal-caixa');
+await pg.fill('#empNome','Residência Alexandre Pompeo');
+await pg.click('[data-tipo="casa"]'); await pg.waitForTimeout(200);
+console.log('CAMPOS casa:', (await pg.$eval('#camposTipo',e=>e.innerText)).replace(/\n/g,' | '));
+await pg.fill('#cmp_pavimentos','4');
+await pg.fill('#empLocal','Florianópolis / SC');
+await pg.click('[data-acao="salvarEmpNovo"]');
+await pg.waitForSelector('.placar');
+console.log('MENU casa:', await pg.$$eval('#nav button span:not(.cont)',n=>n.map(x=>x.textContent).join(' | ')));
+console.log('PAINEL:', (await pg.$eval('#conteudo',e=>e.innerText)).slice(0,420).replace(/\n/g,' | '));
+await pg.screenshot({path:root+'/f1.png'});
+// pavimentos
+await pg.click('[data-rota="estrutura"][data-param="pavimento"]'); await pg.waitForTimeout(400);
+console.log('PAVIMENTOS:', (await pg.$eval('#conteudo table',e=>e.innerText)).replace(/\n/g,' | ').slice(0,240));
+// documentos
+await pg.click('[data-rota="documentos"]');
+await pg.setInputFiles('#entradaDocs',[root+'/testdata/EX01SUB_TER_E_SUPR00.pdf']);
+await pg.waitForFunction("(document.querySelector('#conteudo')?.innerText.match(/processado/g)||[]).length>=1 && !document.querySelector('.progresso')",{timeout:200000});
+await pg.waitForTimeout(2200);
+await pg.click('[data-rota="locais"]'); await pg.waitForSelector('.abas-modulo');
+console.log('LOCAIS cabecalho:', await pg.$$eval('#conteudo .cartao table',t=>[...t[t.length-1].querySelectorAll('th')].map(x=>x.textContent).join(' | ')));
+// agora um condomínio de apartamentos
+await pg.click('[data-rota="empreendimentos"]'); await pg.waitForSelector('[data-acao="criarEmp"]');
+await pg.click('[data-acao="criarEmp"]'); await pg.waitForSelector('#modal');
+await pg.fill('#empNome','Condomínio Aurora');
+await pg.click('[data-tipo="cond_apartamentos"]'); await pg.waitForTimeout(200);
+await pg.fill('#cmp_torres','2'); await pg.fill('#cmp_pavimentos','8');
+await pg.click('[data-acao="salvarEmpNovo"]'); await pg.waitForSelector('.placar');
+console.log('MENU condominio:', await pg.$$eval('#nav button span:not(.cont)',n=>n.map(x=>x.textContent).join(' | ')));
+console.log('PAINEL condo:', (await pg.$eval('.placar',e=>e.innerText)).replace(/\n/g,' | '));
+await pg.screenshot({path:root+'/f2.png'});
+await pg.click('[data-rota="empreendimentos"]'); await pg.waitForTimeout(400);
+await pg.screenshot({path:root+'/f3.png'});
+console.log('ERROS:',err.slice(0,6));
+await b.close(); srv.close(); process.exit(0);

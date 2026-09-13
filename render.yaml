@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: prancharia-bff
+    runtime: node
+    plan: free
+    region: oregon
+    rootDir: server
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      # Preenchida à mão no painel do Render (Environment) — nunca aqui no arquivo.
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-3.6-flash
+      - key: NODE_VERSION
+        value: 22.9.0
+      # Troque pela URL real do frontend na Vercel assim que ela existir,
+      # para não deixar a API aberta a qualquer origem em produção.
+      - key: CORS_ORIGIN
+        value: "*"
+    # O plano "free" do Render não suporta disco persistente: o SQLite e as
+    # pranchas em /server/dados somem a cada deploy/reinício. Descomente o
+    # bloco abaixo (e troque o plano para "starter" ou superior) para manter
+    # os dados entre deploys.
+    # disk:
+    #   name: prancharia-dados
+    #   mountPath: /opt/render/project/src/server/dados
+    #   sizeGB: 1

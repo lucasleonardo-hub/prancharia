@@ -1,0 +1,30 @@
+import {chromium} from '/home/claude/.npm-global/lib/node_modules/playwright/index.mjs';
+import http from 'http'; import fs from 'fs'; import path from 'path';
+const root='/home/claude/prancharia';
+const types={'.html':'text/html','.js':'text/javascript','.css':'text/css','.pdf':'application/pdf','.png':'image/png'};
+const srv=http.createServer((req,res)=>{let p=decodeURIComponent(req.url.split('?')[0]);if(p==='/')p='/local.html';
+  const f=path.join(root,p); if(!fs.existsSync(f)){res.writeHead(404);return res.end('nf');}
+  res.writeHead(200,{'Content-Type':types[path.extname(f)]||'application/octet-stream'}); fs.createReadStream(f).pipe(res);});
+await new Promise(r=>srv.listen(8103,r));
+const b=await chromium.launch({executablePath:'/opt/pw-browsers/chromium-1194/chrome-linux/chrome',args:['--no-sandbox']});
+const pg=await b.newPage({viewport:{width:1480,height:980}});
+await pg.goto('http://localhost:8103/local.html');
+await pg.waitForSelector('#nav button');
+await pg.click('[data-acao="criarEmp"]'); await pg.waitForSelector('#modal .modal-caixa');
+await pg.fill('#empNome','Teste'); await pg.click('[data-tipo="casa"]'); await pg.waitForTimeout(120);
+await pg.click('[data-acao="salvarEmpNovo"]'); await pg.waitForSelector('.placar');
+await pg.click('[data-rota="documentos"]');
+await pg.setInputFiles('#entradaDocs',[root+'/testdata/EX01SUB_TER_E_SUPR00.pdf']);
+await pg.waitForFunction("(document.querySelector('#conteudo')?.innerText.match(/processado/g)||[]).length>=1 && !document.querySelector('.progresso')",{timeout:240000});
+await pg.waitForTimeout(1500);
+await pg.click('[data-rota="locais"]'); await pg.waitForTimeout(400);
+await pg.click('[data-acao="escolherLocal"][data-nome="ÁREA PETS"]'); await pg.waitForTimeout(400);
+await pg.click('button[data-acao="abrirAmbiente"]'); await pg.waitForTimeout(500);
+await pg.click('button[data-acao="verEvidencia"]'); await pg.waitForSelector('#gaveta.aberta'); await pg.waitForTimeout(1500);
+await pg.locator('#gaveta').screenshot({path:root+'/g1.png'});
+await pg.click('#gaveta [data-acao="verNaPrancha"]'); await pg.waitForSelector('.visor'); await pg.waitForTimeout(2600);
+const cx=await pg.$('.visor-legenda');
+if (cx) { await cx.screenshot({path:root+'/g2.png'}); console.log('caixa legenda:', await cx.evaluate(n=>{const r=n.getBoundingClientRect();return {w:Math.round(r.width),h:Math.round(r.height),top:Math.round(r.top),bottom:Math.round(r.bottom)};})); }
+else console.log('sem legenda');
+console.log('visor:', await pg.$eval('.visor',n=>{const r=n.getBoundingClientRect();return {h:Math.round(r.height),top:Math.round(r.top),bottom:Math.round(r.bottom)};}));
+await b.close(); srv.close(); process.exit(0);

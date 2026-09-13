@@ -1,0 +1,9 @@
+# O backend não é frontend: vai para o Render/Railway, não para a Vercel.
+server/
+
+# Dados de exemplo e scripts de depuração — não fazem parte do app publicado.
+dados/
+*.mjs
+probe.html
+local.html
+LEIA-ME.md

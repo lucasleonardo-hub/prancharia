@@ -1,0 +1,33 @@
+<!doctype html><meta charset="utf-8"><body><pre id="o" style="font:11px monospace"></pre>
+<script type="module">
+import {analisarFolha, consolidar} from './js/core/engine.js';
+import {openPdf} from './js/core/pdfdoc.js';
+import {empreendimentoVazio} from './js/core/model.js';
+const out=[];const log=(...a)=>{out.push(a.map(x=>typeof x==='string'?x:JSON.stringify(x)).join(' '));document.getElementById('o').textContent=out.join('\n');};
+window.__done=false;
+try{
+const emp=empreendimentoVazio('Alexandre Pompeo');
+const t0=performance.now();
+for(const f of ['EX01SUB_TER_E_SUPR00','EX05PISOSUB_E_TERR01','EX02COB_E_IMPR00']){
+  const doc=await openPdf('./testdata/'+f+'.pdf');
+  const meta={id:f,nome:f+'.pdf'};
+  const folha=await analisarFolha(doc,1,meta);
+  const r=consolidar(emp,folha,meta);
+  log(f,'| tags',folha.tags.length,'| amb novos',r.criados.length,'| achados',r.achados.length,
+      '| tabelas',folha.tabelas.map(t=>t.tipo+'('+t.linhas.length+')').join(','),
+      '| legendas',folha.legendas.blocos.map(b=>b.forma+'/'+b.titulo+':'+b.itens.length).join(', '));
+}
+log('TOTAL ambientes',emp.ambientes.length,'achados',emp.achados.length,'ms',Math.round(performance.now()-t0));
+for(const nome of ['ÁREA PETS','COZINHA','BANHO 01','SALA DE ESTAR','GARAGEM']){
+  const amb=emp.ambientes.find(a=>a.nome===nome);
+  if(!amb){log('## '+nome+' — não encontrado');continue;}
+  log('## '+nome+' ('+amb.pavimento+')');
+  for(const a of emp.achados.filter(x=>x.ambienteId===amb.id))
+    log('   ',(a.categoria||'?').padEnd(16),'|',(a.descricao||'').slice(0,86),'|',a.confianca,a.motivos.join(','));
+}
+const semAmb=emp.achados.filter(a=>!a.ambienteId);
+log('achados sem ambiente:',semAmb.length);
+const conf={};for(const a of emp.achados)conf[a.confianca]=(conf[a.confianca]||0)+1;log('confiança',conf);
+}catch(e){log('ERR',e.message,e.stack);}
+window.__done=true;
+</script></body>
