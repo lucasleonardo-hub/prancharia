@@ -14,12 +14,13 @@ services:
         sync: false
       - key: GEMINI_MODEL
         value: gemini-3.6-flash
+      # node:sqlite (usado por server/db.js quando better-sqlite3 não está
+      # instalado) só funciona sem flag a partir do Node 22.13+; abaixo disso
+      # o servidor derruba com ERR_UNKNOWN_BUILTIN_MODULE ao iniciar.
       - key: NODE_VERSION
-        value: 22.9.0
-      # Troque pela URL real do frontend na Vercel assim que ela existir,
-      # para não deixar a API aberta a qualquer origem em produção.
+        value: 24.21.0
       - key: CORS_ORIGIN
-        value: "*"
+        value: "https://prancharia.vercel.app"
     # O plano "free" do Render não suporta disco persistente: o SQLite e as
     # pranchas em /server/dados somem a cada deploy/reinício. Descomente o
     # bloco abaixo (e troque o plano para "starter" ou superior) para manter
