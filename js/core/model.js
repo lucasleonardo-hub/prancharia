@@ -64,16 +64,6 @@ export function novoId(prefixo = 'id') {
 
 /* ================= ENTIDADES PRINCIPAIS ================= */
 
-export function criarEmpresa(nome) {
-  return {
-    id: novoId('empresa'),
-    nome: nome,
-    empreendimentos: [],
-    // A Memória Técnica da empresa viverá no backend (PostgreSQL/VectorDB);
-    // aqui a empresa existe só como vínculo.
-  };
-}
-
 export function criarEmpreendimento(empresaId, nome, tipo) {
   return {
     id: novoId('emp'),

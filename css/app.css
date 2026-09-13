@@ -152,7 +152,12 @@ a:hover { text-decoration-color: var(--accent); }
   display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh;
   padding: 14px 12px 14px 16px; background: var(--ground);
 }
-.marca { display: flex; align-items: center; gap: 11px; padding: 12px 12px 22px; }
+.marca {
+  display: flex; align-items: center; gap: 11px; padding: 12px 12px 22px;
+  width: 100%; border: none; background: none; text-align: left; cursor: pointer;
+  font: inherit; color: inherit;
+}
+.marca:hover .marca-nome { color: var(--accent); }
 .marca-glifo { width: 29px; height: 29px; flex: none; color: var(--accent); }
 .marca-nome { font-weight: 700; font-size: 16.5px; letter-spacing: -.026em; }
 .marca-sub { font-size: 10px; color: var(--ink-3); letter-spacing: .1em; text-transform: uppercase; font-weight: 500; margin-top: 1px; }
@@ -379,24 +384,29 @@ details > summary:hover { color: var(--ink); }
 .cadeia-tipo { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; font-size: 12.5px; color: var(--ink-2); }
 .cadeia-tipo i { font-style: normal; color: var(--ink-3); }
 
-.cartoes-emp { display: grid; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); gap: 18px; }
-.emp-cartao {
+/* Cartão de seleção: usado pelos Empreendimentos (com botões de ação) e
+   pelos Locais (o cartão inteiro é clicável — role="button"). */
+.grade-cartoes { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 18px; }
+.cartao-selecao {
   background: var(--surface); border-radius: var(--raio-g);
   box-shadow: var(--sombra-1), inset 0 0 0 1px var(--line); padding: 22px;
   display: flex; flex-direction: column; gap: 16px;
   transition: all var(--normal) var(--mola);
   border: 1.5px solid transparent;
 }
-.emp-cartao:hover { box-shadow: var(--sombra-2), inset 0 0 0 1px var(--line); transform: translateY(-3px); }
-.emp-cartao.atual { border-color: var(--accent); }
-.emp-cartao .topo { display: flex; align-items: flex-start; gap: 11px; }
-.emp-cartao h3 { font-size: 17px; letter-spacing: -.024em; font-weight: 700; }
-.emp-cartao .meta { font-size: 12.5px; color: var(--ink-3); margin-top: 4px; }
-.emp-numeros { display: grid; grid-template-columns: repeat(4, 1fr); gap: 9px; }
+.cartao-selecao:hover { box-shadow: var(--sombra-2), inset 0 0 0 1px var(--line); transform: translateY(-3px); }
+.cartao-selecao.atual { border-color: var(--accent); }
+article.cartao-selecao[role="button"] { cursor: pointer; }
+article.cartao-selecao[role="button"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.cartao-selecao .topo { display: flex; align-items: flex-start; gap: 11px; }
+.cartao-selecao h3 { font-size: 17px; letter-spacing: -.024em; font-weight: 700; }
+.cartao-selecao .meta { font-size: 12.5px; color: var(--ink-3); margin-top: 4px; }
+.emp-numeros { display: grid; grid-template-columns: repeat(auto-fit, minmax(64px, 1fr)); gap: 9px; }
 .emp-numeros div { background: var(--surface-2); border-radius: var(--raio-s); padding: 11px 12px; }
 .emp-numeros dt { font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
 .emp-numeros dd { margin: 3px 0 0; font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -.03em; }
-.emp-cartao .acoes { display: flex; gap: 7px; flex-wrap: wrap; margin-top: auto; }
+.emp-numeros dd.tom-aviso { color: var(--atencao); }
+.cartao-selecao .acoes { display: flex; gap: 7px; flex-wrap: wrap; margin-top: auto; }
 
 /* ---------- visualizador ---------- */
 .visor { position: relative; background: var(--surface-3); overflow: hidden; height: min(72vh, 780px); }

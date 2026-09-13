@@ -1,16 +1,16 @@
 import {
   estado, emp, esc, celula, seloConfianca, seloStatus, marcaForma, aviso, salvar, irPara,
   ROTULO_FORMA, render, store, novoId, gravarGlossario, aprenderRegra, esquecerRegra, regrasAprendidas,
-  abrirModal, fecharModal, empreendimentoVazio,
+  abrirModal, fecharModal, empreendimentoVazio, hidratar,
 } from '../app.js';
 import { TIPOS, TIPO_POR_ID, ORDEM_NIVEIS, tipoDe, niveisDe, temNivel, rotuloNivel, temAreasComuns, cadeiaDe } from '../core/tipos.js';
-import { SISTEMAS, NOMES_SISTEMAS, SISTEMA_POR_NOME, COLUNAS_COPIA } from '../core/vocab.js';
+import { SISTEMAS, NOMES_SISTEMAS, SISTEMA_POR_NOME } from '../core/vocab.js';
 import { REGRAS_BASE } from '../core/glossario.js';
 import { analisarMemorial, pareceMemorial, cruzarComPranchas, fundirComMemorial, precisaDeOcr } from '../core/memorial.js';
 import { ocrPdf, anotarFalha } from '../core/ia.js';
 import {
   CATEGORIAS, STATUS, CONFIANCA, MOTIVOS_PENDENCIA, registrarHistorico, normalizar,
-  mesmoAmbienteFlex as mesmoAmbiente, semearPavimentos, sincronizar,
+  semearPavimentos, sincronizar,
   criarLocal, criarEspecificacao, criarEvidencia, novoId as novoIdModelo,
 } from '../core/model.js';
 import { analisarFolha, consolidar, incorporarEspecificacaoSolta, IA, configurarIA, saudeDaIA, iaLigada } from '../core/engine.js';
@@ -19,7 +19,6 @@ import { pendencias, pastaDeAbas, exportarXlsx, exportarCsv, exportarJson, relat
 import { auditar, lerXlsx, lerCsv, textoDePdf } from '../core/audit.js';
 import { CLASSES, analisarEmpreendimento, analisarArquivos, agrupar, resumo } from '../core/auditoria.js';
 import { provasDe, rastreio, fluxo, PAPEIS, NIVEIS, refDoc, nomeDoc, paginaDoc, idDoc, refsDe, motorDe } from '../core/provas.js';
-import * as empresaMem from '../core/companyMemory.js';
 import { abrirGaveta, irVerNaPrancha, irVerNaPranchaLocal, fecharGaveta } from './drawer.js';
 import { montarVisualizador, recortar } from './viewer.js';
 
@@ -89,84 +88,6 @@ function fallbackCopia(txt, fim) {
   document.body.appendChild(ta); ta.select();
   try { document.execCommand('copy'); fim(); } catch { aviso('Não foi possível copiar automaticamente.'); }
   ta.remove();
-}
-
-/* ================= VISÃO GERAL ================= */
-const painel = {
-  render(e) {
-    if (!e) return '';
-    const t = tipoDe(e);
-    const niveis = niveisDe(e);
-    const pend = pendencias(e);
-    const todos = itens(e);
-    const conflitos = todos.filter(a => a.status === 'conflito');
-    const baixa = todos.filter(a => a.confianca === 'baixa');
-    const confirmados = todos.filter(a => a.status === 'confirmado' || a.status === 'corrigido');
-    const total = todos.length;
-    const pct = total ? Math.round(confirmados.length / total * 100) : 0;
-
-    const cards = [
-      { rot: 'Documentos', val: e.documentos.length },
-      ...niveis.map(n => ({ rot: n.plural, val: (e.estrutura[n.nivel] || []).length })),
-      { rot: 'Locais', val: locaisVivos(e).length },
-      { rot: 'Sem local', val: semLocal(e).length, tom: semLocal(e).length ? 'aviso' : '', rota: 'pendencias' },
-      { rot: 'Esquadrias', val: todos.filter(a => a.categoria === 'Esquadrias').length },
-      { rot: 'Acabamentos', val: total },
-      { rot: 'Pendentes', val: pend.length, tom: pend.length ? 'aviso' : '' },
-      { rot: 'Conflitos', val: conflitos.length, tom: conflitos.length ? 'alerta' : '' },
-      { rot: 'Confirmados', val: pct, sufixo: '%' },
-    ];
-
-    return `
-      <div class="cabeca">
-        <div><h1>${esc(e.nome)}</h1>
-        <p class="desc">${esc(t.nome)}${e.localizacao ? ' · ' + esc(e.localizacao) : ''} — ${esc(t.resumo)}</p></div>
-        <div class="acoes">
-          <button class="btn" data-acao="fecharEmpreendimento">Trocar de empreendimento</button>
-          <button class="btn" data-rota="documentos">${e.documentos.length ? 'Documentos' : 'Enviar documentos'}</button>
-          <button class="btn primario" data-rota="planilhas">Gerar planilha</button>
-        </div>
-      </div>
-
-      <div class="cadeia-tipo">${cadeiaDe(e).map((c, i) => `${i ? '<i>›</i>' : ''}<span>${esc(c)}</span>`).join('')}
-        ${temAreasComuns(e) ? '<span class="selo neutro" style="margin-left:6px">MC + MP</span>' : '<span class="selo neutro" style="margin-left:6px">só MP</span>'}</div>
-
-      ${!e.documentos.length ? `<div class="cartao"><div class="vazio">
-        <h3>Empreendimento criado. Agora os documentos.</h3>
-        <p>Envie as pranchas e os memoriais deste empreendimento. Tudo o que for extraído fica vinculado a ele.</p>
-        <button class="btn primario" data-rota="documentos">Adicionar documentos</button></div></div>` : ''}
-
-      <dl class="placar">
-        ${cards.map(c => `<div class="${c.tom || ''}"><dt>${esc(c.rot)}</dt><dd>${c.val}${c.sufixo ? `<small>${c.sufixo}</small>` : ''}</dd></div>`).join('')}
-      </dl>
-
-      ${total ? `<div class="cartao"><header><h2>Distribuição por categoria</h2></header><div class="corpo">
-        ${barras(CATEGORIAS.map(c => ({ nome: c, n: todos.filter(a => a.categoria === c).length })), total)}
-      </div></div>` : ''}
-
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:20px">
-        <div class="cartao"><header><h2>Confiança</h2><div class="acoes"><button class="btn pequeno" data-rota="pendencias">Pendências</button></div></header>
-          <div class="corpo">${barras([
-            { nome: 'Alta', n: todos.filter(a => a.confianca === 'alta').length, cor: 'var(--bom)' },
-            { nome: 'Média', n: todos.filter(a => a.confianca === 'media').length, cor: 'var(--atencao)' },
-            { nome: 'Baixa', n: baixa.length, cor: 'var(--critico)' },
-          ], total || 1)}</div></div>
-        <div class="cartao"><header><h2>Últimas atividades</h2></header><div class="corpo">
-          ${e.historico.length ? `<ul class="lista-limpa">${e.historico.slice(0, 7).map(h => `<li><span class="pilula">${new Date(h.quando).toLocaleDateString('pt-BR')}</span><div>${esc(h.texto)}</div></li>`).join('')}</ul>`
-            : '<p style="color:var(--ink-3);font-size:13px">Nenhuma atividade registrada.</p>'}
-        </div></div>
-      </div>`;
-  },
-};
-
-function barras(itens, total) {
-  const max = Math.max(1, ...itens.map(i => i.n));
-  return `<div style="display:flex;flex-direction:column;gap:9px">${itens.filter(i => i.n).map(i => `
-    <div style="display:grid;grid-template-columns:140px 1fr 44px;gap:12px;align-items:center;font-size:13px">
-      <span>${esc(i.nome)}</span>
-      <span style="height:9px;background:var(--surface-3);border-radius:5px;overflow:hidden"><i style="display:block;height:100%;width:${Math.round(i.n / max * 100)}%;background:${i.cor || 'var(--accent)'};border-radius:5px"></i></span>
-      <span class="num" style="text-align:right;color:var(--ink-2)">${i.n}</span>
-    </div>`).join('') || '<p style="color:var(--ink-3);font-size:13px">Sem dados.</p>'}</div>`;
 }
 
 /* ================= EMPREENDIMENTOS ================= */
@@ -279,7 +200,7 @@ const empreendimentos = {
       const t = tipoDe(e);
       const st = statusProcessamento(e);
       const niveis = niveisDe(e);
-      return `<article class="emp-cartao ${e.id === estado.empId ? 'atual' : ''}">
+      return `<article class="cartao-selecao ${e.id === estado.empId ? 'atual' : ''}">
         <div class="topo">
           <div style="min-width:0">
             <h3>${esc(e.nome)}</h3>
@@ -298,6 +219,7 @@ const empreendimentos = {
         <div class="meta">Atualizado em ${e.atualizadoEm ? new Date(e.atualizadoEm).toLocaleString('pt-BR') : '—'}</div>
         <div class="acoes">
           <button class="btn primario pequeno" data-acao="abrirEmpreendimento" data-id="${e.id}">Abrir</button>
+          <button class="btn pequeno" data-acao="abrirDocumentos" data-id="${e.id}">PDFs</button>
           <button class="btn pequeno" data-acao="editarEmp" data-id="${e.id}">Editar</button>
           <button class="btn pequeno" data-acao="duplicarEmp" data-id="${e.id}">Duplicar</button>
           <button class="btn pequeno discreto" data-acao="apagarEmp" data-id="${e.id}">Excluir</button>
@@ -310,7 +232,7 @@ const empreendimentos = {
       <p class="desc">Tudo começa aqui: crie o empreendimento, defina o tipo e só então envie os documentos. O tipo escolhido configura os níveis, o menu e os campos do projeto.</p></div>
       <div class="acoes"><button class="btn primario" data-acao="criarEmp">Criar empreendimento</button></div></div>
 
-      ${lista.length ? `<div class="cartoes-emp">${cartoes}</div>`
+      ${lista.length ? `<div class="grade-cartoes">${cartoes}</div>`
         : `<div class="cartao"><div class="vazio">
             <h3>Nenhum empreendimento ainda</h3>
             <p>Comece criando o empreendimento e escolhendo o tipo — casa, condomínio de apartamentos, hotel, galpão. A partir daí o sistema monta a estrutura certa para ele.</p>
@@ -320,22 +242,23 @@ const empreendimentos = {
   acoes: {
     criarEmp() { formEmpreendimento(null); },
     editarEmp({ id }) { formEmpreendimento(estado.emps.find(x => x.id === id)); },
+    async abrirDocumentos({ id }) {
+      await hidratar(id);
+      estado.empId = id;
+      estado.filtros = {};
+      irPara('documentos');
+    },
     async salvarEmpNovo(_d, _el) {
       const m = document.getElementById('modal');
       const dados = lerForm(m);
       if (!dados.nome) { aviso('Dê um nome ao empreendimento.'); m.querySelector('#empNome')?.focus(); return; }
       const e = empreendimentoVazio(dados.nome, dados.tipo);
       Object.assign(e, { localizacao: dados.localizacao, responsavel: dados.responsavel, observacoes: dados.observacoes, dados: dados.dados });
-      /* nasce vinculado à construtora ativa: é o vínculo que faz a memória
-         técnica dela valer neste projeto */
-      const daCasa = empresaMem.empresaAtiva();
-      if (daCasa) e.empresaId = daCasa.id;
       semearEstrutura(e);
-      registrarHistorico(e, { texto: `Empreendimento criado como ${tipoDe(e).nome}`
-        + (daCasa ? ` para ${daCasa.nome}` : ''), tipo: 'empreendimento' });
+      registrarHistorico(e, { texto: `Empreendimento criado como ${tipoDe(e).nome}`, tipo: 'empreendimento' });
       estado.emps.unshift(e); estado.empId = e.id;
       await store.salvarEmpreendimento(e);
-      fecharModal(); irPara('painel'); aviso('Empreendimento criado.');
+      fecharModal(); irPara('locais'); aviso('Empreendimento criado.');
     },
     async salvarEmpEdicao({ id }) {
       const m = document.getElementById('modal');
@@ -790,10 +713,12 @@ const ambientes = {
       if (!nome?.trim()) return;
       const e = emp();
       e.locais = e.locais || [];
-      e.locais.push(criarLocal({
-        nome: nome.trim(), tipologia: (e.estrutura.tipologia[0] || {}).nome || '',
+      const novo = criarLocal(nome.trim());
+      Object.assign(novo, {
+        tipologia: (e.estrutura.tipologia[0] || {}).nome || '',
         origem: 'manual', confianca: 'alta', status: 'confirmado',
-      }));
+      });
+      e.locais.push(novo);
       sincronizar(e);
       await salvar({ texto: `Local adicionado manualmente: ${nome.trim()}`, tipo: 'ambiente' });
       render();
@@ -897,7 +822,7 @@ function fichaAmbiente(e, id) {
 
     <div class="cartao"><header><h2>Produtos deste local</h2>
       <div class="acoes"><span class="selo neutro">${itens.length} produto(s)</span>
-      <button class="btn pequeno primario" data-acao="copiarQuadro" data-amb="${a.id}">Copiar planilha</button></div></header>
+      <button class="btn pequeno primario" data-acao="copiarPlanilhaLocal" data-amb="${a.id}">Copiar planilha</button></div></header>
       <div class="corpo"><div class="produtos-local">
         ${CATEGORIAS.filter(c => itens.some(i => i.categoria === c)).map(c => `<section>
           <div class="rotulo-cat"><i style="background:var(--${corCat(c)})"></i>${esc(c)}</div>
@@ -941,18 +866,15 @@ function fichaAmbiente(e, id) {
 
     <div class="cartao"><header><h2>Quadro de acabamentos</h2>
       <div class="acoes">
-      <button class="btn pequeno primario" data-acao="copiarQuadro" data-amb="${a.id}">Copiar quadro</button>
-      <button class="btn pequeno" data-acao="adicionarItem" data-amb="${a.id}">Adicionar item</button>
-      <button class="btn pequeno" data-acao="baixarQuadro" data-amb="${a.id}">Baixar CSV</button></div></header>
-      ${tabela([{ nome: 'Categoria' }, { nome: 'Nome do Produto/Serviço' }, { nome: 'Sistema Construtivo' }, { nome: 'Descrição/Modelo/Linha' }, { nome: 'Marca' }, { nome: 'Origem' }, { nome: 'Confiança' }, { nome: '' }],
+      <button class="btn pequeno primario" data-acao="copiarPlanilhaLocal" data-amb="${a.id}">Copiar planilha</button>
+      <button class="btn pequeno" data-acao="adicionarItem" data-amb="${a.id}">Adicionar item</button></div></header>
+      ${tabela([{ nome: 'Local' }, { nome: 'Categoria' }, { nome: 'Sistema' }, { nome: 'Descrição' }, { nome: 'Fornecedores' }, { nome: 'Evidências' }],
         itens.length ? [itens.map(i => `<tr>
+          <td>${esc(a.nome)}</td>
           <td><span class="cat" style="color:var(--${corCat(i.categoria)})" data-editavel="categoria" data-id="${i.id}">${esc(i.categoria || '—')}</span></td>
-          <td><span data-editavel="produto" data-id="${i.id}">${celula(i.produto)}</span></td>
           <td style="max-width:230px"><span data-editavel="sistema" data-id="${i.id}">${celula(i.sistema)}</span></td>
-          <td style="max-width:400px">${celula(i.descricao)}</td>
-          <td><span data-editavel="marca" data-id="${i.id}">${celula(i.marca)}</span></td>
-          <td>${i.forma ? marcaForma(i.forma, i.numero) : `<span class="pilula">${esc((i.evidencias || [])[0]?.tituloLegenda || 'tabela')}</span>`}</td>
-          <td>${seloConfianca(i.confianca)}</td>
+          <td style="max-width:420px">${celula(descricaoSemProduto(i))}</td>
+          <td>${celula(fornecedoresCelula(i))}</td>
           <td style="white-space:nowrap"><button class="btn pequeno" data-acao="verEvidencia" data-id="${i.id}">Evidências</button></td>
         </tr>`).join('')] : [],
         { tituloVazio: 'Nenhum acabamento vinculado', textoVazio: 'Nenhuma tag ou linha de tabela deste projeto apontou para este local.' })}
@@ -1016,6 +938,26 @@ function nomeNivel(e, nivel, id) {
   return it ? it.nome : '';
 }
 const corCat = c => ({ Teto: 'circulo', Paredes: 'triangulo', Piso: 'quadrado', 'Pedras naturais': 'pentagono' }[c] || 'ink-2');
+
+/* "Fornecedores": marca e fornecedor juntos — são campos independentes (um
+   não preenche o outro), mas a planilha enxuta do local mostra os dois numa
+   coluna só. */
+function fornecedoresCelula(i) {
+  return [i.marca, i.fornecedor].filter(Boolean).join(' — ');
+}
+
+/* A coluna Descrição não repete o nome do produto: "Porcelanato" já está
+   implícito pela categoria/contexto da linha. Se a descrição da prancha
+   começa com o próprio nome do produto ("PORCELANATO A DEFINIR" para o
+   produto "Porcelanato"), essa repetição é cortada — sem inventar nada,
+   só sem repetir o que já apareceria ao lado. */
+function descricaoSemProduto(i) {
+  const d = (i.descricao || '').trim();
+  const p = (i.produto || '').trim();
+  if (!d || !p) return d;
+  const re = new RegExp('^' + p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b[\\s:,;–—-]*', 'i');
+  return d.replace(re, '').trim() || d;
+}
 
 const ESSENCIAIS_LOCAL = ['Piso', 'Paredes', 'Teto'];
 
@@ -1166,7 +1108,52 @@ async function editarCampo(span) {
   if (campo === 'categoria') inp.addEventListener('change', () => fim(true));
 }
 
+/* Igual à de cima, mas em vez de editar UM item, edita todos os itens que
+   compartilham a mesma descrição normalizada — é o que faz "Produtos" ser
+   uma edição global: mudar o nome ou a categoria aqui propaga para cada
+   Local que usa este produto, numa tacada só. */
+async function editarCampoGrupo(span) {
+  const { editavelGrupo: campo, chave } = span.dataset;
+  const e = emp();
+  const alvos = itens(e).filter(a => normalizar(a.descricao) === chave);
+  if (!alvos.length) return;
+  const antes = alvos[0][campo] || '';
+  let inp;
+  if (campo === 'categoria') {
+    inp = document.createElement('select');
+    inp.innerHTML = '<option value=""></option>' + CATEGORIAS.map(c => `<option ${c === antes ? 'selected' : ''}>${esc(c)}</option>`).join('');
+  } else {
+    inp = document.createElement('input');
+    inp.value = antes;
+  }
+  inp.style.width = '100%'; inp.style.minWidth = '150px';
+  span.replaceWith(inp); inp.focus(); if (inp.select) inp.select();
+  const fim = async (gravar) => {
+    const novo = (inp.value || '').trim();
+    inp.replaceWith(span);
+    if (!gravar || novo === antes) { render(); return; }
+    for (const a of alvos) {
+      a[campo] = novo;
+      a.status = 'corrigido';
+      if (a.confianca === 'baixa') a.confianca = 'media';
+    }
+    if (campo === 'categoria') { aprenderRegra(antes, { categoria: novo }); await gravarGlossario(); }
+    await salvar({
+      texto: `${campo === 'categoria' ? 'Categoria' : 'Nome'} do produto “${antes}” alterado para “${novo}” em ${alvos.length} local(is)`,
+      tipo: 'edicao', antes, depois: novo,
+    });
+    render(); aviso(`Atualizado em ${alvos.length} item(ns).`);
+  };
+  inp.addEventListener('keydown', ev => { if (ev.key === 'Enter') fim(true); if (ev.key === 'Escape') fim(false); });
+  inp.addEventListener('blur', () => fim(true));
+  if (campo === 'categoria') inp.addEventListener('change', () => fim(true));
+}
+
 /* ================= PRODUTOS ================= */
+/* Edição global: mudar o nome ou a categoria de um produto aqui atualiza
+   todos os Locais que o usam, de uma vez — é o que faz esta tela ser o
+   lugar certo para corrigir um material que a leitura classificou errado,
+   em vez de corrigir local por local. */
 const produtos = {
   render(e) {
     if (!e) return '';
@@ -1174,21 +1161,24 @@ const produtos = {
     for (const a of itens(e)) {
       if (!a.descricao) continue;
       const k = normalizar(a.descricao);
-      if (!mapa.has(k)) mapa.set(k, { descricao: a.descricao, categoria: a.categoria, marca: a.marca, fornecedor: a.fornecedor, nosLocais: new Set(), itens: [] });
+      if (!mapa.has(k)) mapa.set(k, { chave: k, descricao: a.descricao, categoria: a.categoria, marca: a.marca, fornecedor: a.fornecedor, nosLocais: new Set(), itens: [] });
       const m = mapa.get(k);
       m.nosLocais.add(a.localNome || '—'); m.itens.push(a);
       if (!m.marca && a.marca) m.marca = a.marca;
       if (!m.fornecedor && a.fornecedor) m.fornecedor = a.fornecedor;
     }
     const linhas = [...mapa.values()].sort((a, b) => b.nosLocais.size - a.nosLocais.size).map(p => `<tr>
-      <td><span class="cat" style="color:var(--${corCat(p.categoria)})">${esc(p.categoria || '—')}</span></td>
-      <td style="max-width:480px"><b>${esc(p.descricao)}</b></td>
+      <td><span class="cat" style="color:var(--${corCat(p.categoria)})" data-editavel-grupo="categoria" data-chave="${esc(p.chave)}">${esc(p.categoria || '—')}</span></td>
+      <td style="max-width:480px"><b data-editavel-grupo="descricao" data-chave="${esc(p.chave)}">${esc(p.descricao)}</b></td>
       <td>${celula(p.marca)}</td><td>${celula(p.fornecedor)}</td>
       <td class="num">${p.nosLocais.size}</td>
       <td style="max-width:300px;color:var(--ink-2);font-size:12.5px">${esc([...p.nosLocais].slice(0, 6).join(', '))}${p.nosLocais.size > 6 ? '…' : ''}</td></tr>`).join('');
-    return `<div class="cabeca"><div><h1>Produtos</h1><p class="desc">Cada material distinto encontrado, com os locais em que aparece. Marca e fornecedor são campos independentes — um não preenche o outro.</p></div></div>
+    return `<div class="cabeca"><div><h1>Produtos</h1><p class="desc">Cada material distinto encontrado, com os locais em que aparece. Clique no nome ou na categoria para editar — a mudança vale para todos os locais que usam este produto. Marca e fornecedor são campos independentes — um não preenche o outro.</p></div></div>
       <div class="cartao">${tabela([{ nome: 'Categoria' }, { nome: 'Produto' }, { nome: 'Marca' }, { nome: 'Fornecedor' }, { nome: 'Locais', num: 1 }, { nome: 'Onde' }], linhas ? [linhas] : [],
         { tituloVazio: 'Nenhum produto identificado', textoVazio: 'Processe as pranchas para extrair os materiais.', acaoVazio: vazioDocs })}</div>`;
+  },
+  depois(e, alvo) {
+    for (const span of alvo.querySelectorAll('[data-editavel-grupo]')) span.addEventListener('click', () => editarCampoGrupo(span));
   },
 };
 
@@ -1282,17 +1272,6 @@ function proporMarcas(e) {
 }
 
 
-
-/* ================= LOCAIS (busca por ambiente) ================= */
-
-function acharLocais(e, termo) {
-  const n = normalizar(termo);
-  if (!n) return [];
-  const vivos = locaisVivos(e);
-  const exatos = vivos.filter(a => mesmoAmbiente(a.nome, termo));
-  if (exatos.length) return exatos;
-  return vivos.filter(a => normalizar(a.nome).includes(n));
-}
 
 /* ================= FILA DE TRIAGEM: ITENS SEM LOCAL =================
    Toda especificação que o motor leu mas não conseguiu amarrar a um Local vive
@@ -1433,203 +1412,86 @@ const ACOES_ORFAOS = {
   },
 };
 
-const ABAS_LOCAIS = [
-  { id: 'locais', rotulo: 'Por local' },
-  { id: 'itens', rotulo: 'Todos os acabamentos' },
-  { id: 'esquadrias', rotulo: 'Esquadrias' },
-  { id: 'semLocal', rotulo: 'Sem local' },
-];
-
 /* Locais é o módulo central do levantamento: tudo o que pertence a um local
-   — categorias, acabamentos, esquadrias, evidências e pendências — fica
-   dentro dele, sem precisar navegar entre telas separadas. */
+   — categorias, acabamentos, esquadrias e evidências — fica dentro dele.
+   Sem busca: a interação é escolher o local na grade e abrir a ficha. */
 const locais = {
   render(e) {
     if (!e) return '';
     if (estado.param) return fichaAmbiente(e, estado.param);
-    const aba = estado.filtros.abaLocais || 'locais';
+
+    if (estado.filtros.mostrarTriagem) {
+      return `<div class="cabeca"><div>
+          <button class="btn discreto pequeno" data-acao="fecharTriagem" style="margin-bottom:6px">← Locais</button>
+          <h1>Fila de triagem</h1>
+          <p class="desc">Especificações lidas dos documentos que nenhuma geometria, rótulo ou termo de legenda amarrou a um local. É aqui que você diz à análise onde cada uma mora.</p></div></div>
+        ${cartaoOrfaos(e, { sempre: true })}`;
+    }
+
     const vivos = locaisVivos(e);
-    const conta = { locais: vivos.length, itens: itens(e).length, esquadrias: itens(e).filter(x => x.categoria === 'Esquadrias').length, semLocal: semLocal(e).length };
-    const barra = `<div class="abas-modulo">${ABAS_LOCAIS.map(x =>
-      `<button class="aba-modulo${x.id === aba ? ' ativa' : ''}" data-acao="trocarAbaLocal" data-id="${x.id}">${x.rotulo}<span class="pilula">${conta[x.id]}</span></button>`).join('')}</div>`;
-    if (aba === 'itens') return barra + acabamentos.render(e);
-    if (aba === 'esquadrias') return barra + esquadrias.render(e);
-    if (aba === 'semLocal') return barra + `<div class="cabeca"><div><h1>Fila de triagem</h1>
-      <p class="desc">Especificações lidas dos documentos que nenhuma geometria, rótulo ou termo de legenda amarrou a um local. É aqui que você diz à análise onde cada uma mora.</p></div></div>`
-      + cartaoOrfaos(e, { sempre: true });
-    return barra + porLocal(e);
+    const pavs = [...new Set(vivos.map(a => a.pavimento || ''))];
+    const grade = lista => `<div class="grade-cartoes">${lista.map(cartaoDoLocal(e)).join('')}</div>`;
+
+    return `<div class="cabeca"><div><h1>Locais</h1>
+      <p class="desc">Selecione um local para abrir a ficha completa: categorias, quadro de acabamentos, esquadrias e evidências.</p></div>
+      <div class="acoes">
+        <button class="btn" data-acao="novoAmbiente">Adicionar local</button>
+        ${vivos.length ? `<button class="btn primario" data-acao="baixarTudo">Baixar tudo (XLSX)</button>` : ''}
+      </div></div>
+
+      ${semLocal(e).length ? `<div class="aviso-faixa"><span>⚠</span><div><b>${semLocal(e).length} especificação(ões) sem local.</b> Nenhuma geometria, rótulo ou termo de legenda as amarrou a um local — a fila de triagem espera a sua decisão.
+        <button class="btn pequeno" data-acao="abrirTriagem" style="margin-left:6px">Abrir fila de triagem</button></div></div>` : ''}
+
+      ${!vivos.length ? `<div class="cartao"><div class="vazio"><h3>Nenhum local identificado</h3>
+          <p>Processe uma prancha de arquitetura para que os locais sejam lidos dos rótulos.</p>${vazioDocs}</div></div>`
+        : pavs.length > 1
+          ? pavs.map(p => `<section style="margin-bottom:26px">
+              <h2 style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);margin-bottom:10px;font-weight:600">${esc(p || 'Sem pavimento')}</h2>
+              ${grade(vivos.filter(a => (a.pavimento || '') === p))}
+            </section>`).join('')
+          : grade(vivos)}`;
   },
   depois(e, alvo) {
-    const aba = estado.filtros.abaLocais || 'locais';
     if (estado.param) { ambientes.depois?.(e, alvo); return; }
-    if (aba === 'itens') { acabamentos.depois?.(e, alvo); return; }
-    if (aba === 'esquadrias') { esquadrias.depois?.(e, alvo); return; }
-    if (aba === 'semLocal') {
+    if (estado.filtros.mostrarTriagem) {
       ligarOrfaos(alvo);
       for (const span of alvo.querySelectorAll('[data-editavel]')) span.addEventListener('click', () => editarCampo(span));
       return;
     }
-    const ta = alvo.querySelector('#buscaLocal');
-    if (ta) {
-      ta.addEventListener('keydown', ev => {
-        if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); estado.filtros.local = ta.value; render(); }
-      });
-      ta.addEventListener('change', () => { estado.filtros.local = ta.value; });
+    for (const card of alvo.querySelectorAll('.cartao-selecao[data-acao]')) {
+      card.addEventListener('keydown', ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); card.click(); } });
     }
-    for (const span of alvo.querySelectorAll('[data-editavel]')) span.addEventListener('click', () => editarCampo(span));
   },
   acoes: {
     ...ACOES_ORFAOS,
-    trocarAbaLocal({ id }) { estado.filtros.abaLocais = id; render(); },
-    buscarLocal() {
-      const ta = document.getElementById('buscaLocal');
-      estado.filtros.local = ta ? ta.value : '';
-      render();
-    },
-    limparLocal() { estado.filtros.local = ''; render(); },
-    escolherLocal({ nome }) {
-      const atual = (estado.filtros.local || '').split(/[\n;,]+/).map(t => t.trim()).filter(Boolean);
-      const i = atual.findIndex(t => normalizar(t) === normalizar(nome));
-      if (i >= 0) atual.splice(i, 1); else atual.push(nome);
-      estado.filtros.local = atual.join('\n');
-      render();
-    },
-    copiarLocais() {
-      const { linhas } = linhasDoLocal(emp());
-      copiarTsv(linhas, 'Planilha do local');
-    },
-    async baixarLocais() {
+    abrirTriagem() { estado.filtros.mostrarTriagem = true; render(); },
+    fecharTriagem() { estado.filtros.mostrarTriagem = false; render(); },
+    async baixarTudo() {
       const e = emp();
-      const { linhas, nome } = linhasDoLocal(e);
-      await store.baixar(arquivoSeguro(nome) + '-produtos.csv', exportarCsv(linhas), 'text/csv');
+      await store.baixar(arquivoSeguro(e.nome) + '-produtos-e-fornecedores.xlsx', exportarXlsx(e));
+      await salvar({ texto: 'Planilha XLSX exportada', tipo: 'exportacao' });
+      aviso('Planilha gerada.');
     },
   },
 };
 
-function porLocal(e) {
-  const busca = estado.filtros.local || '';
-  const termos = busca.split(/[\n;,]+/).map(t => t.trim()).filter(Boolean);
-  const encontrados = [];
-  const semResultado = [];
-  for (const t of termos) {
-    const achados = acharLocais(e, t);
-    if (!achados.length) semResultado.push(t);
-    for (const a of achados) if (!encontrados.includes(a)) encontrados.push(a);
-  }
-  const achadosDosLocais = ordenarAchados(itens(e).filter(a => encontrados.some(x => x.id === a.localId)));
-  const vivos = locaisVivos(e);
-  const pavs = [...new Set(vivos.map(a => a.pavimento || 'sem pavimento'))];
-  const ficha = encontrados.length === 1 ? encontrados[0] : null;
-
-  // Categoria e Local lado a lado, nessa ordem: é assim que a planilha recebe.
-  const linhas = achadosDosLocais.map(i => `<tr>
-    <td><span class="cat" style="color:var(--${corCat(i.categoria)})" data-editavel="categoria" data-id="${i.id}">${esc(i.categoria || '—')}</span></td>
-    <td><b>${esc(i.localNome)}</b><div style="color:var(--ink-3);font-size:11.5px">${esc(i.pavimento || '')}</div></td>
-    <td><span data-editavel="produto" data-id="${i.id}">${celula(i.produto)}</span></td>
-    <td style="max-width:230px"><span data-editavel="sistema" data-id="${i.id}">${celula(i.sistema)}</span></td>
-    <td style="max-width:360px"><span data-editavel="descricao" data-id="${i.id}">${celula(i.descricao)}</span></td>
-    <td><span data-editavel="marca" data-id="${i.id}">${celula(i.marca)}</span></td>
-    <td style="white-space:nowrap">${seloConfianca(i.confianca)}
-      <button class="btn pequeno discreto" data-acao="verEvidencia" data-id="${i.id}">Evidências</button></td></tr>`).join('');
-
-  const niveis = niveisDe(e).filter(n => n.nivel !== 'pavimento');
-  const temPav = temNivel(e, 'pavimento');
-  // com filtro ativo, a lista de baixo mostra só os locais filtrados
-  const listados = encontrados.length ? encontrados : vivos;
-  const listaGeral = listados.map(a => {
-    const its = itensDo(e, a.id);
-    return `<tr>
-      <td><button class="btn discreto" style="padding:0;font-weight:600" data-acao="abrirAmbiente" data-id="${a.id}">${esc(a.nome)}</button></td>
-      ${temPav ? `<td>${celula(a.pavimento)}</td>` : ''}
-      ${niveis.map(n => `<td>${celula(nomeNivel(e, n.nivel, a[n.nivel + 'Id']))}</td>`).join('')}
-      <td class="num">${celula(a.area)}</td>
-      <td class="num">${its.length}</td>
-      <td class="num">${its.filter(x => x.categoria === 'Esquadrias').length}</td>
-      <td>${CATEGORIAS.filter(c => its.some(i => i.categoria === c)).map(c => `<span class="selo neutro">${c}</span>`).join(' ') || '<span class="vazio-celula"></span>'}</td>
-      ${temAreasComuns(e) ? `<td>${a.areaComum ? '<span class="selo neutro">MC</span>' : '<span class="selo neutro">MP</span>'}</td>` : ''}
-      <td>${seloStatus(a.status)}</td>
-      <td style="white-space:nowrap"><button class="btn pequeno" data-acao="abrirAmbiente" data-id="${a.id}">Abrir</button></td></tr>`;
-  }).join('');
-
-  return `<div class="cabeca"><div><h1>Locais</h1>
-    <p class="desc">Tudo o que pertence a um local fica dentro dele: categorias, acabamentos, esquadrias, evidências e pendências. Digite ou cole uma lista de locais para receber a planilha pronta, com Categoria e Local lado a lado.</p></div>
-    <div class="acoes">
-      <button class="btn" data-acao="novoAmbiente">Adicionar local</button>
-      ${encontrados.length ? `<button class="btn primario" data-acao="copiarLocais">Copiar planilha</button>
-      <button class="btn" data-acao="baixarLocais">Baixar CSV</button>
-      ${ficha ? `<button class="btn" data-acao="abrirAmbiente" data-id="${ficha.id}">Abrir local</button>` : ''}` : ''}
-    </div></div>
-
-    <div class="cartao"><div class="corpo" style="display:flex;flex-direction:column;gap:12px">
-      <div class="campo">
-        <label for="buscaLocal">Local</label>
-        <textarea id="buscaLocal" rows="2" placeholder="Ex.: ÁREA PETS&#10;COZINHA, BANHO 01" style="resize:vertical;font-family:var(--mono);font-size:13px">${esc(busca)}</textarea>
-      </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <button class="btn pequeno primario" data-acao="buscarLocal">Listar produtos</button>
-        ${busca ? '<button class="btn pequeno discreto" data-acao="limparLocal">Limpar</button>' : ''}
-        <span style="color:var(--ink-3);font-size:12.5px;margin-left:auto">${vivos.length} locais no empreendimento</span>
-      </div>
-      <details open>
-        <summary style="cursor:pointer;font-family:var(--cond);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3)">Escolher da lista</summary>
-        <div style="margin-top:10px;display:flex;flex-direction:column;gap:10px">
-          ${pavs.map(p => `<div>
-            <div style="font-size:11.5px;color:var(--ink-3);margin-bottom:5px">${esc(p)}</div>
-            <div style="display:flex;gap:6px;flex-wrap:wrap">
-              ${vivos.filter(a => (a.pavimento || 'sem pavimento') === p)
-                .map(a => `<button class="btn pequeno ${encontrados.includes(a) ? 'primario' : ''}" data-acao="escolherLocal" data-nome="${esc(a.nome)}">${esc(a.nome)}
-                  <span class="pilula" style="background:transparent">${itensDo(e, a.id).length}</span></button>`).join('')}
-            </div></div>`).join('')}
-        </div>
-      </details>
-    </div></div>
-
-    ${semLocal(e).length ? `<div class="aviso-faixa"><span>⚠</span><div><b>${semLocal(e).length} especificação(ões) sem local.</b> Elas foram lidas dos documentos mas nenhuma amarração as ligou a um local — a fila de triagem espera a sua decisão.
-      <button class="btn pequeno" data-acao="trocarAbaLocal" data-id="semLocal" style="margin-left:6px">Abrir fila de triagem</button></div></div>` : ''}
-
-    ${semResultado.length ? `<div class="aviso-faixa"><span>⚠</span><div>Sem correspondência para ${semResultado.map(t => `<b>${esc(t)}</b>`).join(', ')}. O nome precisa ser o que está na prancha — confira a lista acima.</div></div>` : ''}
-
-    ${ficha ? `<div class="placar">
-      <div><dt>Local</dt><dd style="font-size:17px">${esc(ficha.nome)}</dd></div>
-      <div><dt>Pavimento</dt><dd style="font-size:17px">${esc(ficha.pavimento || '—')}</dd></div>
-      <div><dt>Área</dt><dd style="font-size:17px">${esc(ficha.area || '—')}</dd></div>
-      <div><dt>Manual</dt><dd style="font-size:17px">${ficha.areaComum ? 'MC' : 'MP'}</dd></div>
-      <div><dt>Produtos</dt><dd>${achadosDosLocais.length}</dd></div>
-    </div>` : ''}
-
-    ${encontrados.length ? `${listaSistemas()}<div class="cartao">
-      <header><h2>${encontrados.length > 1 ? `${encontrados.length} locais · ${achadosDosLocais.length} produtos` : 'Produtos do local'}</h2>
-      <div class="acoes"><span class="selo neutro">${achadosDosLocais.length} linha(s)</span></div></header>
-      ${tabela(COLUNAS_COPIA.map(c => ({ nome: c })).concat([{ nome: '' }]), linhas ? [linhas] : [],
-        { tituloVazio: 'Nenhum produto neste local', textoVazio: 'Nenhuma tag, tabela ou trecho de memorial apontou para este local.' })}
-    </div>` : ''}
-
-    <div class="cartao"><header><h2>${encontrados.length ? (encontrados.length > 1 ? 'Locais filtrados' : 'Local filtrado') : 'Todos os locais'}</h2>
-      <div class="acoes">
-        <span class="selo neutro">${encontrados.length ? `${listados.length} de ${vivos.length}` : vivos.length}</span>
-        ${encontrados.length ? '<button class="btn pequeno" data-acao="limparLocal">Ver todos os locais</button>' : ''}
-      </div></header>
-      ${tabela([{ nome: 'Local' },
-        ...(temPav ? [{ nome: rotuloNivel(e, 'pavimento') }] : []),
-        ...niveis.map(n => ({ nome: n.singular })),
-        { nome: 'Área', num: 1 }, { nome: 'Itens', num: 1 }, { nome: 'Esquadrias', num: 1 }, { nome: 'Categorias' },
-        ...(temAreasComuns(e) ? [{ nome: 'Manual' }] : []), { nome: 'Situação' }, { nome: '' }], listaGeral ? [listaGeral] : [],
-        { tituloVazio: 'Nenhum local identificado', textoVazio: 'Processe uma prancha de arquitetura para que os locais sejam lidos dos rótulos.', acaoVazio: vazioDocs })}
-    </div>`;
-}
-
-function linhasDoLocal(e) {
-  const termos = (estado.filtros.local || '').split(/[\n;,]+/).map(t => t.trim()).filter(Boolean);
-  const encontrados = [];
-  for (const t of termos) for (const a of acharLocais(e, t)) if (!encontrados.includes(a)) encontrados.push(a);
-  const achadosDosLocais = ordenarAchados(itens(e).filter(a => encontrados.some(x => x.id === a.localId)));
-  const varios = encontrados.length > 1;
-  const base = tabelaCopia(e, achadosDosLocais);
-  if (!varios) return { linhas: base, nome: encontrados[0]?.nome || 'local' };
-  const linhas = [['Local'].concat(base[0])];
-  achadosDosLocais.forEach((i, k) => linhas.push([i.localNome || ''].concat(base[k + 1])));
-  return { linhas, nome: 'locais' };
-}
+const cartaoDoLocal = e => a => {
+  const its = itensDo(e, a.id);
+  const cats = CATEGORIAS.filter(c => its.some(i => i.categoria === c)).length;
+  const pend = its.filter(i => i.status === 'revisar' || i.status === 'conflito' || i.confianca === 'baixa').length;
+  return `<article class="cartao-selecao" data-acao="abrirAmbiente" data-id="${a.id}" role="button" tabindex="0">
+    <div class="topo">
+      <div style="min-width:0"><h3>${esc(a.nome)}</h3>
+        <div class="meta">${esc(a.area) || (its.length ? `${its.length} item(ns)` : 'sem itens ainda')}</div></div>
+      ${seloStatus(a.status)}
+    </div>
+    <dl class="emp-numeros">
+      <div><dt>Itens</dt><dd>${its.length}</dd></div>
+      <div><dt>Categorias</dt><dd>${cats}</dd></div>
+      <div><dt>Pendências</dt><dd class="${pend ? 'tom-aviso' : ''}">${pend}</dd></div>
+    </dl>
+  </article>`;
+};
 
 /* ================= GLOSSÁRIO ================= */
 const glossario = {
@@ -1740,8 +1602,8 @@ const pendenciasView = {
     const aberto = grupos.find(g => g.regra === abertoId);
 
     const auto = (e.historico || []).find(h => h.tipo === 'auditoria');
-    return `<div class="cabeca"><div><h1>Pendências de revisão</h1>
-      <p class="desc">A auditoria acontece sozinha durante o processamento: o que é objetivo e comprovado pelo documento a análise já corrige, e o que depende de interpretação chega aqui, agrupado por problema, com as fontes à vista. Nada é preenchido por suposição.</p></div>
+    return `<div class="cabeca"><div><h1>Evidências</h1>
+      <p class="desc">Painel de auditoria: de onde a leitura tirou cada informação, e o que ficou pendente de revisão. O que é objetivo e comprovado pelo documento a análise já corrige sozinha; o que depende de interpretação chega aqui, agrupado por problema, com as fontes à vista. Nada é preenchido por suposição.</p></div>
       <div class="acoes">
         <button class="btn" data-acao="reanalisar">Reanalisar</button>
         <button class="btn ${verResolvidas ? 'primario' : ''}" data-acao="alternarResolvidas">${verResolvidas ? 'Ocultar resolvidas' : 'Mostrar resolvidas'}</button>
@@ -2166,38 +2028,18 @@ const rastro = {
   },
 };
 
-/* ================= HISTÓRICO ================= */
-const historico = {
-  render(e) {
-    if (!e) return '';
-    const linhas = e.historico.map(h => `<tr>
-      <td class="num">${new Date(h.quando).toLocaleString('pt-BR')}</td>
-      <td><span class="selo neutro">${esc(h.tipo || 'evento')}</span></td>
-      <td style="max-width:520px">${esc(h.texto)}</td>
-      <td>${h.antes !== undefined ? `<span style="color:var(--critico)">${esc(String(h.antes).slice(0, 60) || '—')}</span> → <span style="color:var(--bom)">${esc(String(h.depois).slice(0, 60))}</span>` : '<span class="vazio-celula"></span>'}</td></tr>`).join('');
-    return `<div class="cabeca"><div><h1>Histórico</h1><p class="desc">Todo processamento, edição e exportação fica registrado com data, hora e valor anterior.</p></div></div>
-      <div class="cartao">${tabela([{ nome: 'Quando', num: 1 }, { nome: 'Tipo' }, { nome: 'Evento' }, { nome: 'Antes → depois' }], linhas ? [linhas] : [],
-        { tituloVazio: 'Sem histórico', textoVazio: 'As ações aparecem aqui assim que você processar ou editar algo.' })}</div>`;
-  },
-};
-
 /* ================= CONFIGURAÇÕES ================= */
 const config = {
   render(e) {
     if (!e) return '';
-    const c = estado.capacidades;
     const t = tipoDe(e);
     const todosNiveis = [...new Set(TIPOS.flatMap(x => x.niveis.map(n => n.nivel)))]
       .sort((a, b) => ORDEM_NIVEIS.indexOf(a) - ORDEM_NIVEIS.indexOf(b));
     const ativos = new Set(niveisDe(e).map(n => n.nivel));
-    return `<div class="cabeca"><div><h1>Configurações</h1><p class="desc">Cadastro, estrutura do tipo e situação do armazenamento.</p></div>
-      <div class="acoes"><button class="btn" data-acao="editarEmpAtual">Editar cadastro</button></div></div>
-
-      <div class="cartao"><header><h2>Empreendimento</h2></header><div class="corpo grade2">
-        <div class="campo"><label>Nome</label><input id="cfgNome" value="${esc(e.nome)}"></div>
-        <div class="campo"><label>Localização</label><input id="cfgEnd" value="${esc(e.localizacao || e.endereco || '')}"></div>
-        <div class="campo"><label>Responsável técnico</label><input id="cfgResp" value="${esc(e.responsavel || '')}"></div>
-      </div><div class="corpo" style="padding-top:0"><button class="btn primario" data-acao="salvarConfig">Salvar</button></div></div>
+    /* De propósito, só duas coisas moram aqui: a estrutura do tipo (não tem
+       outro lugar para viver — cadastro geral é editado no cartão do
+       empreendimento, na tela de Empreendimentos) e o motor de leitura. */
+    return `<div class="cabeca"><div><h1>Configurações</h1><p class="desc">Estrutura do tipo de empreendimento e motor de leitura.</p></div></div>
 
       <div class="cartao"><header><h2>Estrutura do empreendimento</h2>
         <div class="acoes"><span class="selo neutro">${esc(t.nome)}</span></div></header>
@@ -2214,35 +2056,7 @@ const config = {
           </div>
         </div></div>
 
-      ${cartaoNuvem()}
-      ${cartaoMotor()}
-
-      <div class="cartao"><header><h2>Armazenamento</h2></header><div class="corpo">
-        <ul class="lista-limpa">
-          <li><span class="selo ${c.db ? 'bom' : 'atencao'}">${c.db ? 'ativo' : 'local'}</span>
-            <div><b>Dados do levantamento</b><div style="color:var(--ink-2)">${c.db ? 'Gravados no banco do artefato: seguem disponíveis em qualquer máquina que abra este link.' : 'Gravados apenas neste navegador. Exporte o JSON para não depender dele.'}</div></div></li>
-          <li><span class="selo ${c.assets ? 'bom' : 'atencao'}">${c.assets ? 'ativo' : 'local'}</span>
-            <div><b>Arquivos PDF</b><div style="color:var(--ink-2)">${c.assets ? 'Enviados como anexos do artefato, além da cópia local — “Ver na prancha” funciona de outra máquina.' : 'Mantidos apenas neste navegador. Em outra máquina será preciso reenviar os PDFs para ver os recortes.'}</div></div></li>
-        </ul>
-      </div></div>
-
-      <div class="cartao"><header><h2>Vocabulário de categorias</h2></header><div class="corpo">
-        <p style="font-size:13px;color:var(--ink-2);margin-bottom:10px">Fixo por definição do processo. Nenhuma categoria nova é criada automaticamente.</p>
-        <div style="display:flex;gap:7px;flex-wrap:wrap">${CATEGORIAS.map(c2 => `<span class="selo neutro">${c2}</span>`).join('')}</div>
-      </div></div>
-
-      <div class="cartao"><header><h2>Como as tags são lidas</h2></header><div class="corpo">
-        <p style="font-size:13px;color:var(--ink-2);max-width:70ch">Forma e número são sempre lidos juntos. Um mesmo número em formas diferentes designa materiais diferentes, e o sistema nunca cruza pelo número isolado.</p>
-        <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:12px">
-          ${Object.keys(ROTULO_FORMA).map(f => marcaForma(f, '01')).join('')}
-        </div>
-        ${e.legendas.length ? `<div style="margin-top:16px">${e.legendas.slice(0, 2).map(l => `
-          <div style="font-size:12.5px;color:var(--ink-3);margin-bottom:6px">${esc(l.documento)} · página ${l.pagina}</div>
-          <div class="rolagem"><table><thead><tr><th>Forma</th><th>Bloco</th><th>Categoria</th><th>Itens</th></tr></thead><tbody>
-          ${l.blocos.map(b => `<tr><td>${marcaForma(b.forma, '')}</td><td>${esc(b.titulo)}</td><td>${celula(b.categoria)}</td>
-            <td style="max-width:520px;font-size:12.5px">${b.itens.map(i => `<span class="pilula">${esc(i.numero)}</span> ${esc(i.descricao)}`).join('<br>')}</td></tr>`).join('')}
-          </tbody></table></div>`).join('')}</div>` : ''}
-      </div></div>`;
+      ${cartaoMotor()}`;
   },
   depois(e, alvo) {
     // endereço e tempo limite do motor valem no `blur`, sem precisar de botão
@@ -2263,15 +2077,6 @@ const config = {
     });
   },
   acoes: {
-    editarEmpAtual() { VIEWS.empreendimentos.acoes.editarEmp({ id: estado.empId }); },
-    async salvarConfig() {
-      const e = emp();
-      e.nome = document.getElementById('cfgNome').value.trim() || e.nome;
-      e.localizacao = document.getElementById('cfgEnd').value.trim();
-      e.responsavel = document.getElementById('cfgResp').value.trim();
-      await salvar({ texto: 'Dados do empreendimento atualizados', tipo: 'config' });
-      render(); aviso('Salvo.');
-    },
     async alternarNivel({ nivel }) {
       const e = emp();
       const ativo = temNivel(e, nivel);
@@ -2299,25 +2104,6 @@ const config = {
 /* ================= MOTOR DE LEITURA ================= */
 /* A leitura vetorial não precisa de nada. A multimodal precisa do BFF no ar —
    e é ele que guarda a chave da API, que nunca chega ao navegador. */
-/* O estado da infraestrutura numa frase: onde os dados estão e de quem é a
-   memória que a IA está usando. Mora em Configurações, ao lado do motor. */
-function cartaoNuvem() {
-  const naNuvem = store.naNuvem();
-  const r = empresaMem.resumo();
-  return `<div class="cartao"><header><h2>Onde os dados moram</h2>
-    <div class="acoes"><span class="selo ${naNuvem ? 'bom' : 'neutro'}">${naNuvem ? 'servidor' : 'só nesta máquina'}</span></div></header>
-    <div class="corpo">
-      <p style="font-size:13px;color:var(--ink-2);max-width:78ch">${naNuvem
-        ? `Os projetos e as pranchas estão no servidor em <code>${esc(store.NUVEM.base)}</code>. Outra pessoa da equipe abre o mesmo levantamento, e a prancha abre em qualquer máquina. <b>Não há autenticação:</b> quem alcança esse endereço vê tudo — ele precisa ficar atrás de VPN ou da rede do escritório.`
-        : `Tudo está guardado apenas neste navegador. Para trabalhar em equipe, suba o BFF em <code>/server</code> e recarregue: o Prancharia detecta sozinho e passa a gravar lá.`}</p>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:14px">
-        <span class="selo ${r.ativa ? 'bom' : 'neutro'}">${r.ativa ? esc(r.ativa.nome) : 'sem empresa ativa'}</span>
-        ${r.ativa ? `<span style="font-size:12.5px;color:var(--ink-3)">${r.regras} caractere(s) de regra · ${r.fornecedores} marca(s) · ${r.termos} termo(s) no vocabulário</span>` : ''}
-        <button class="btn pequeno" data-rota="empresas">${r.ativa ? 'Ver memória da empresa' : 'Escolher empresa'}</button>
-      </div>
-    </div></div>`;
-}
-
 function cartaoMotor() {
   const ligada = iaLigada();
   const s = estado.saudeIA;           // null = não consultado, false = fora do ar
@@ -2462,9 +2248,16 @@ const ACOES_COMUNS = {
     await salvar({ texto: `Item adicionado manualmente em ${a.nome}`, tipo: 'edicao' });
     render();
   },
-  copiarQuadro({ amb }) {
-    const e = emp(); const a = acharAmbiente(amb);
-    copiarTsv(tabelaCopia(e, itensDo(e, amb)), `Quadro de ${a ? a.nome : 'local'}`);
+  /* A planilha copiável do local: Local, Categoria, Sistema, Descrição,
+     Fornecedores e Evidências — exatamente as colunas da tela, prontas para
+     colar no Google Sheets ou Excel (Evidências vai como texto: documento e
+     página, já que célula de planilha não tem botão). */
+  copiarPlanilhaLocal({ amb }) {
+    const e = emp(); const a = acharAmbiente(amb); if (!a) return;
+    const its = ordenarAchados(itensDo(e, amb));
+    const linhas = [['Local', 'Categoria', 'Sistema', 'Descrição', 'Fornecedores', 'Evidências']];
+    for (const i of its) linhas.push([a.nome, i.categoria || '', i.sistema || '', descricaoSemProduto(i), fornecedoresCelula(i), refsDe(i) || '']);
+    copiarTsv(linhas, `Planilha de ${a.nome}`);
   },
   copiarFiltrados() {
     const e = emp(); const f = estado.filtros;
@@ -2475,18 +2268,13 @@ const ACOES_COMUNS = {
     if (f.stat) lista = lista.filter(a => a.status === f.stat);
     copiarTsv(tabelaCopia(e, lista), 'Quadro');
   },
-  async baixarQuadro({ amb }) {
-    const e = emp(); const a = acharAmbiente(amb);
-    const linhas = tabelaCopia(e, itensDo(e, amb));
-    await store.baixar(arquivoSeguro(a.nome) + '-quadro-de-acabamentos.csv', exportarCsv(linhas), 'text/csv');
-  },
 };
 
 // Locais absorveu Ambientes, Acabamentos e Esquadrias: as ações das três
 // precisam responder quando a rota é 'locais'.
 locais.acoes = Object.assign({}, ambientes.acoes, esquadrias.acoes, acabamentos.acoes, locais.acoes);
 
-for (const v of [painel, empreendimentos, documentos, estrutura, locais, ambientes, esquadrias, acabamentos, produtos, fornecedores, glossario, pendenciasView, planilhas, rastro, historico, config]) {
+for (const v of [empreendimentos, documentos, estrutura, locais, ambientes, esquadrias, acabamentos, produtos, fornecedores, glossario, pendenciasView, planilhas, rastro, config]) {
   v.acoes = Object.assign({}, ACOES_COMUNS, v.acoes || {});
 }
 
@@ -2500,232 +2288,8 @@ document.addEventListener('change', async (ev) => {
 });
 
 
-/* ================= EMPRESAS — a memória técnica da construtora ================= */
-
-/* Duas coisas nesta tela, e a segunda é a que importa:
-
-   1. QUAL EMPRESA ESTÁ ATIVA. A escolha vale para a sessão inteira: ela viaja
-      em toda chamada ao servidor, escolhe o escopo do glossário e entra no
-      System Instruction do Gemini.
-
-   2. O QUE O MODELO VAI LER. O painel do fim mostra, palavra por palavra, o
-      bloco que o servidor anexa à instrução de sistema — buscado do próprio
-      servidor, não remontado aqui. Cadastrar regra de IA sem poder ver o texto
-      final é pedir para alguém confiar no escuro, e este sistema inteiro é
-      construído sobre o contrário disso. */
-
-function empresaEmEdicao() {
-  if (!estado.empresaEdit) estado.empresaEdit = empresaMem.empresaVazia();
-  return estado.empresaEdit;
-}
-
-function linhaFornecedor(f, i) {
-  return `<tr data-forn="${i}">
-    <td><input data-campo="marca" value="${esc(f.marca || '')}" placeholder="Portobello"></td>
-    <td><select data-campo="categoria"><option value="">todas as categorias</option>
-      ${CATEGORIAS.map(c => `<option ${f.categoria === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></td>
-    <td><input data-campo="fornecedor" value="${esc(f.fornecedor || '')}" placeholder="quem entrega"></td>
-    <td><input data-campo="observacao" value="${esc(f.observacao || '')}" placeholder="observação"></td>
-    <td style="text-align:right"><button class="btn discreto pequeno" data-acao="tirarFornecedor" data-i="${i}" aria-label="Remover">✕</button></td>
-  </tr>`;
-}
-
-function linhaTermo(v, i) {
-  return `<tr data-termo="${i}">
-    <td><input data-campo="de" value="${esc(v.de || '')}" placeholder="Varanda"></td>
-    <td style="width:28px;text-align:center;color:var(--ink-3)">→</td>
-    <td><input data-campo="para" value="${esc(v.para || '')}" placeholder="Terraço"></td>
-    <td><input data-campo="nota" value="${esc(v.nota || '')}" placeholder="observação"></td>
-    <td style="text-align:right"><button class="btn discreto pequeno" data-acao="tirarTermo" data-i="${i}" aria-label="Remover">✕</button></td>
-  </tr>`;
-}
-
-const empresas = {
-  render() {
-    const disponivel = empresaMem.disponivel();
-    const lista = empresaMem.empresas();
-    const ativa = empresaMem.empresaAtiva();
-    const ed = empresaEmEdicao();
-
-    const cabeca = `<div class="cabeca"><div><h1>Empresas</h1>
-      <p class="desc">A memória técnica de cada construtora: como ela nomeia os ambientes, que marcas homologa e o que a IA precisa saber antes de ler a primeira prancha. O que está aqui entra na leitura de todos os projetos dessa empresa.</p></div>
-      <div class="acoes">${disponivel ? '<button class="btn" data-acao="novaEmpresa">Nova empresa</button>' : ''}</div></div>`;
-
-    if (!disponivel) {
-      return cabeca + `<div class="cartao"><div class="vazio">
-        <h3>O servidor não está no ar</h3>
-        <p>As empresas moram no servidor — é o que permite a mesma memória valer para toda a equipe, em qualquer máquina. Suba o BFF em <code>/server</code> e recarregue esta página.</p>
-        <p style="margin-top:10px"><button class="btn" data-rota="config">Abrir configurações</button></p>
-      </div></div>`;
-    }
-
-    const cartoes = lista.length ? `<div class="cartao"><header><h2>Construtoras</h2>
-      <div class="acoes"><span class="selo neutro">${lista.length}</span></div></header>
-      <div class="corpo"><div class="tipos">
-        ${lista.map(e => `<button type="button" class="tipo" data-acao="ativarEmpresa" data-id="${esc(e.id)}"
-            aria-pressed="${ativa && ativa.id === e.id ? 'true' : 'false'}">
-          <span class="fam">${e.projetos || 0} projeto(s)</span>
-          <b>${esc(e.nome)}</b>
-          <small>${(e.regrasIa || '').trim() ? 'regras de IA cadastradas' : 'sem regras de IA'}
-            · ${(e.fornecedoresHomologados || []).length} marca(s)
-            · ${(e.vocabulario || []).length} termo(s)</small>
-        </button>`).join('')}
-      </div>
-      ${ativa ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;align-items:center">
-        <button class="btn pequeno" data-acao="editarEmpresa" data-id="${esc(ativa.id)}">Editar ${esc(ativa.nome)}</button>
-        <button class="btn pequeno" data-acao="ativarEmpresa" data-id="">Trabalhar sem empresa</button>
-        <button class="btn discreto pequeno" data-acao="apagarEmpresa" data-id="${esc(ativa.id)}">Apagar</button>
-      </div>` : '<p style="font-size:13px;color:var(--ink-3);margin-top:12px">Nenhuma empresa ativa: a leitura roda sem contexto de construtora, como sempre rodou.</p>'}
-      </div></div>` : `<div class="cartao"><div class="vazio">
-        <h3>Nenhuma empresa cadastrada</h3>
-        <p>Cadastre a primeira construtora para começar a acumular o que ela tem de particular — o nome que dá aos ambientes, as marcas que homologa, o que a IA precisa saber.</p>
-        <p style="margin-top:10px"><button class="btn primario" data-acao="novaEmpresa">Nova empresa</button></p>
-      </div></div>`;
-
-    const forn = ed.fornecedoresHomologados || [];
-    const vocab = ed.vocabulario || [];
-
-    const editor = `<div class="cartao" id="editorEmpresa">
-      <header><h2>${ed.id ? 'Editar' : 'Nova'} empresa</h2>
-        <div class="acoes"><button class="btn primario pequeno" data-acao="salvarEmpresa">Salvar</button>
-        ${ed.id ? '<button class="btn discreto pequeno" data-acao="novaEmpresa">Cancelar</button>' : ''}</div></header>
-      <div class="corpo">
-        <div class="campo"><label for="empNomeEmpresa">Nome da construtora</label>
-          <input id="empNomeEmpresa" value="${esc(ed.nome || '')}" placeholder="Construtora Exemplo"></div>
-
-        <div class="campo" style="margin-top:18px"><label for="empRegras">Regras de IA</label>
-          <textarea id="empRegras" rows="5" placeholder="Ex.: Nesta empresa as varandas são chamadas de Terraço. O padrão de piso de área comum é porcelanato 90x90 retificado. Rodapé é sempre do mesmo material do piso, salvo indicação na prancha.">${esc(ed.regrasIa || '')}</textarea>
-          <small style="color:var(--ink-3);font-size:12px;display:block;margin-top:6px">Texto livre, em português, escrito para o modelo. Vai para a instrução de sistema do Gemini em toda leitura desta empresa.</small></div>
-
-        <h3 style="margin:22px 0 8px;font-size:14px">Marcas e fornecedores homologados</h3>
-        <p style="font-size:12.5px;color:var(--ink-2);max-width:80ch;margin-bottom:10px">Servem para <b>reconhecer e grafar certo</b> uma marca que o documento cita — e para o glossário sugerir o fornecedor junto. Não servem para atribuir marca a item que a prancha deixou sem marca.</p>
-        <div class="rolagem"><table id="tabFornecedores"><thead><tr>
-          <th>Marca</th><th>Categoria</th><th>Fornecedor</th><th>Observação</th><th></th></tr></thead>
-          <tbody>${forn.length ? forn.map(linhaFornecedor).join('')
-            : '<tr><td colspan="5" style="color:var(--ink-3)">nenhuma marca homologada</td></tr>'}</tbody></table></div>
-        <button class="btn pequeno" data-acao="novoFornecedor" style="margin-top:10px">Adicionar marca</button>
-
-        <h3 style="margin:22px 0 8px;font-size:14px">Vocabulário da casa</h3>
-        <p style="font-size:12.5px;color:var(--ink-2);max-width:80ch;margin-bottom:10px">O nome que a prancha usa, à esquerda; o que esta empresa escreve no manual, à direita.</p>
-        <div class="rolagem"><table id="tabVocabulario"><thead><tr>
-          <th>No documento</th><th></th><th>Nesta empresa</th><th>Observação</th><th></th></tr></thead>
-          <tbody>${vocab.length ? vocab.map(linhaTermo).join('')
-            : '<tr><td colspan="5" style="color:var(--ink-3)">nenhum termo cadastrado</td></tr>'}</tbody></table></div>
-        <button class="btn pequeno" data-acao="novoTermo" style="margin-top:10px">Adicionar termo</button>
-      </div></div>`;
-
-    const prova = ativa ? `<div class="cartao"><header><h2>O que a IA vai ler</h2>
-      <div class="acoes"><button class="btn pequeno" data-acao="verPromptEmpresa" data-id="${esc(ativa.id)}">Carregar do servidor</button></div></header>
-      <div class="corpo">
-        <p style="font-size:12.5px;color:var(--ink-2);max-width:80ch">Este é o texto exato que o servidor anexa à instrução de sistema do Gemini quando <b>${esc(ativa.nome)}</b> está ativa. Ele vem do próprio servidor — não é uma reconstrução desta tela.</p>
-        <pre id="promptEmpresa" style="margin-top:12px;white-space:pre-wrap;font-family:var(--mono);font-size:11.5px;line-height:1.6;color:var(--ink-2);background:var(--surface-2);padding:16px;border-radius:var(--raio-s);max-height:420px;overflow:auto">${
-          estado.promptEmpresa != null ? esc(estado.promptEmpresa) : 'clique em “Carregar do servidor” para ver o texto final.'}</pre>
-      </div></div>` : '';
-
-    return cabeca + cartoes + editor + prova;
-  },
-
-  acoes: {
-    async ativarEmpresa({ id }) {
-      await empresaMem.ativar(id || null);
-      estado.promptEmpresa = null;
-      aviso(id ? `Empresa ativa: ${empresaMem.empresaAtiva()?.nome || id}` : 'Trabalhando sem empresa.');
-      render();
-    },
-
-    novaEmpresa() { estado.empresaEdit = empresaMem.empresaVazia(); estado.promptEmpresa = null; render(); },
-
-    async editarEmpresa({ id }) {
-      const e = empresaMem.empresas().find(x => x.id === id) || await store.lerEmpresa(id);
-      /* cópia funda: editar a tabela não pode mexer no objeto do cache */
-      estado.empresaEdit = e ? JSON.parse(JSON.stringify(e)) : empresaMem.empresaVazia();
-      render();
-    },
-
-    novoFornecedor() {
-      const ed = empresaEmEdicao();
-      colherEditor();
-      (ed.fornecedoresHomologados = ed.fornecedoresHomologados || []).push({ marca: '', categoria: '', fornecedor: '', observacao: '' });
-      render();
-    },
-    tirarFornecedor({ i }) {
-      colherEditor();
-      empresaEmEdicao().fornecedoresHomologados.splice(Number(i), 1);
-      render();
-    },
-    novoTermo() {
-      const ed = empresaEmEdicao();
-      colherEditor();
-      (ed.vocabulario = ed.vocabulario || []).push({ de: '', para: '', nota: '' });
-      render();
-    },
-    tirarTermo({ i }) {
-      colherEditor();
-      empresaEmEdicao().vocabulario.splice(Number(i), 1);
-      render();
-    },
-
-    async salvarEmpresa() {
-      colherEditor();
-      const ed = empresaEmEdicao();
-      if (!(ed.nome || '').trim()) return aviso('Dê um nome à empresa antes de salvar.');
-      try {
-        const salva = await empresaMem.salvar(ed);
-        /* empresa recém-criada já entra ativa: é o que a pessoa quer em seguida */
-        if (salva && !empresaMem.empresaAtiva()) await empresaMem.ativar(salva.id, { silencioso: true });
-        estado.empresaEdit = salva ? JSON.parse(JSON.stringify(salva)) : empresaMem.empresaVazia();
-        estado.promptEmpresa = null;
-        aviso(`“${salva.nome}” salva.`);
-      } catch (e) { aviso(`Não consegui salvar: ${e.message}`); }
-      render();
-    },
-
-    async apagarEmpresa({ id }) {
-      const alvo = empresaMem.empresas().find(x => x.id === id);
-      if (!confirm(`Apagar “${alvo?.nome || id}”?\n\nOs projetos dela NÃO são apagados: voltam para “sem empresa” e podem ser reatribuídos.`)) return;
-      try { await empresaMem.apagar(id); estado.empresaEdit = empresaMem.empresaVazia(); aviso('Empresa apagada.'); }
-      catch (e) { aviso(`Não consegui apagar: ${e.message}`); }
-      render();
-    },
-
-    async verPromptEmpresa({ id }) {
-      const r = await store.promptDaEmpresa(id);
-      estado.promptEmpresa = r
-        ? (r.bloco || '(esta empresa não tem nada cadastrado: a instrução do Gemini fica idêntica à de sempre)')
-        : '(não consegui falar com o servidor)';
-      render();
-    },
-  },
-};
-
-/* Os inputs da tabela não disparam evento a cada tecla — colhemos o que está
-   nela antes de qualquer re-render, senão o que foi digitado se perde. */
-function colherEditor() {
-  const ed = empresaEmEdicao();
-  const nome = document.getElementById('empNomeEmpresa');
-  const regras = document.getElementById('empRegras');
-  if (nome) ed.nome = nome.value;
-  if (regras) ed.regrasIa = regras.value;
-
-  const lerLinhas = (idTabela, atributo, campos) => {
-    const t = document.getElementById(idTabela);
-    if (!t) return null;
-    const linhas = [...t.querySelectorAll(`tbody tr[${atributo}]`)];
-    return linhas.map(tr => {
-      const o = {};
-      for (const c of campos) o[c] = tr.querySelector(`[data-campo="${c}"]`)?.value?.trim() || '';
-      return o;
-    });
-  };
-  const f = lerLinhas('tabFornecedores', 'data-forn', ['marca', 'categoria', 'fornecedor', 'observacao']);
-  if (f) ed.fornecedoresHomologados = f;
-  const v = lerLinhas('tabVocabulario', 'data-termo', ['de', 'para', 'nota']);
-  if (v) ed.vocabulario = v;
-  return ed;
-}
-
 export const VIEWS = {
-  painel, empreendimentos, documentos, estrutura, locais, ambientes, esquadrias,
+  empreendimentos, documentos, estrutura, locais, ambientes, esquadrias,
   acabamentos, produtos, fornecedores, glossario, pendencias: pendenciasView,
-  planilhas, rastro, historico, config, empresas,
+  planilhas, rastro, config,
 };

@@ -4,9 +4,7 @@ import * as store from './core/storage.js';
 import { empreendimentoVazio, registrarHistorico, novoId, migrar, sincronizar, CONFIANCA, STATUS } from './core/model.js';
 import { niveisDe, tipoDe, rotuloNivel, temAreasComuns } from './core/tipos.js';
 import { pendencias } from './core/exporter.js';
-import { carregarAprendidas, regrasAprendidas, aprender as aprenderRegra, esquecer as esquecerRegra,
-  ligarMemoriaDeEmpresa, recarregarParaEmpresa } from './core/glossario.js';
-import * as empresaMem from './core/companyMemory.js';
+import { carregarAprendidas, regrasAprendidas, aprender as aprenderRegra, esquecer as esquecerRegra } from './core/glossario.js';
 import { VIEWS } from './ui/views.js';
 import { fecharGaveta } from './ui/drawer.js';
 
@@ -24,43 +22,17 @@ export const estado = {
 
 export const emp = () => estado.emps.find(e => e.id === estado.empId) || null;
 
-/** O menu é montado a partir do tipo do empreendimento: só aparece o que
-    existe naquele projeto. */
+/** Menu enxuto, de propósito: cinco botões, sempre os mesmos, focados no
+    empreendimento aberto. Sem projeto aberto não há menu — só a home. */
 export function menuDe(e) {
-  const itens = [
-    { grupo: 'Projeto' },
-    { id: 'empreendimentos', nome: 'Empreendimentos', ico: 'pasta' },
-    { id: 'empresas', nome: 'Empresas', ico: 'tag', global: true,
-      cont: () => { const n = empresaMem.empresaAtiva()?.nome || ''; return n.length > 14 ? n.slice(0, 13) + '…' : n; } },
-  ];
-  if (!e) return itens;
-  itens.push(
-    { id: 'painel', nome: 'Visão geral', ico: 'painel' },
-    { id: 'documentos', nome: 'Documentos', ico: 'arquivo', cont: x => x.documentos.length },
-  );
-  const niveis = niveisDe(e);
-  if (niveis.length) {
-    itens.push({ grupo: 'Estrutura' });
-    for (const n of niveis) {
-      itens.push({
-        id: 'estrutura', param: n.nivel, nome: n.plural, ico: n.ico,
-        cont: x => (x.estrutura[n.nivel] || []).length,
-      });
-    }
-  }
-  itens.push(
-    { grupo: 'Levantamento' },
+  if (!e) return [];
+  return [
+    { id: 'documentos', nome: 'Upload', ico: 'arquivo', cont: x => x.documentos.length },
     { id: 'locais', nome: 'Locais', ico: 'planta', cont: x => (x.locais || []).filter(a => a.status !== 'excluido').length },
     { id: 'produtos', nome: 'Produtos', ico: 'caixa' },
-    { id: 'fornecedores', nome: 'Marcas e fornecedores', ico: 'tag' },
-    { id: 'glossario', nome: 'Glossário', ico: 'livro' },
-    { grupo: 'Fechamento' },
-    { id: 'pendencias', nome: 'Pendências de revisão', ico: 'alerta', cont: x => pendencias(x).length },
-    { id: 'planilhas', nome: 'Planilhas', ico: 'grade' },
-    { id: 'historico', nome: 'Histórico', ico: 'relogio' },
+    { id: 'pendencias', nome: 'Evidências', ico: 'alerta', cont: x => pendencias(x).length },
     { id: 'config', nome: 'Configurações', ico: 'ajuste' },
-  );
-  return itens;
+  ];
 }
 
 export const ICONES = {
@@ -140,15 +112,15 @@ function lerRota() {
   estado.param = param ? decodeURIComponent(param) : null;
 }
 
-const ROTAS_SEM_PROJETO = new Set(['empreendimentos', 'empresas']);
+const ROTAS_SEM_PROJETO = new Set(['empreendimentos']);
 
 export function render() {
   const e = emp();
-  /* Rotas que não dependem de um projeto aberto. Empresas é a primeira: a
-     memória da construtora existe antes e depois de qualquer empreendimento. */
+  /* Única rota que não depende de projeto aberto: a lista de empreendimentos
+     é a casa — tudo o mais vive dentro de um empreendimento aberto. */
   if (!e && !ROTAS_SEM_PROJETO.has(estado.rota)) estado.rota = 'empreendimentos';
   const alvo = document.getElementById('conteudo');
-  const view = VIEWS[estado.rota] || (e ? VIEWS.painel : VIEWS.empreendimentos);
+  const view = VIEWS[estado.rota] || (e ? VIEWS.locais : VIEWS.empreendimentos);
   const menu = menuDe(e);
   document.getElementById('nav').innerHTML = menu.map(m => {
     if (m.grupo) return `<div class="grupo">${m.grupo}</div>`;
@@ -197,9 +169,10 @@ export const ACOES = {
        servidor até alguém abrir de fato. Este é o segundo passo. */
     await hidratar(id);
     estado.empId = id;
-    irPara('painel');
+    estado.filtros = {};
+    irPara('locais');
   },
-  fecharEmpreendimento() { estado.empId = null; irPara('empreendimentos'); },
+  fecharEmpreendimento() { estado.empId = null; estado.filtros = {}; irPara('empreendimentos'); },
   fecharGaveta() { fecharGaveta(); },
   menu() { document.getElementById('lateral').classList.toggle('aberta'); },
   tema() {
@@ -233,13 +206,7 @@ export async function hidratar(id) {
 export async function iniciarApp() {
   try { const t = localStorage.getItem('prancharia:tema'); if (t) document.documentElement.setAttribute('data-theme', t); } catch { /* ok */ }
   estado.capacidades = await store.iniciar();
-  /* a memória da construtora antes do glossário: as regras aprendidas são
-     lidas no escopo da empresa que já estava ativa na sessão anterior */
-  ligarMemoriaDeEmpresa(empresaMem);
-  await empresaMem.iniciarEmpresas();
   carregarAprendidas(await store.lerGlossario());
-  /* trocar de construtora troca o glossário junto */
-  empresaMem.aoMudar(() => { recarregarParaEmpresa(() => store.lerGlossario()).then(render); });
   estado.emps = (await store.listarEmpreendimentos()).map(migrar);
   estado.empId = null;
   lerRota();
@@ -250,7 +217,7 @@ export async function iniciarApp() {
 }
 
 export async function gravarGlossario() { await store.salvarGlossario(regrasAprendidas()); }
-export { store, novoId, registrarHistorico, aprenderRegra, esquecerRegra, regrasAprendidas, empreendimentoVazio, migrar, empresaMem };
+export { store, novoId, registrarHistorico, aprenderRegra, esquecerRegra, regrasAprendidas, empreendimentoVazio, migrar };
 
 /* ---------- modal ---------- */
 export function abrirModal(html, aoMontar) {
