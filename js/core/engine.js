@@ -381,7 +381,7 @@ export async function processarComIAHibrida(base64Local, base64Legenda, dadosVet
 
 /** A chamada ao BFF e o mapeamento da resposta para Especificação/Evidência. */
 async function lerComMultimodal(base64Local, base64Legenda, dados) {
-  const { itens = [], legendas = {}, local = null, docMeta = {}, pagina = 1, tipologia = '', base = null } = dados;
+  const { itens = [], legendas = {}, local = null, docMeta = {}, pagina = 1, tipologia = '', base = null, codigos = [] } = dados;
 
   const imagemLocal = await imagem(base64Local);
   if (!imagemLocal) throw new Error('sem recorte do local para enviar');
@@ -394,6 +394,7 @@ async function lerComMultimodal(base64Local, base64Legenda, dados) {
     vetor: {
       tags: itens.map(({ tag }) => ({ forma: tag.forma, numero: tag.numero })),
       legenda: linhasDaLegenda(legendas),
+      codigos,
     },
   });
 
@@ -733,6 +734,23 @@ function casarLocais(emp, folha, docMeta) {
   return criados;
 }
 
+/** Linhas cruas do QUADRO DE ESQUADRIAS / QUADRO DE PEDRAS desta folha, para
+    a IA cruzar o código que ela leu no desenho ("P08", "J10", "PA3") — essas
+    tabelas não têm coluna de ambiente, então o vetorial nunca sabe de quem é
+    a linha, mas a IA sabe: ela está olhando o local exato. */
+function codigosDeTabelas(folha) {
+  const linhas = [];
+  for (const tb of (folha.tabelas || [])) {
+    if (tb.tipo !== 'esquadrias' && tb.tipo !== 'pedras') continue;
+    if (tb.titulo) linhas.push(`[${tb.titulo}]`);
+    for (const l of tb.linhas) {
+      const texto = (l.celulas || []).filter(Boolean).join(' | ');
+      if (texto) linhas.push(texto);
+    }
+  }
+  return linhas;
+}
+
 /**
  * Orquestra uma folha: radar de coordenadas → recortes → motor híbrido →
  * árvore de Locais. Termina projetando as listas antigas para o exporter e as
@@ -781,6 +799,8 @@ export async function consolidar(emp, folha, docMeta) {
     .filter(a => a.bboxTexto)
     .map(a => ({ id: a.__local ? a.__local.id : null, caixa: a.bboxTexto }));
 
+  const codigosDaFolha = codigosDeTabelas(folha);
+
   const tarefas = [...porLocal.values()].map(({ local, itens }) => async () => {
     const outrasCaixas = local
       ? caixasDaFolha.filter(c => c.id !== local.id).map(c => c.caixa)
@@ -790,6 +810,7 @@ export async function consolidar(emp, folha, docMeta) {
       : null;
     return processarComIAHibrida(imgLocal, imgLegenda, {
       itens, legendas: folha.legendas, local, docMeta, pagina: folha.pagina, tipologia, base,
+      codigos: codigosDaFolha,
       recorteDetalhe: (caixa) => recorteBase64(folha.page, janelaDoDetalhe(caixa, base), { largura: OPCOES_RECORTE.larguraDetalhe }),
     });
   });

@@ -46,19 +46,23 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import {
   INSTRUCAO, SCHEMA, contexto, sanear, CATEGORIAS,
   INSTRUCAO_MEMORIAL, SCHEMA_MEMORIAL, contextoMemorial, sanearMemorial, lotesDePaginas,
   INSTRUCAO_QUADRO, SCHEMA_QUADRO, contextoQuadro, sanearQuadro,
   blocoDeEmpresa, assinaturaDeEmpresa,
 } from './prompt.js';
+import { gerarComCadeia, PROVEDORES_CONFIGURADOS } from './provedores.js';
 import * as banco from './db.js';
 import armazenamento, { lerMultipart } from './armazenamento.js';
 
 const PORTA = Number(process.env.PORT || 3000);
+/* CHAVE/MODELO continuam existindo só para o /api/health e as mensagens de
+   erro citarem o Gemini por nome — quem decide de fato quais provedores
+   rodam é provedores.js, lendo suas próprias env vars. */
 const CHAVE = (process.env.GEMINI_API_KEY || '').trim();
 const MODELO = process.env.GEMINI_MODEL || 'gemini-3.1-pro-preview';
+const ALGUM_PROVEDOR = PROVEDORES_CONFIGURADOS.gemini || PROVEDORES_CONFIGURADOS.groq || PROVEDORES_CONFIGURADOS.openai;
 const SIMULAR = /^(1|true|sim)$/i.test(process.env.SIMULAR || '');
 const TEMPO_LIMITE = Number(process.env.GEMINI_TIMEOUT_MS || 90000);
 const TEMPO_LIMITE_MEMORIAL = Number(process.env.GEMINI_TIMEOUT_MEMORIAL_MS || 180000);
@@ -108,46 +112,11 @@ function registrar(info) {
 /* o cliente do modelo                                                 */
 /* ------------------------------------------------------------------ */
 
-let genAI = null;
-const modelos = new Map();
-
 const INSTRUCAO_DO_MODO = { memorial: INSTRUCAO_MEMORIAL, quadro: INSTRUCAO_QUADRO, visao: INSTRUCAO };
-
-/* Três modos, três instruções de sistema e três schemas. O modelo é o mesmo;
-   o contrato de saída é que muda.
-
-   A EMPRESA ENTRA AQUI, NO SYSTEM INSTRUCTION, e não no texto do usuário. As
-   regras da construtora são política permanente da conversa, não dado de uma
-   requisição — é exatamente para isso que a instrução de sistema existe, e é
-   ali que ela resiste melhor ao que vem depois.
-
-   A chave do cache carrega a assinatura das regras. Editar as regras de uma
-   empresa na tela muda a assinatura e produz um modelo novo na chamada
-   seguinte: não é preciso reiniciar o servidor para a mudança valer. */
-function pegarModelo(modo = 'visao', empresa = null) {
-  if (!CHAVE) return null;
-  const bloco = blocoDeEmpresa(empresa);
-  const chave = modo + '|' + (bloco ? assinaturaDeEmpresa(empresa) : '');
-  if (modelos.has(chave)) return modelos.get(chave);
-  genAI = genAI || new GoogleGenerativeAI(CHAVE);
-  const m = genAI.getGenerativeModel({
-    model: MODELO,
-    systemInstruction: (INSTRUCAO_DO_MODO[modo] || INSTRUCAO) + bloco,
-    generationConfig: {
-      responseMimeType: 'application/json',
-      responseSchema: modo === 'memorial' ? SCHEMA_MEMORIAL
-        : modo === 'quadro' ? SCHEMA_QUADRO : SCHEMA,
-      /* leitura de documento técnico não é tarefa criativa: temperatura baixa
-         reduz invenção, que é exatamente o que a R2 e a M7 proíbem. */
-      temperature: 0.1,
-      topP: 0.8,
-      /* um quadro de 19 ambientes × 3 categorias são 57 itens: precisa de espaço */
-      maxOutputTokens: modo === 'visao' ? 8192 : 16384,
-    },
-  });
-  modelos.set(chave, m);
-  return m;
-}
+const SCHEMA_DO_MODO = { memorial: SCHEMA_MEMORIAL, quadro: SCHEMA_QUADRO, visao: SCHEMA };
+/* Como cada modo embrulha o array quando quem responde é Groq/OpenAI (ver
+   provedores.js) — a mesma chave que prompt.js/sanear() já sabe ler. */
+const CHAVE_ENVOLTORIA_DO_MODO = { memorial: 'atualizacoes', quadro: 'itens', visao: 'especificacoes' };
 
 /* Lê a empresa pedida pela requisição. Nunca lança: empresa inexistente ou
    banco fora do ar devolvem null, e a chamada segue sem contexto — perder o
@@ -159,30 +128,28 @@ async function empresaDaRequisicao(req) {
   catch (e) { console.warn('[empresa] não consegui ler', id, '-', e.message); return null; }
 }
 
-/* JSON do modelo, com um resgate para o caso de truncamento. */
-function lerJson(cru) {
-  try { return JSON.parse(cru); } catch { /* segue para o resgate */ }
-  const i = cru.indexOf('['), j = cru.lastIndexOf(']');
-  if (i < 0 || j <= i) throw new Error('resposta do modelo não é JSON');
-  return JSON.parse(cru.slice(i, j + 1));
-}
+/** Uma geração, com tempo limite por tentativa. Tenta Gemini, depois Groq,
+    depois OpenAI (ver provedores.js) — devolve { bruto, tokens, modelo, provedor }.
 
-/** Uma geração, com tempo limite. Devolve { bruto, tokens }. */
+    A EMPRESA ENTRA AQUI, NO SYSTEM INSTRUCTION, e não no texto do usuário. As
+    regras da construtora são política permanente da conversa, não dado de uma
+    requisição — é exatamente para isso que a instrução de sistema existe, e é
+    ali que ela resiste melhor ao que vem depois.
+
+    A chave de cache do Gemini carrega a assinatura das regras: editar as
+    regras de uma empresa na tela muda a assinatura e produz um modelo novo na
+    chamada seguinte, sem reiniciar o servidor. */
 async function gerar(modo, partes, limiteMs = TEMPO_LIMITE, empresa = null) {
-  const abortar = new AbortController();
-  const relogio = setTimeout(() => abortar.abort(), limiteMs);
-  try {
-    const r = await pegarModelo(modo, empresa).generateContent(
-      { contents: [{ role: 'user', parts: partes }] },
-      { signal: abortar.signal },
-    );
-    return { bruto: lerJson(r.response.text()), tokens: (r.response.usageMetadata || {}).totalTokenCount || 0 };
-  } catch (err) {
-    const estourou = err.name === 'AbortError' || /abort/i.test(err.message || '');
-    throw estourou ? new Error(`tempo limite de ${limiteMs} ms estourado`) : err;
-  } finally {
-    clearTimeout(relogio);
-  }
+  const bloco = blocoDeEmpresa(empresa);
+  return gerarComCadeia({
+    instrucaoSistema: (INSTRUCAO_DO_MODO[modo] || INSTRUCAO) + bloco,
+    schema: SCHEMA_DO_MODO[modo] || SCHEMA,
+    chaveEnvoltoria: CHAVE_ENVOLTORIA_DO_MODO[modo] || 'especificacoes',
+    chaveCache: modo + '|' + (bloco ? assinaturaDeEmpresa(empresa) : ''),
+    /* um quadro de 19 ambientes × 3 categorias são 57 itens: precisa de espaço */
+    maxOutputTokens: modo === 'visao' ? 8192 : 16384,
+    partes, limiteMs,
+  });
 }
 
 /** Resposta canned para testar a ligação do frontend sem gastar cota. */
@@ -314,6 +281,7 @@ app.get('/api/health', async (_req, res) => {
     ok: true, servico: 'prancharia-bff',
     modelo: MODELO,
     chaveConfigurada: !!CHAVE,
+    provedores: PROVEDORES_CONFIGURADOS,
     simulando: SIMULAR,
     timeoutMs: TEMPO_LIMITE,
     timeoutMemorialMs: TEMPO_LIMITE_MEMORIAL,
@@ -341,12 +309,12 @@ app.post('/api/vision/process-local', async (req, res) => {
     return res.json({ ok: true, motor: 'multimodal_gemini', modelo: 'simulado', ms, especificacoes });
   }
 
-  if (!CHAVE) {
+  if (!ALGUM_PROVEDOR) {
     const ms = agora() - t0;
-    registrar({ ok: false, ms, local: local.nome, erro: 'GEMINI_API_KEY ausente' });
+    registrar({ ok: false, ms, local: local.nome, erro: 'nenhum provedor de IA configurado' });
     return res.status(503).json({
-      ok: false, erro: 'GEMINI_API_KEY não configurada no servidor',
-      dica: 'crie server/.env com GEMINI_API_KEY=... ou rode com SIMULAR=1 para testar a ligação',
+      ok: false, erro: 'nenhuma chave de IA configurada no servidor (GEMINI_API_KEY, GROQ_API_KEY ou OPENAI_API_KEY)',
+      dica: 'crie server/.env com pelo menos uma delas, ou rode com SIMULAR=1 para testar a ligação',
       especificacoes: [],
     });
   }
@@ -359,7 +327,7 @@ app.post('/api/vision/process-local', async (req, res) => {
     partes = [
       { text: 'IMAGEM 1 — REGIÃO DO LOCAL:' }, pLocal,
       ...(pLeg ? [{ text: 'IMAGEM 2 — BLOCO DE LEGENDAS DA PRANCHA:' }, pLeg] : [{ text: 'IMAGEM 2 não foi enviada: esta prancha não tem bloco de legendas recortável.' }]),
-      { text: contexto({ local, tags: vetor.tags || [], legenda: vetor.legenda || [], documento, pagina }) },
+      { text: contexto({ local, tags: vetor.tags || [], legenda: vetor.legenda || [], codigos: vetor.codigos || [], documento, pagina }) },
     ];
   } catch (err) {
     const ms = agora() - t0;
@@ -369,13 +337,13 @@ app.post('/api/vision/process-local', async (req, res) => {
 
   try {
     const empresa = await empresaDaRequisicao(req);
-    const { bruto, tokens } = await gerar('visao', partes, TEMPO_LIMITE, empresa);
+    const { bruto, tokens, modelo, provedor } = await gerar('visao', partes, TEMPO_LIMITE, empresa);
     const especificacoes = sanear(bruto);
     const ms = agora() - t0;
     registrar({ ok: true, ms, local: local.nome, itens: especificacoes.length, tokens,
-      erro: empresa ? `ctx ${empresa.nome}` : '' });
+      erro: (provedor !== 'gemini' ? `via ${provedor} · ` : '') + (empresa ? `ctx ${empresa.nome}` : '') });
     res.json({
-      ok: true, motor: 'multimodal_gemini', modelo: MODELO, ms, tokens: tokens || null,
+      ok: true, motor: 'multimodal_gemini', provedor, modelo, ms, tokens: tokens || null,
       empresa: empresa ? { id: empresa.id, nome: empresa.nome } : null,
       descartados: (Array.isArray(bruto) ? bruto.length : 0) - especificacoes.length,
       especificacoes,
@@ -416,12 +384,12 @@ app.post('/api/text/process-memorial', async (req, res) => {
     return res.json({ ok: true, motor: 'multimodal_gemini', modelo: 'simulado', ms, lotes: 1, atualizacoes, recusadas });
   }
 
-  if (!CHAVE) {
+  if (!ALGUM_PROVEDOR) {
     const ms = agora() - t0;
-    registrar({ ok: false, ms, local: rotulo, erro: 'GEMINI_API_KEY ausente' });
+    registrar({ ok: false, ms, local: rotulo, erro: 'nenhum provedor de IA configurado' });
     return res.status(503).json({
-      ok: false, erro: 'GEMINI_API_KEY não configurada no servidor',
-      dica: 'crie server/.env com GEMINI_API_KEY=... ou rode com SIMULAR=1',
+      ok: false, erro: 'nenhuma chave de IA configurada no servidor (GEMINI_API_KEY, GROQ_API_KEY ou OPENAI_API_KEY)',
+      dica: 'crie server/.env com pelo menos uma delas, ou rode com SIMULAR=1',
       atualizacoes: [],
     });
   }
@@ -432,6 +400,7 @@ app.post('/api/text/process-memorial', async (req, res) => {
   const lotes = lotesDePaginas(paginas);
   const bruto = [];
   let tokens = 0;
+  let modelo = '', provedor = '';
   const empresa = await empresaDaRequisicao(req);
   try {
     for (let i = 0; i < lotes.length; i++) {
@@ -440,7 +409,7 @@ app.post('/api/text/process-memorial', async (req, res) => {
         ? `Este é o lote ${i + 1} de ${lotes.length} do memorial. Considere somente as páginas deste lote.\n\n`
         : '';
       const r = await gerar('memorial', [{ text: cabeca + parte }], TEMPO_LIMITE_MEMORIAL, empresa);
-      tokens += r.tokens;
+      tokens += r.tokens; modelo = r.modelo; provedor = r.provedor;
       if (Array.isArray(r.bruto)) bruto.push(...r.bruto);
       else if (r.bruto && Array.isArray(r.bruto.atualizacoes)) bruto.push(...r.bruto.atualizacoes);
     }
@@ -456,9 +425,9 @@ app.post('/api/text/process-memorial', async (req, res) => {
   const ms = agora() - t0;
   const conflitos = atualizacoes.filter(a => a.acao === 'conflito').length;
   registrar({ ok: true, ms, local: rotulo, itens: atualizacoes.length, tokens,
-    erro: conflitos ? `${conflitos} conflito(s)` : '' });
+    erro: (provedor !== 'gemini' ? `via ${provedor} · ` : '') + (conflitos ? `${conflitos} conflito(s)` : '') });
   res.json({
-    ok: true, motor: 'multimodal_gemini', modelo: MODELO, ms, tokens: tokens || null,
+    ok: true, motor: 'multimodal_gemini', provedor, modelo, ms, tokens: tokens || null,
     empresa: empresa ? { id: empresa.id, nome: empresa.nome } : null,
     lotes: lotes.length, recusadas, atualizacoes,
   });
@@ -493,12 +462,12 @@ app.post('/api/vision/process-sheet', async (req, res) => {
     return res.json({ ok: true, motor: 'multimodal_gemini', modelo: 'simulado', ms, recusadas, itens });
   }
 
-  if (!CHAVE) {
+  if (!ALGUM_PROVEDOR) {
     const ms = agora() - t0;
-    registrar({ ok: false, ms, local: rotulo, erro: 'GEMINI_API_KEY ausente' });
+    registrar({ ok: false, ms, local: rotulo, erro: 'nenhum provedor de IA configurado' });
     return res.status(503).json({
-      ok: false, erro: 'GEMINI_API_KEY não configurada no servidor',
-      dica: 'crie server/.env com GEMINI_API_KEY=... ou rode com SIMULAR=1',
+      ok: false, erro: 'nenhuma chave de IA configurada no servidor (GEMINI_API_KEY, GROQ_API_KEY ou OPENAI_API_KEY)',
+      dica: 'crie server/.env com pelo menos uma delas, ou rode com SIMULAR=1',
       itens: [],
     });
   }
@@ -523,14 +492,14 @@ app.post('/api/vision/process-sheet', async (req, res) => {
 
   try {
     const empresa = await empresaDaRequisicao(req);
-    const { bruto, tokens } = await gerar('quadro', partes, TEMPO_LIMITE_QUADRO, empresa);
+    const { bruto, tokens, modelo, provedor } = await gerar('quadro', partes, TEMPO_LIMITE_QUADRO, empresa);
     const { itens, recusadas } = sanearQuadro(bruto);
     const ms = agora() - t0;
     const comLocal = itens.filter(i => i.local).length;
     registrar({ ok: true, ms, local: rotulo, itens: itens.length, tokens,
-      erro: `${comLocal} com local declarado` + (empresa ? ` · ctx ${empresa.nome}` : '') });
+      erro: `${comLocal} com local declarado` + (provedor !== 'gemini' ? ` · via ${provedor}` : '') + (empresa ? ` · ctx ${empresa.nome}` : '') });
     res.json({
-      ok: true, motor: 'multimodal_gemini', modelo: MODELO, ms, tokens: tokens || null,
+      ok: true, motor: 'multimodal_gemini', provedor, modelo, ms, tokens: tokens || null,
       empresa: empresa ? { id: empresa.id, nome: empresa.nome } : null,
       recusadas, itens,
     });

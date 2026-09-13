@@ -50,6 +50,7 @@ R6. UMA LINHA POR PRODUTO. Não agrupe dois materiais na mesma linha. Não repit
 R7. JUSTIFICATIVA OBRIGATÓRIA. Em "justificativa", escreva em português a cadeia que você seguiu, citando o que viu: "quadrado 08 desenhado junto à porta → LEGENDA PISOS, linha 08 → PORCELANATO A DEFINIR". É este texto que vai aparecer como evidência para o engenheiro conferir.
 R8. CATEGORIA FECHADA. "categoria" só pode ser um destes valores exatos: ${CATEGORIAS.join(' | ')}. Se nenhum servir, devolva "".
 R9. NÃO DESCREVA O DESENHO. Não devolva paredes, cotas, níveis, mobiliário de layout, textos de título, nomes de ambiente ou elementos estruturais como se fossem produtos de acabamento.
+R10. CÓDIGO DE ESQUADRIA/PEDRA NÃO É TAG DE FORMA+NÚMERO. "P08", "J10", "PA3", "SO01" são texto solto (às vezes dentro de um círculo, às vezes não) e se traduzem pela TABELA DE ESQUADRIAS/PEDRAS do contexto, batendo o código exatamente — nunca pela legenda de forma+número, mesmo que o código esteja circulado. Se esse código não aparecer nem na tabela nem em lugar nenhum do contexto, registre "codigoOrigem" mesmo assim e deixe dimensão/material vazios: é melhor apontar o código sem tradução do que omitir a esquadria inteira.
 
 === CONFIANÇA ===
 "alta"  — a tradução é inequívoca: forma e número legíveis e a legenda correspondente encontrada.
@@ -96,7 +97,7 @@ export const SCHEMA = {
 
 /** O que o leitor vetorial já conseguiu ler, oferecido como apoio — nunca
     como resposta pronta: a IA precisa confirmar na imagem. */
-export function contexto({ local = {}, tags = [], legenda = [], pagina, documento } = {}) {
+export function contexto({ local = {}, tags = [], legenda = [], codigos = [], pagina, documento } = {}) {
   const l = [];
   l.push(`LOCAL RECORTADO: ${local.nome || '(nome não lido)'}`
     + (local.pavimento ? ` — pavimento ${local.pavimento}` : '')
@@ -117,6 +118,11 @@ export function contexto({ local = {}, tags = [], legenda = [], pagina, document
     }
   } else {
     l.push('', 'NENHUMA LINHA DE LEGENDA FOI LIDA DO TEXTO. Leia a legenda da IMAGEM 2 com os seus próprios olhos.');
+  }
+
+  if (codigos.length) {
+    l.push('', 'TABELA DE ESQUADRIAS/PEDRAS DESTA PRANCHA (lida do texto; NÃO é a legenda de forma+número — é a fonte para traduzir código como "P08", "J10", "PA3", "SO01" achado escrito ou circulado no desenho deste local). Ache aqui a linha cujo código bate com o que você leu na IMAGEM 1 — dimensão, tipo de abertura, material e quantidade vêm desta linha, nunca inventados:');
+    for (const c of codigos.slice(0, 200)) l.push(`  - ${c}`);
   }
 
   l.push('', 'Liste agora os produtos de acabamento deste local, seguindo as regras R1 a R9.');
