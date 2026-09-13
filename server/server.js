@@ -53,6 +53,7 @@ import {
   blocoDeEmpresa, assinaturaDeEmpresa,
 } from './prompt.js';
 import { gerarComCadeia, PROVEDORES_CONFIGURADOS } from './provedores.js';
+import { ocrPdf, OCR_CONFIGURADO } from './ocr.js';
 import * as banco from './db.js';
 import armazenamento, { lerMultipart } from './armazenamento.js';
 
@@ -90,6 +91,15 @@ function paraInline(fonte, rotulo) {
   const data = m ? m[2] : fonte.replace(/^data:[^,]*,/, '').trim();
   if (data.length < 64) throw new Error(`${rotulo}: imagem vazia ou truncada`);
   return { inlineData: { mimeType, data } };
+}
+
+/** Igual à de cima, mas para qualquer arquivo (aqui, PDF) — devolve Buffer. */
+function paraBuffer(fonte, rotulo) {
+  if (!fonte || typeof fonte !== 'string') throw new Error(`${rotulo} ausente`);
+  const m = /^data:[^;,]+;base64,(.+)$/is.exec(fonte.trim());
+  const data = m ? m[1] : fonte.replace(/^data:[^,]*,/, '').trim();
+  if (data.length < 64) throw new Error(`${rotulo}: arquivo vazio ou truncado`);
+  return Buffer.from(data, 'base64');
 }
 
 const agora = () => Number(process.hrtime.bigint() / 1000000n);
@@ -282,6 +292,7 @@ app.get('/api/health', async (_req, res) => {
     modelo: MODELO,
     chaveConfigurada: !!CHAVE,
     provedores: PROVEDORES_CONFIGURADOS,
+    ocrConfigurado: OCR_CONFIGURADO,
     simulando: SIMULAR,
     timeoutMs: TEMPO_LIMITE,
     timeoutMemorialMs: TEMPO_LIMITE_MEMORIAL,
@@ -293,6 +304,7 @@ app.get('/api/health', async (_req, res) => {
       'GET/POST /api/companies', 'GET/POST /api/projects', 'GET/POST /api/glossary',
       'POST /api/upload', 'GET /api/files/:id',
       'POST /api/vision/process-local', 'POST /api/vision/process-sheet', 'POST /api/text/process-memorial',
+      'POST /api/pdf/ocr',
     ],
     categorias: CATEGORIAS.length,
   });
@@ -431,6 +443,38 @@ app.post('/api/text/process-memorial', async (req, res) => {
     empresa: empresa ? { id: empresa.id, nome: empresa.nome } : null,
     lotes: lotes.length, recusadas, atualizacoes,
   });
+});
+
+/* ------------------------------------------------------------------ */
+/* OCR: memorial escaneado sem camada de texto                        */
+/* ------------------------------------------------------------------ */
+
+app.post('/api/pdf/ocr', async (req, res) => {
+  const t0 = agora();
+  const { arquivo, nome = 'documento.pdf' } = req.body || {};
+
+  if (!OCR_CONFIGURADO) {
+    const ms = agora() - t0;
+    registrar({ ok: false, ms, local: nome, erro: 'ILOVEPDF_PUBLIC_KEY ausente' });
+    return res.status(503).json({
+      ok: false, erro: 'ILOVEPDF_PUBLIC_KEY não configurada no servidor',
+      dica: 'crie server/.env com ILOVEPDF_PUBLIC_KEY=...',
+      arquivoOcr: null,
+    });
+  }
+
+  try {
+    const bytes = paraBuffer(arquivo, 'arquivo');
+    const saida = await ocrPdf(bytes, nome);
+    const ms = agora() - t0;
+    registrar({ ok: true, ms, local: nome, erro: `${Math.round(saida.length / 1024)} KB` });
+    res.json({ ok: true, ms, arquivoOcr: `data:application/pdf;base64,${saida.toString('base64')}` });
+  } catch (err) {
+    const ms = agora() - t0;
+    const msg = err.message || String(err);
+    registrar({ ok: false, ms, local: nome, erro: msg });
+    res.status(502).json({ ok: false, erro: msg, arquivoOcr: null });
+  }
 });
 
 /* ------------------------------------------------------------------ */

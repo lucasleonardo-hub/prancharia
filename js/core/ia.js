@@ -36,6 +36,11 @@ export const IA = {
   rota: '/api/vision/process-local',
   rotaFolha: '/api/vision/process-sheet',
   rotaMemorial: '/api/text/process-memorial',
+  /* memorial escaneado sem camada de texto: o BFF manda pro iLovePDF rodar
+     OCR e devolve o mesmo PDF com texto embutido — só entra em ação quando
+     memorial.js detecta que a extração normal veio quase vazia. */
+  rotaOcr: '/api/pdf/ocr',
+  timeoutOcrMs: 120000,
   timeoutMs: 60000,
   /* a leitura ampla devolve dezenas de linhas de uma vez: é a chamada mais
      demorada, e a mais rentável — um quadro de acabamentos traz o levantamento
@@ -63,8 +68,8 @@ export const IA = {
 };
 
 const CHAVE_CONFIG = 'prancharia.ia';
-const DURAVEIS = ['provedor', 'bff', 'rota', 'rotaFolha', 'rotaMemorial',
-  'timeoutMs', 'timeoutQuadroMs', 'timeoutMemorialMs',
+const DURAVEIS = ['provedor', 'bff', 'rota', 'rotaFolha', 'rotaMemorial', 'rotaOcr',
+  'timeoutMs', 'timeoutQuadroMs', 'timeoutMemorialMs', 'timeoutOcrMs',
   'lerLocaisSemTag', 'lerQuadrosComIA', 'maxRegioesPorFolha', 'paralelas'];
 
 try {
@@ -121,6 +126,25 @@ export function anotarSucesso() { IA.falhasSeguidas = 0; }
  * Uma chamada ao BFF, com tempo limite. Lança em qualquer falha — quem chama
  * decide o que fazer, e a resposta certa é sempre seguir sem a IA.
  */
+function blobParaDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(fr.result);
+    fr.onerror = () => reject(fr.error || new Error('falha lendo o arquivo'));
+    fr.readAsDataURL(blob);
+  });
+}
+
+/** Manda o PDF pro BFF rodar OCR (iLovePDF) e devolve a dataURL do PDF com
+    texto embutido — é o mesmo arquivo, só que agora o pdf.js consegue
+    extrair texto dele. Lança em qualquer falha, igual às outras chamadas. */
+export async function ocrPdf(blob, nome = 'documento.pdf') {
+  const dataUrl = await blobParaDataUrl(blob);
+  const r = await chamarBff(IA.rotaOcr, { arquivo: dataUrl, nome }, IA.timeoutOcrMs);
+  if (!r.arquivoOcr) throw new Error('BFF não devolveu o PDF com OCR');
+  return r.arquivoOcr;
+}
+
 export async function chamarBff(rota, corpo, timeoutMs = IA.timeoutMs) {
   const prazo = comPrazo(timeoutMs);
   try {

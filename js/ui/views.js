@@ -6,7 +6,8 @@ import {
 import { TIPOS, TIPO_POR_ID, ORDEM_NIVEIS, tipoDe, niveisDe, temNivel, rotuloNivel, temAreasComuns, cadeiaDe } from '../core/tipos.js';
 import { SISTEMAS, NOMES_SISTEMAS, SISTEMA_POR_NOME, COLUNAS_COPIA } from '../core/vocab.js';
 import { REGRAS_BASE } from '../core/glossario.js';
-import { analisarMemorial, pareceMemorial, cruzarComPranchas, fundirComMemorial } from '../core/memorial.js';
+import { analisarMemorial, pareceMemorial, cruzarComPranchas, fundirComMemorial, precisaDeOcr } from '../core/memorial.js';
+import { ocrPdf, anotarFalha } from '../core/ia.js';
 import {
   CATEGORIAS, STATUS, CONFIANCA, MOTIVOS_PENDENCIA, registrarHistorico, normalizar,
   mesmoAmbienteFlex as mesmoAmbiente, semearPavimentos, sincronizar,
@@ -544,6 +545,15 @@ async function auditarNoProcessamento(e) {
   return { n, r };
 }
 
+/** dataURL (data:application/pdf;base64,...) -> bytes, para reabrir no pdf.js. */
+function dataUrlParaBytes(dataUrl) {
+  const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
+  const bin = atob(base64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
 function atualizarProgresso(texto, pct) {
   estado.processando = { texto, pct };
   const barra = document.querySelector('.progresso i');
@@ -560,7 +570,7 @@ async function processarDocumento(meta) {
   render();
   try {
     const blob = estado.pdfs.get(meta.id)?.blob || await store.lerArquivo(meta.id);
-    const doc = await openPdf(new Uint8Array(await blob.arrayBuffer()));
+    let doc = await openPdf(new Uint8Array(await blob.arrayBuffer()));
     estado.pdfs.set(meta.id, { doc, blob });
     meta.paginas = doc.numPages;
     if (!meta.tipo) {
@@ -568,6 +578,22 @@ async function processarDocumento(meta) {
       meta.tipo = Math.max(vp.width, vp.height) < 1200 ? 'memorial' : 'prancha';
     }
     if (meta.tipo === 'memorial') {
+      /* memorial escaneado (sem camada de texto) quase não tem texto
+         extraível: manda pro OCR antes de tentar ler. Só faz sentido com o
+         BFF ligado, e uma falha aqui não trava o processamento — o
+         documento segue como leu, mesmo sem texto. */
+      if (iaLigada() && await precisaDeOcr(doc)) {
+        atualizarProgresso('memorial parece escaneado — rodando OCR antes de ler', 0.02);
+        try {
+          const dataUrlOcr = await ocrPdf(blob, meta.nome);
+          doc = await openPdf(dataUrlParaBytes(dataUrlOcr));
+          estado.pdfs.set(meta.id, { doc, blob });
+          meta.paginas = doc.numPages;
+          meta.ocrAplicado = true;
+        } catch (err) {
+          anotarFalha(err, 'OCR do memorial');
+        }
+      }
       /* 1) o que o próprio memorial diz, frase por frase — entra como itens
             de origem 'memorial', com a página e o trecho guardados */
       const r = await analisarMemorial(doc, meta, locaisVivos(e),

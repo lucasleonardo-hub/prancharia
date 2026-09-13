@@ -53,6 +53,21 @@ export function pareceMemorial({ tracos, caracteres, paginas }) {
   return tracos < 1500 && porPagina > 900;
 }
 
+/** Memorial digitalizado (escaneado) sem OCR quase não tem texto extraível,
+    mesmo tendo dezenas de páginas cheias de conteúdo visual — é o sinal de
+    que vale a pena rodar OCR antes de tentar ler. Amostra as primeiras
+    páginas em vez do documento inteiro: já entrega a resposta e não paga o
+    custo de abrir todas as páginas de um memorial grande. */
+export async function precisaDeOcr(doc, amostraPaginas = 3) {
+  const n = Math.min(amostraPaginas, doc.numPages);
+  let caracteres = 0;
+  for (let p = 1; p <= n; p++) {
+    const linhas = await lerPagina(await doc.getPage(p));
+    caracteres += linhas.reduce((s, l) => s + l.texto.length, 0);
+  }
+  return caracteres < 40 * n;
+}
+
 /** Reconstrói linhas e parágrafos de uma página de texto corrido. */
 export async function lerPagina(page) {
   const itens = (await readText(page)).filter(t => t.horizontal);
