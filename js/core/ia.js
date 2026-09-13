@@ -98,9 +98,12 @@ export function comPrazo(ms) {
   return { signal: c.signal, cancelar: () => clearTimeout(t) };
 }
 
-/** Pergunta ao BFF se ele está no ar. Não lança: devolve null quando não está. */
+/** Pergunta ao BFF se ele está no ar. Não lança: devolve null quando não está.
+    30s de prazo — plano gratuito do Render hiberna depois de inatividade e o
+    "cold start" da instância pode levar 20-30s; um prazo curto reportaria
+    "fora do ar" para um servidor que só estava acordando. */
 export async function saudeDaIA() {
-  const p = comPrazo(6000);
+  const p = comPrazo(30000);
   try {
     const r = await fetch(IA.bff + '/api/health', { signal: p.signal });
     return r.ok ? await r.json() : null;

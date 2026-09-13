@@ -2147,26 +2147,36 @@ function cartaoMotor() {
     </div></div>`;
 }
 
+/* Servidor de teste no Render free tier hiberna após inatividade: o primeiro
+   pedido depois de um tempo parado acorda a instância, e isso pode levar
+   20-30s. Sem aviso nenhum nesse meio-tempo a tela parece travada — e sem
+   dizer que é normal, "fora do ar" parece um erro definitivo quando é só a
+   instância acordando. */
 const ACOES_MOTOR = {
   async usarMotor({ motor }) {
     configurarIA({ provedor: motor });
     if (motor === 'multimodal_gemini') {
+      aviso('Testando o servidor… se ele estiver hibernando (plano gratuito), pode levar até 30s para acordar.');
       const s = await saudeDaIA();
       estado.saudeIA = s || false;
       render();
       aviso(s ? `IA multimodal ligada — servidor respondendo (${s.modelo || 'modelo não declarado'}).`
-        : 'IA multimodal ligada, mas o servidor não respondeu. Cada prancha vai cair na leitura vetorial até ele subir.');
+        : 'IA multimodal ligada, mas o servidor não respondeu em 30s. Cada prancha vai cair na leitura vetorial até ele subir — clique em "Testar servidor" de novo daqui a pouco.');
       return;
     }
     render(); aviso('Leitura vetorial. Nenhuma chamada de rede.');
   },
   async testarIA() {
+    aviso('Testando o servidor… se ele estiver hibernando (plano gratuito), pode levar até 30s para acordar.');
     const s = await saudeDaIA();
     estado.saudeIA = s || false;
     render();
+    const local = /^https?:\/\/(localhost|127\.0\.0\.1)/i.test(IA.bff);
     aviso(s
       ? `Servidor no ar: ${s.modelo || 'modelo não declarado'}${s.chaveConfigurada ? '' : ' — sem GEMINI_API_KEY, vai responder 503'}.`
-      : `Sem resposta em ${esc(IA.bff)}. Suba o servidor: cd server && npm start.`);
+      : local
+        ? `Sem resposta em ${esc(IA.bff)}. Suba o servidor: cd server && npm start.`
+        : `Sem resposta em ${esc(IA.bff)} depois de 30s. Se ele estava hibernando, clique em "Testar servidor" de novo — o primeiro pedido já deve tê-lo acordado.`);
   },
   async alternarLocaisSemTag() {
     configurarIA({ lerLocaisSemTag: !IA.lerLocaisSemTag });
