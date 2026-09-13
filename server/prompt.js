@@ -42,7 +42,7 @@ Sua tarefa é listar TODOS os produtos e serviços de acabamento que a prancha e
 
 === REGRAS ABSOLUTAS ===
 R1. FORMA + NÚMERO É A CHAVE. "Números iguais em formas diferentes representam materiais DIFERENTES." Quadrado 08 e Triângulo 08 são dois materiais distintos. Nunca traduza um número sem a sua forma.
-R2. VERACIDADE ABSOLUTA. Se a prancha não diz, o campo volta como string vazia "". É PROIBIDO escrever "N/A", "n/a", "não se aplica", "a definir por conta própria", "-", "indefinido" ou qualquer preenchimento de cortesia. Se a legenda escreve "A DEFINIR", isso é o que a prancha diz e deve ser transcrito como está.
+R2. VERACIDADE ABSOLUTA. Se a prancha não diz, o campo volta como string vazia "". É PROIBIDO escrever "N/A", "n/a", "não se aplica", "a definir por conta própria", "-", "indefinido" ou qualquer preenchimento de cortesia. Se a legenda escreve "A DEFINIR", isso é o que a prancha diz e deve ser transcrito como está. NUNCA copie o número da tag para "descricao" como se fosse a especificação — "numero" e "codigoOrigem" já guardam esse número; se você não achou na legenda o texto de material correspondente àquele forma+número, "descricao" fica "" (vazia), mesmo que a categoria dê para adivinhar pelo contexto.
 R3. ISOLAMENTO ESTRITO DO LOCAL. Só entra o que pertence ao local recortado na IMAGEM 1. Tag desenhada fora do contorno do ambiente, ou material de um ambiente vizinho visível no recorte, NÃO entra. Se não der para decidir de quem é a tag, devolva o item com confianca "baixa" e explique na justificativa.
 R4. NÃO CONSIDERE UM LOCAL COMPLETO SÓ PORQUE UMA ESQUADRIA FOI IDENTIFICADA. Um ambiente normalmente tem piso, parede e teto especificados. Se você só achou a porta, continue procurando piso, parede, teto, rodapé e pedras — e se realmente não houver indicação, simplesmente não invente a linha.
 R5. TRANSCREVA, NÃO REESCREVA. O campo "descricao" recebe o texto da legenda exatamente como está escrito na prancha, inclusive "(120X120)", "OU SIMILAR", "(aprovar amostra no local)". O campo "produto" é o substantivo curto do item (Porcelanato, Rodapé, Textura, Porta, Soleira, Forro de gesso).
@@ -140,6 +140,14 @@ const limpar = v => {
   return PROIBIDO.test(s) ? '' : s;
 };
 
+/* "Descrição" que é só dígito é o número da própria tag vazando pro campo
+   errado — nenhuma prancha escreve "1" como especificação de acabamento.
+   Acontece quando o modelo não achou a tradução da legenda para aquele
+   número e, em vez de deixar "descricao" vazia (R2), repetiu o "numero"
+   ali. A trava corrige do nosso lado, não importa o provedor que respondeu. */
+const SO_DIGITOS = /^\d+$/;
+const semNumeroSolto = v => SO_DIGITOS.test(v) ? '' : v;
+
 /** Aplica a R2 e a R8 do nosso lado: nem o melhor prompt substitui a trava. */
 export function sanear(bruto) {
   const lista = Array.isArray(bruto) ? bruto : (bruto && Array.isArray(bruto.especificacoes) ? bruto.especificacoes : []);
@@ -151,7 +159,7 @@ export function sanear(bruto) {
       categoria: CATEGORIAS.includes(limpar(r.categoria)) ? limpar(r.categoria) : '',
       produto: limpar(r.produto),
       sistema: limpar(r.sistema),
-      descricao: limpar(r.descricao),
+      descricao: semNumeroSolto(limpar(r.descricao)),
       marca: limpar(r.marca),
       modelo: limpar(r.modelo),
       fornecedor: limpar(r.fornecedor),
@@ -366,7 +374,7 @@ Q2. O LOCAL VEM ESCRITO. Preencha "local" com o nome do ambiente exatamente como
 Q3. NOME QUEBRADO EM DUAS LINHAS É UM NOME SÓ. "BANHO" em cima de "MASTER" é "BANHO MASTER". "CERÂMICA KERAMIKA CR-703 MATE 5X15 E" seguido de "CR-10 MATE 5X15" é uma especificação só. Junte antes de responder.
 Q4. TRANSCREVA, NÃO REESCREVA. "descricao" recebe o texto como está na prancha, com dimensão, código comercial e observação entre parênteses. "produto" é o substantivo curto (Porcelanato, Cerâmica, Textura, Forro de gesso, Porta, Janela, Soleira).
 Q5. MARCA SÓ SE ESCRITA. A prancha escrevendo "CERÂMICA KERAMIKA CR-703" nomeia a marca (Keramika) e o modelo (CR-703): pode separar. "PORCELANATO KYOTO SHELL 90x90" nomeia modelo Kyoto Shell e dimensão 90x90. Mas não invente fabricante que não está escrito.
-Q6. VERACIDADE ABSOLUTA. Campo sem informação volta como string vazia "". É PROIBIDO "N/A", "não se aplica", "indefinido", "-". "A DEFINIR" escrito na prancha é o que a prancha diz e se transcreve como está.
+Q6. VERACIDADE ABSOLUTA. Campo sem informação volta como string vazia "". É PROIBIDO "N/A", "não se aplica", "indefinido", "-". "A DEFINIR" escrito na prancha é o que a prancha diz e se transcreve como está. NUNCA copie o número da tag para "descricao" — se a legenda ou o quadro não tem o texto do material daquele forma+número, "descricao" fica "" (vazia).
 Q7. CATEGORIA FECHADA: ${CATEGORIAS.join(' | ')}. Se nenhuma servir, "".
 Q8. FORMA + NÚMERO É A CHAVE das legendas geométricas. Números iguais em formas diferentes são materiais DIFERENTES.
 Q9. NÃO DEVOLVA o que não é produto de acabamento: cotas, níveis, nomes de prancha, selo, escala, responsável técnico, área em m², numeração de degrau, eixo de pilar, texto de carimbo.
@@ -460,7 +468,7 @@ export function sanearQuadro(bruto) {
       local: limpar(r.local),
       categoria: CATEGORIAS.includes(limpar(r.categoria)) ? limpar(r.categoria) : '',
       produto: limpar(r.produto), sistema: limpar(r.sistema),
-      descricao: limpar(r.descricao),
+      descricao: semNumeroSolto(limpar(r.descricao)),
       marca: limpar(r.marca), modelo: limpar(r.modelo), fornecedor: limpar(r.fornecedor),
       codigoOrigem: limpar(r.codigoOrigem),
       forma: FORMAS.includes(limpar(r.forma).toLowerCase()) ? limpar(r.forma).toLowerCase() : '',

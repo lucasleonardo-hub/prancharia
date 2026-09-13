@@ -475,6 +475,14 @@ function linhasDaLegenda(legendas) {
  *  - item da IA que não casa com nada: é achado novo — a hachura, a paginação,
  *    o texto escrito no desenho — e entra como Especificação própria.
  */
+/* "Descrição" que é só dígito é o número da própria tag vazando pro campo
+   errado — nenhuma prancha escreve "1" como especificação de acabamento.
+   O servidor já aplica essa trava na resposta da IA; aqui ela protege
+   também a leitura vetorial pura (parser de legenda) e a mesclagem, não
+   importa de onde o número solto tentou entrar. */
+const SO_DIGITOS = /^\d+$/;
+const semNumeroSolto = v => SO_DIGITOS.test((v || '').trim()) ? '' : v;
+
 function mesclarLeituras(vetorial, daIA, dados = {}) {
   const porTag = new Map();
   for (const e of vetorial) if (e.forma && e.numero) porTag.set(`${e.forma}:${e.numero}`, e);
@@ -492,7 +500,7 @@ function mesclarLeituras(vetorial, daIA, dados = {}) {
         if (!alvo[campo] && ia[campo]) alvo[campo] = ia[campo];
       }
       if (!alvo.categoria && ia.categoria) alvo.categoria = ia.categoria;
-      if (!alvo.descricao && ia.descricao) alvo.descricao = ia.descricao;
+      if (!alvo.descricao && ia.descricao) alvo.descricao = semNumeroSolto(ia.descricao);
       const ev = ia.evidencias[0];
       if (ev) { ev.tipo = 'confirmacao_ia'; alvo.evidencias.push(ev); }
       if (alvo.confianca === 'baixa' && ia.confianca === 'alta'
@@ -538,7 +546,7 @@ function leituraVetorial({ itens = [], legendas = {}, local = null, docMeta = {}
       categoria: classe?.categoria || (item ? item.categoria : '') || '',
       produto: classe?.produto || '',
       sistema: classe?.sistema || '',
-      descricao: item ? item.descricao : '',
+      descricao: item ? semNumeroSolto(item.descricao) || '' : '',
       codigoOrigem: `${tag.forma} ${tag.numero}`.trim(),
       forma: tag.forma, numero: tag.numero,
       origemLeitura: 'tag',
