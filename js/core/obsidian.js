@@ -87,6 +87,29 @@ export function notasDoEmpreendimento(emp, pastaRaiz = OBSIDIAN.pasta) {
   const refs = (esp) => [...new Set((esp.evidencias || []).map(linkDoc).filter(Boolean))].join(', ');
 
   const locais = locaisDe(emp);
+  /* Dois locais com o mesmo nome (em pavimentos diferentes, ou "escada" em
+     duas folhas) não podem cair na mesma nota — o segundo sobrescreveria o
+     primeiro. Quem repete ganha o pavimento no nome; se ainda repetir, um
+     número. O mapa vale para os caminhos E para os links. */
+  const nomeDaNotaDoLocal = new Map();
+  {
+    /* comparação sem maiúsculas: no Windows e no macOS "ESCADA.md" e
+       "escada.md" são o mesmo arquivo */
+    const chave = s => s.toLocaleLowerCase('pt-BR');
+    const usados = new Map();
+    for (const l of locais) {
+      const base = nomeDeNota(l.nome);
+      const repetido = locais.some(o => o !== l && chave(nomeDeNota(o.nome)) === chave(base));
+      let nome = repetido && l.pavimento ? `${base} (${nomeDeNota(l.pavimento)})` : base;
+      const n = usados.get(chave(nome)) || 0;
+      usados.set(chave(nome), n + 1);
+      if (n) nome = `${nome} ${n + 1}`;
+      nomeDaNotaDoLocal.set(l.id, nome);
+    }
+  }
+  const notaLocal = l => nomeDaNotaDoLocal.get(l.id) || nomeDeNota(l.nome);
+  const linkLocal = (l) => `[[${raiz}/Locais/${notaLocal(l)}|${l.nome}]]`;
+  const porIdLocal = new Map(locais.map(l => [l.id, l]));
   const semLocal = (emp.especificacoesSemLocal || []).filter(vivo);
   const pend = pendencias(emp);
   const docs = emp.documentos || [];
@@ -116,7 +139,7 @@ export function notasDoEmpreendimento(emp, pastaRaiz = OBSIDIAN.pasta) {
   for (const l of locais) { const k = l.pavimento || 'Sem pavimento'; if (!porPav.has(k)) porPav.set(k, []); porPav.get(k).push(l); }
   for (const [pav, lista] of porPav) {
     idx.push(`### ${pav}\n`);
-    for (const l of lista) idx.push(`- ${link('Locais', l.nome, l.nome)} — ${(l.especificacoes || []).filter(vivo).length} item(ns)${l.status === 'revisar' ? ' · _a revisar_' : ''}`);
+    for (const l of lista) idx.push(`- ${linkLocal(l)} — ${(l.especificacoes || []).filter(vivo).length} item(ns)${l.status === 'revisar' ? ' · _a revisar_' : ''}`);
     idx.push('');
   }
   if ((emp.historico || []).length) {
@@ -136,7 +159,7 @@ export function notasDoEmpreendimento(emp, pastaRaiz = OBSIDIAN.pasta) {
       tipo: 'local', empreendimento: nomeEmp, pavimento: l.pavimento || '', tipologia: l.tipologia || '',
       area: l.area || '', status: l.status || '', confianca: l.confianca || '', tags: ['prancharia', 'local'],
     }));
-    t.push(`# ${nomeDeNota(l.nome)}\n`);
+    t.push(`# ${notaLocal(l)}\n`);
     t.push(`Empreendimento: ${link('', nomeEmp, nomeEmp)}${l.pavimento ? ` · Pavimento: ${l.pavimento}` : ''}${l.area ? ` · Área: ${l.area}` : ''}\n`);
     const docsDoLocal = [...new Set((l.evidencias || []).map(nomeDoc).filter(Boolean))];
     if (docsDoLocal.length) t.push(`Lido em: ${docsDoLocal.map(d => link('Documentos', d, d)).join(', ')}\n`);
@@ -148,7 +171,7 @@ export function notasDoEmpreendimento(emp, pastaRaiz = OBSIDIAN.pasta) {
       for (const p of pendDoLocal) t.push(`- [ ] ${celula(p.categoria || '')} — ${celula(p.descricao || p.produto || p.codigoOrigem || '')} — ${(p.motivos || []).map(m => MOTIVOS_PENDENCIA[m] || m).join('; ')}`);
       t.push('');
     }
-    notas.push({ caminho: `${raiz}/Locais/${nomeDeNota(l.nome)}.md`, texto: t.join('\n') });
+    notas.push({ caminho: `${raiz}/Locais/${notaLocal(l)}.md`, texto: t.join('\n') });
   }
 
   /* ---- documentos ---- */
@@ -166,7 +189,7 @@ export function notasDoEmpreendimento(emp, pastaRaiz = OBSIDIAN.pasta) {
       || (l.especificacoes || []).some(e => (e.evidencias || []).some(ev => (ev.documentoOrigem || {}).docId === d.id)));
     t.push('## Locais lidos neste documento\n');
     if (!lidos.length) t.push('_nenhum_\n');
-    for (const l of lidos) t.push(`- ${link('Locais', l.nome, l.nome)}`);
+    for (const l of lidos) t.push(`- ${linkLocal(l)}`);
     t.push('');
     const tabelas = (emp.tabelas || []).filter(x => x.documentoId === d.id);
     if (tabelas.length) {
@@ -190,7 +213,8 @@ export function notasDoEmpreendimento(emp, pastaRaiz = OBSIDIAN.pasta) {
   for (const [m, lista] of porMotivo) {
     p.push(`## ${MOTIVOS_PENDENCIA[m] || m} (${lista.length})\n`);
     for (const x of lista) {
-      const onde = x.localNome ? link('Locais', x.localNome, x.localNome) : '_sem local_';
+      const l = porIdLocal.get(x.localId);
+      const onde = l ? linkLocal(l) : (x.localNome ? `_${celula(x.localNome)}_` : '_sem local_');
       p.push(`- [ ] ${onde} · ${celula(x.categoria || '')} · ${celula(x.descricao || x.produto || x.codigoOrigem || '')}${refs(x) ? ' · ' + refs(x) : ''}`);
     }
     p.push('');
