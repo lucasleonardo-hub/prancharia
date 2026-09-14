@@ -28,10 +28,13 @@
    └─────────────────────────────────────────────────────────────────────┘ */
 
 export const GOOGLE = {
-  /* >>> COLE AQUI o "ID do cliente OAuth 2.0" (termina em .apps.googleusercontent.com) <<< */
-  CLIENT_ID: '',
-  /* >>> COLE AQUI a "Chave de API" (começa com AIza...) — usada só pelo Picker <<< */
-  API_KEY: '',
+  /* "ID do cliente OAuth 2.0" — projeto Google Cloud `projetalize`, cliente
+     "Prancharia Web" (origens: localhost:8000, localhost:5500, prancharia.vercel.app).
+     É um identificador público; o que protege é a lista de origens. */
+  CLIENT_ID: '38901993498-kq48nqekhvrgt26rvnui3u2rh0dcqp02.apps.googleusercontent.com',
+  /* "Chave de API" — chave "Prancharia Picker", restrita à Google Picker API e
+     aos mesmos três sites. Chave de navegador: pública por natureza. */
+  API_KEY: 'AIzaSyDgvEGF8q3-k-isxNrUBtdaXTZ98FJK8es',
   /* Opcional: o "Número do projeto" do Google Cloud. Melhora o Picker
      (mostra os arquivos que o app já abriu) e é exigido para alguns
      escopos. Pode ficar vazio. */
