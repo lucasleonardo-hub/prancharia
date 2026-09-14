@@ -21,14 +21,16 @@ function zip(entradas) {
     const dados = typeof e.dados === 'string' ? enc.encode(e.dados) : e.dados;
     const crc = crc32(dados);
     const lh = new Uint8Array(30 + nome.length); const dv = new DataView(lh.buffer);
-    dv.setUint32(0, 0x04034b50, true); dv.setUint16(4, 20, true); dv.setUint16(6, 0, true);
+    /* bit 11 do "general purpose flag" = nomes em UTF-8; sem ele o Windows lê
+       "CIRCULAÇÃO.md" como CP437 e o nome sai embaralhado no Explorer */
+    dv.setUint32(0, 0x04034b50, true); dv.setUint16(4, 20, true); dv.setUint16(6, 0x0800, true);
     dv.setUint16(8, 0, true); dv.setUint16(10, 0, true); dv.setUint16(12, 0, true);
     dv.setUint32(14, crc, true); dv.setUint32(18, dados.length, true); dv.setUint32(22, dados.length, true);
     dv.setUint16(26, nome.length, true); dv.setUint16(28, 0, true);
     lh.set(nome, 30);
     locais.push(lh, dados);
     const ch = new Uint8Array(46 + nome.length); const cv = new DataView(ch.buffer);
-    cv.setUint32(0, 0x02014b50, true); cv.setUint16(4, 20, true); cv.setUint16(6, 20, true);
+    cv.setUint32(0, 0x02014b50, true); cv.setUint16(4, 20, true); cv.setUint16(6, 20, true); cv.setUint16(8, 0x0800, true);
     cv.setUint32(16, crc, true); cv.setUint32(20, dados.length, true); cv.setUint32(24, dados.length, true);
     cv.setUint16(28, nome.length, true); cv.setUint32(42, off, true);
     ch.set(nome, 46);
