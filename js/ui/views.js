@@ -2108,6 +2108,7 @@ const planilhas = {
     },
     abrirObsidian() { modalObsidian(); },
     fecharModal() { fecharModal(); },
+    async exportarObsidian(_d, el) { await exportarObsidianInteligente(el); },
     async baixarCofre() {
       const e = emp();
       const notas = notasDoEmpreendimento(e);
@@ -2161,12 +2162,14 @@ function modalObsidian() {
     <header><h2>Obsidian</h2>
       <p>O levantamento vira um cofre de notas Markdown: uma nota por local, uma por documento, o índice do empreendimento, as pendências como tarefas — tudo ligado por [[links]]. Célula sem evidência continua vazia.</p></header>
     <div class="corpo">
-      <p style="font-size:13px;color:var(--ink-2)">${notas.length} nota(s) serão geradas em <code>${esc(OBSIDIAN.pasta)}/${esc(e.nome)}/</code>.</p>
-      <h3 style="margin:14px 0 6px;font-size:14px">1. Baixar como .zip</h3>
-      <p style="font-size:13px;color:var(--ink-2)">Funciona sempre. Descompacte dentro da pasta do seu cofre; o Obsidian reconhece na hora.</p>
-      <div style="margin-top:8px"><button class="btn primario" data-acao="baixarCofre">Baixar cofre (.zip)</button></div>
-      <h3 style="margin:18px 0 6px;font-size:14px">2. Gravar direto no Obsidian</h3>
-      <p style="font-size:13px;color:var(--ink-2)">Com o Obsidian aberto nesta máquina e o plugin <b>Local REST API</b> instalado (Configurações → Plugins da comunidade → “Local REST API”; ligue <b>Enable HTTP server</b> e copie a API key).</p>
+      <p style="font-size:13px;color:var(--ink-2)">${notas.length} nota(s) em <code>${esc(OBSIDIAN.pasta)}/${esc(e.nome)}/</code>. Um clique: se o Obsidian estiver aberto nesta máquina com o plugin configurado abaixo, as notas são gravadas direto no cofre; se não, o <b>.zip</b> é baixado para você descompactar dentro do cofre.</p>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px">
+        <button class="btn primario" data-acao="exportarObsidian">Exportar para o Obsidian</button>
+        <button class="btn" data-acao="baixarCofre">Só baixar o .zip</button>
+        <span id="obsStatus" style="font-size:12.5px"></span>
+      </div>
+      <h3 style="margin:22px 0 6px;font-size:14px">Gravação direta (opcional)</h3>
+      <p style="font-size:13px;color:var(--ink-2)">Uma vez só: no Obsidian, Configurações → Plugins da comunidade → instale <b>Local REST API</b>; nas opções do plugin ligue <b>Enable HTTP server</b> e copie a <b>API key</b> para cá. A chave fica guardada neste navegador.</p>
       <div class="grade2" style="margin-top:10px">
         <div class="campo"><label for="obsBase">Endereço do plugin</label>
           <input id="obsBase" value="${esc(OBSIDIAN.base)}" placeholder="http://127.0.0.1:27123" style="font-family:var(--mono);font-size:12.5px"></div>
@@ -2176,12 +2179,55 @@ function modalObsidian() {
       <div class="campo" style="margin-top:10px"><label for="obsChave">API key do plugin</label>
         <input id="obsChave" type="password" value="${esc(OBSIDIAN.chave)}" placeholder="cole aqui a chave mostrada nas configurações do plugin" autocomplete="off"></div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px">
-        <button class="btn" data-acao="testarObsidian">Testar conexão</button>
-        <button class="btn primario" data-acao="enviarObsidian">Gravar ${notas.length} nota(s)</button>
-        <span id="obsStatus" style="font-size:12.5px"></span>
+        <button class="btn pequeno" data-acao="testarObsidian">Testar conexão</button>
+        <button class="btn pequeno" data-acao="enviarObsidian">Gravar direto agora</button>
       </div>
     </div>
-    <footer><button class="btn discreto" data-acao="fecharModal">Fechar</button></footer>`);
+    <footer><button class="btn discreto" data-acao="fecharModal">Fechar</button></footer>`, async (m) => {
+    /* já tem chave guardada: confere a conexão ao abrir, para a pessoa saber
+       de antemão qual caminho o botão principal vai tomar */
+    if (!OBSIDIAN.chave) { m.querySelector('#obsStatus').innerHTML = '<span class="selo neutro">sem plugin configurado → vai baixar o .zip</span>'; return; }
+    const s = m.querySelector('#obsStatus');
+    s.textContent = 'verificando o Obsidian…';
+    const r = await testarObsidian();
+    if (!m.isConnected) return;
+    s.innerHTML = r.ok
+      ? `<span class="selo bom">Obsidian conectado${r.versao ? ' · ' + esc(r.versao) : ''} → vai gravar direto</span>`
+      : `<span class="selo neutro">Obsidian não respondeu → vai baixar o .zip</span>`;
+  });
+}
+
+/** O botão principal: grava direto se der; senão, baixa o .zip. Nunca deixa a
+    pessoa sem o cofre. */
+async function exportarObsidianInteligente(el) {
+  lerCfgObsidian();
+  const e = emp(); if (!e) return;
+  const s = el.closest('.modal-caixa')?.querySelector('#obsStatus');
+  const dizer = (html) => { if (s) s.innerHTML = html; };
+  if (OBSIDIAN.chave) {
+    dizer('verificando o Obsidian…');
+    const t = await testarObsidian();
+    if (t.ok) {
+      const r = await enviarParaObsidian(e, (texto) => dizer(esc(texto)));
+      if (r.enviadas && !r.falhas.length) {
+        dizer(`<span class="selo bom">${r.enviadas} nota(s) gravadas em ${esc(r.pasta)}</span>`);
+        await salvar({ texto: `Cofre Obsidian atualizado (${r.enviadas} notas)`, tipo: 'exportacao' });
+        aviso(`${r.enviadas} nota(s) gravadas no Obsidian.`);
+        return;
+      }
+      console.warn('[obsidian] falhas:', r.falhas);
+      dizer(`<span class="selo atencao">${r.enviadas} de ${r.total} gravadas — ${esc(r.falhas[0] || 'falha')}</span> baixando o .zip como garantia…`);
+    } else {
+      dizer(`<span class="selo neutro">Obsidian não respondeu (${esc(t.erro)})</span> baixando o .zip…`);
+    }
+  } else {
+    dizer('<span class="selo neutro">sem plugin configurado</span> baixando o .zip…');
+  }
+  const notas = notasDoEmpreendimento(e);
+  await store.baixar(arquivoSeguro(e.nome) + '-obsidian.zip', zipDoCofre(e), 'application/zip');
+  await salvar({ texto: `Cofre Obsidian exportado (${notas.length} notas)`, tipo: 'exportacao' });
+  dizer((s?.innerHTML || '') + ` <span class="selo bom">.zip com ${notas.length} nota(s) baixado</span>`);
+  aviso(`${notas.length} nota(s) no .zip. Descompacte dentro da pasta do seu cofre.`);
 }
 
 /* A auditoria roda por dentro, durante o processamento dos documentos. O que
