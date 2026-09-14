@@ -145,17 +145,31 @@ const MIME_PDF = 'application/pdf';
 async function escolherNoDrive(tokenAcesso) {
   const P = window.google.picker;
   return new Promise((ok) => {
-    /* uma vista de PDFs (com pastas navegáveis e selecionáveis) e uma vista
-       só de pastas — as duas aceitam seleção múltipla */
-    const pdfs = new P.DocsView(P.ViewId.DOCS)
+    /* Três vistas, todas com seleção múltipla e pastas selecionáveis:
+         - "Arquivos e pastas": TUDO, sem filtro de MIME. O filtro de tipo do
+           Picker escondia PDF com MIME fora do padrão e atalhos para PDF —
+           a pessoa abria a pasta e via vazio. O que não é PDF é descartado
+           depois, do nosso lado, por nome e por MIME.
+         - "Pastas": só a árvore, para escolher a pasta inteira de uma vez.
+         - "PDFs": a vista pronta do Google, com busca.
+       `setEnableDrives(true)` alcança os drives compartilhados da empresa. */
+    const tudo = new P.DocsView(P.ViewId.DOCS)
       .setIncludeFolders(true)
       .setSelectFolderEnabled(true)
-      .setMimeTypes(`${MIME_PDF},${MIME_PASTA}`)
-      .setLabel('PDFs e pastas');
+      .setEnableDrives(true)
+      .setMode(P.DocsViewMode.LIST)
+      .setLabel('Arquivos e pastas');
     const pastas = new P.DocsView(P.ViewId.FOLDERS)
       .setIncludeFolders(true)
       .setSelectFolderEnabled(true)
+      .setEnableDrives(true)
       .setLabel('Pastas');
+    const pdfs = new P.DocsView(P.ViewId.PDFS)
+      .setIncludeFolders(true)
+      .setSelectFolderEnabled(true)
+      .setEnableDrives(true)
+      .setMode(P.DocsViewMode.LIST)
+      .setLabel('PDFs');
     const b = new P.PickerBuilder()
       .setOAuthToken(tokenAcesso)
       .setDeveloperKey(GOOGLE.API_KEY)
@@ -163,8 +177,9 @@ async function escolherNoDrive(tokenAcesso) {
       .setTitle('Escolha os PDFs das pranchas, ou a pasta inteira')
       .enableFeature(P.Feature.MULTISELECT_ENABLED)
       .enableFeature(P.Feature.SUPPORT_DRIVES)
-      .addView(pdfs)
+      .addView(tudo)
       .addView(pastas)
+      .addView(pdfs)
       .setCallback((d) => {
         if (d.action === P.Action.PICKED) ok((d.docs || []).map(x => ({ id: x.id, name: x.name, mimeType: x.mimeType })));
         else if (d.action === P.Action.CANCEL) ok([]);
@@ -194,27 +209,55 @@ async function drive(rota, tokenAcesso, params = {}) {
   return r;
 }
 
-/** Todos os PDFs de uma pasta, descendo nas subpastas até a profundidade. */
-async function listarPdfsDaPasta(pastaId, tokenAcesso, profundidade = 0, caminho = '') {
+const MIME_ATALHO = 'application/vnd.google-apps.shortcut';
+
+/** É PDF? Pelo MIME ou pelo nome — o Drive nem sempre reconhece o tipo de
+    um arquivo enviado do Windows, e aí ele fica como octet-stream. */
+const ehPdf = (f) => /pdf/i.test(f.mimeType || '') || /\.pdf$/i.test(f.name || '');
+
+/**
+ * Todos os PDFs de uma pasta, descendo nas subpastas até a profundidade.
+ *
+ * A consulta pede TUDO que está na pasta (só `parents` e `trashed`), e o
+ * filtro de tipo é feito aqui — a versão anterior filtrava por MIME na
+ * própria consulta e deixava de fora PDF com MIME fora do padrão e os
+ * ATALHOS (`shortcut`) para PDF, que é o comum em pasta compartilhada pela
+ * construtora: a pasta aparecia, mas "sem PDF dentro". Atalho para PDF é
+ * baixado pelo alvo; atalho para pasta é seguido.
+ *
+ * `resumo` acumula o que foi visto, para a interface dizer "X itens, Y PDFs
+ * em Z pastas" em vez de um silêncio.
+ */
+export async function listarPdfsDaPasta(pastaId, tokenAcesso, profundidade = 0, caminho = '', resumo = { itens: 0, pdfs: 0, pastas: 0, outros: [] }) {
   const out = [];
   let pageToken = '';
+  resumo.pastas++;
   do {
     const r = await drive('/files', tokenAcesso, {
-      q: `'${pastaId}' in parents and trashed = false and (mimeType = '${MIME_PDF}' or mimeType = '${MIME_PASTA}')`,
-      fields: 'nextPageToken, files(id, name, mimeType, size)',
+      q: `'${pastaId}' in parents and trashed = false`,
+      fields: 'nextPageToken, files(id, name, mimeType, size, shortcutDetails(targetId, targetMimeType))',
       pageSize: '1000',
       includeItemsFromAllDrives: 'true',
-      orderBy: 'name',
+      corpora: 'allDrives',
+      orderBy: 'folder,name',
       ...(pageToken ? { pageToken } : {}),
     });
     const j = await r.json();
     for (const f of (j.files || [])) {
-      if (f.mimeType === MIME_PASTA) {
+      resumo.itens++;
+      /* atalho: o que vale é o alvo */
+      const alvo = f.mimeType === MIME_ATALHO && f.shortcutDetails
+        ? { id: f.shortcutDetails.targetId, name: f.name, mimeType: f.shortcutDetails.targetMimeType || '' }
+        : { id: f.id, name: f.name, mimeType: f.mimeType || '' };
+      if (alvo.mimeType === MIME_PASTA) {
         if (profundidade < GOOGLE.PROFUNDIDADE_MAXIMA) {
-          out.push(...await listarPdfsDaPasta(f.id, tokenAcesso, profundidade + 1, caminho + f.name + '/'));
+          out.push(...await listarPdfsDaPasta(alvo.id, tokenAcesso, profundidade + 1, caminho + f.name + '/', resumo));
         }
-      } else {
-        out.push({ id: f.id, name: f.name, mimeType: f.mimeType, size: Number(f.size) || 0, caminho });
+      } else if (ehPdf(alvo)) {
+        resumo.pdfs++;
+        out.push({ id: alvo.id, name: alvo.name, mimeType: alvo.mimeType, size: Number(f.size) || 0, caminho });
+      } else if (resumo.outros.length < 8) {
+        resumo.outros.push(`${f.name} (${alvo.mimeType || 'tipo desconhecido'})`);
       }
     }
     pageToken = j.nextPageToken || '';
@@ -251,15 +294,31 @@ export async function importarDoDrive(aoProgredir = () => {}) {
   aoProgredir('listando o que foi escolhido no Drive', 0);
   const fila = [];
   const vistos = new Set();
+  const resumo = { itens: 0, pdfs: 0, pastas: 0, outros: [], ignorados: [] };
   for (const d of escolhidos) {
-    const itens = d.mimeType === MIME_PASTA ? await listarPdfsDaPasta(d.id, tk) : [d];
+    let itens;
+    if (d.mimeType === MIME_PASTA) {
+      itens = await listarPdfsDaPasta(d.id, tk, 0, (d.name || 'pasta') + '/', resumo);
+    } else if (d.mimeType === MIME_ATALHO) {
+      /* atalho escolhido direto no Picker: o Picker não diz o alvo, a API diz */
+      const meta = await (await drive(`/files/${encodeURIComponent(d.id)}`, tk, { fields: 'id,name,mimeType,shortcutDetails' })).json();
+      const alvo = meta.shortcutDetails ? { id: meta.shortcutDetails.targetId, name: meta.name, mimeType: meta.shortcutDetails.targetMimeType || '' } : meta;
+      itens = alvo.mimeType === MIME_PASTA
+        ? await listarPdfsDaPasta(alvo.id, tk, 0, (d.name || 'pasta') + '/', resumo)
+        : [alvo];
+    } else {
+      itens = [d];
+    }
     for (const it of itens) {
       if (vistos.has(it.id)) continue;
       vistos.add(it.id);
-      if (it.mimeType && it.mimeType !== MIME_PDF && !/\.pdf$/i.test(it.name || '')) continue;
+      if (!ehPdf(it)) { resumo.ignorados.push(`${it.name} (${it.mimeType || 'tipo desconhecido'})`); continue; }
       fila.push(it);
     }
   }
+  console.info(`[drive] escolha: ${escolhidos.length} item(ns) no Picker · ${resumo.pastas} pasta(s) varrida(s), ${resumo.itens} arquivo(s) vistos, ${fila.length} PDF(s) para baixar`
+    + (resumo.outros.length ? ` · não-PDF nas pastas: ${resumo.outros.join(', ')}` : '')
+    + (resumo.ignorados.length ? ` · ignorados: ${resumo.ignorados.join(', ')}` : ''));
 
   const arquivos = [];
   const pulados = [];
@@ -270,5 +329,5 @@ export async function importarDoDrive(aoProgredir = () => {}) {
     catch (e) { pulados.push({ nome: it.name, motivo: e.message }); }
   }
   aoProgredir('download concluído', 1);
-  return { arquivos, pulados, cancelado: false, total: fila.length };
+  return { arquivos, pulados, cancelado: false, total: fila.length, resumo };
 }

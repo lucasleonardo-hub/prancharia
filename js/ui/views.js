@@ -485,8 +485,15 @@ async function receberDoDrive() {
       console.warn('[drive] arquivos não baixados:', r.pulados);
       aviso(`${r.pulados.length} arquivo(s) do Drive não puderam ser baixados — veja o console.`);
     }
-    if (!r.arquivos.length) { render(); aviso('Nenhum PDF encontrado no que foi escolhido.'); return; }
-    aviso(`${r.arquivos.length} PDF(s) baixados do Drive. Processando…`);
+    if (!r.arquivos.length) {
+      render();
+      const s = r.resumo || {};
+      aviso(s.itens
+        ? `Nenhum PDF: ${s.pastas} pasta(s) varrida(s), ${s.itens} arquivo(s) vistos, nenhum é PDF (ex.: ${(s.outros || []).slice(0, 3).join(', ') || 'tipos não-PDF'}). Detalhes no console.`
+        : `Nenhum PDF: a pasta escolhida está vazia ou o Drive não deixou listá-la (${s.pastas || 0} pasta(s) varrida(s)). Detalhes no console.`);
+      return;
+    }
+    aviso(`${r.arquivos.length} PDF(s) baixados do Drive${r.resumo && r.resumo.pastas ? ` (${r.resumo.pastas} pasta(s) varrida(s))` : ''}. Processando…`);
     await receberArquivos(r.arquivos);
   } catch (err) {
     estado.processando = null;
