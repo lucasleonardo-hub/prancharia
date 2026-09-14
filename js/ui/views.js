@@ -1,8 +1,9 @@
 import {
   estado, emp, esc, celula, seloConfianca, seloStatus, marcaForma, aviso, salvar, irPara,
   ROTULO_FORMA, render, store, novoId, gravarGlossario, aprenderRegra, esquecerRegra, regrasAprendidas,
-  abrirModal, fecharModal, empreendimentoVazio, hidratar,
+  abrirModal, fecharModal, empreendimentoVazio, hidratar, sincronizarComNuvem, migrar,
 } from '../app.js';
+import { importarDoDrive, driveConfigurado } from '../core/drive.js';
 import { TIPOS, TIPO_POR_ID, ORDEM_NIVEIS, tipoDe, niveisDe, temNivel, rotuloNivel, temAreasComuns, cadeiaDe } from '../core/tipos.js';
 import { SISTEMAS, NOMES_SISTEMAS, SISTEMA_POR_NOME } from '../core/vocab.js';
 import { REGRAS_BASE } from '../core/glossario.js';
@@ -100,11 +101,30 @@ function fallbackCopia(txt, fim) {
    servidor onde eles moram". Só aparece fora de localhost: em desenvolvimento
    local sem `/server` no ar, rodar sem nuvem é o esperado, não um erro. */
 function avisoModoLocal() {
-  if (store.naNuvem()) return '';
+  if (store.naNuvem()) return avisoNuvemLigada();
   let local = false;
   try { local = /^(localhost|127\.0\.0\.1|\[::1\])$/i.test(location.hostname); } catch { /* sem window */ }
   if (local) return '';
-  return `<div class="aviso-faixa"><span>⚠</span><div><b>Não consegui falar com o servidor compartilhado.</b> O que aparece abaixo é só deste navegador — pode não ser a mesma lista que outra pessoa (ou você, em outro navegador) vê. Se o servidor estava hibernando, ele já deve ter acordado: <button class="btn pequeno" data-acao="recarregarPagina" style="margin-left:4px">recarregar a página</button> costuma resolver.</div></div>`;
+  return `<div class="aviso-faixa"><span>⚠</span><div><b>Não consegui falar com o servidor compartilhado.</b> O que aparece abaixo é só deste navegador — pode não ser a mesma lista que outra pessoa (ou você, em outro navegador) vê. O sistema continua tentando em segundo plano e liga sozinho quando o servidor acordar; se preferir, <button class="btn pequeno" data-acao="religarNuvem" style="margin-left:4px">tentar agora</button>. O que você criar enquanto isso fica guardado aqui e sobe ao servidor assim que ele responder.</div></div>`;
+}
+
+/* Com a nuvem ligada ainda há duas coisas a avisar. A primeira é grave: o
+   servidor rodando num disco efêmero (Render free sem Turso) perde TUDO ao
+   hibernar — é a causa de "criei aqui e não vejo em outro navegador". A
+   segunda é o resto dessa história: projetos que ficaram presos neste
+   navegador enquanto o servidor estava fora, com a versão daqui mais nova
+   que a de lá. */
+function avisoNuvemLigada() {
+  const partes = [];
+  if (store.NUVEM.persistente === false) {
+    partes.push(`<div class="aviso-faixa critico"><span>⚠</span><div><b>O servidor está sem banco persistente.</b> Ele roda num disco efêmero: tudo o que for gravado lá some quando ele reiniciar ou hibernar — é por isso que os empreendimentos não aparecem em outro navegador. Este navegador guarda uma cópia de tudo e reenvia sozinho, mas outra pessoa só verá os dados depois que o servidor tiver um banco de verdade. Configure <code>TURSO_DATABASE_URL</code> no painel do Render (passo a passo no LEIA-ME, seção “Banco persistente”).</div></div>`);
+  }
+  const p = estado.nuvemPendentes;
+  if (p && p.maisNovos && p.maisNovos.length) {
+    const nomes = p.maisNovos.slice(0, 4).map(e => esc(e.nome)).join(', ') + (p.maisNovos.length > 4 ? '…' : '');
+    partes.push(`<div class="aviso-faixa"><span>⚠</span><div><b>${p.maisNovos.length} empreendimento(s) têm uma versão mais nova neste navegador</b> do que no servidor (${nomes}). Provavelmente você trabalhou enquanto o servidor estava fora do ar. <button class="btn pequeno" data-acao="enviarLocais" style="margin-left:4px">Enviar a versão deste navegador</button> substitui a do servidor.</div></div>`);
+  }
+  return partes.join('');
 }
 
 function statusProcessamento(e) {
@@ -259,6 +279,25 @@ const empreendimentos = {
   acoes: {
     criarEmp() { formEmpreendimento(null); },
     recarregarPagina() { location.reload(); },
+    async religarNuvem() {
+      aviso('Tentando falar com o servidor… se ele estiver hibernando, pode levar até 30s.');
+      const ligou = await store.religarNuvem();
+      if (!ligou) { aviso('O servidor ainda não respondeu. Vou continuar tentando em segundo plano.'); render(); }
+      /* quando liga, o evento `prancharia:nuvem` cuida do resto */
+    },
+    async enviarLocais() {
+      const p = estado.nuvemPendentes;
+      const n = p ? (p.novos.length + p.maisNovos.length) : 0;
+      if (!n) { aviso('Nada pendente neste navegador.'); return; }
+      if (!confirm(`Enviar ${n} empreendimento(s) deste navegador para o servidor? A versão do servidor será substituída pela daqui.`)) return;
+      aviso('Enviando…');
+      const feito = await store.enviarLocaisParaNuvem({ soNovos: false });
+      estado.emps = (await store.listarEmpreendimentos()).map(migrar);
+      estado.nuvemPendentes = await store.projetosSoLocais();
+      render();
+      aviso(`${feito.projetos} empreendimento(s) e ${feito.arquivos} PDF(s) enviados` + (feito.falhas.length ? ` — ${feito.falhas.length} falha(s), veja o console.` : '.'));
+      if (feito.falhas.length) console.warn('[nuvem] falhas ao enviar:', feito.falhas);
+    },
     editarEmp({ id }) { formEmpreendimento(estado.emps.find(x => x.id === id)); },
     async abrirDocumentos({ id }) {
       await hidratar(id);
@@ -342,12 +381,15 @@ const documentos = {
         <div class="acoes">
           <label class="btn primario" for="entradaDocs">Enviar arquivos</label>
           <input id="entradaDocs" type="file" accept="application/pdf" multiple hidden>
+          <button class="btn" id="importarDrive" type="button" title="${driveConfigurado() ? 'Escolher PDFs ou uma pasta no seu Google Drive' : 'Preencha CLIENT_ID e API_KEY em js/core/drive.js para ligar'}">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true" stroke-linejoin="round"><path d="M8.5 3.5h7l6 10.5-3.5 6h-12L2.5 14z"/><path d="M8.5 3.5 2.5 14M15.5 3.5l-7 12.5M21.5 14h-13"/></svg>
+            Importar do Google Drive</button>
           ${e.documentos.some(d => !d.processadoEm) ? '<button class="btn" data-acao="processarTudo">Processar pendentes</button>' : ''}
           ${e.documentos.some(d => d.tipo === 'memorial') ? '<button class="btn" data-acao="reprocessarMemoriais">Recruzar memoriais</button>' : ''}
         </div></div>
       ${estado.processando ? `<div class="cartao"><div class="corpo">
-        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px"><span>${esc(estado.processando.texto)}</span><span class="num">${Math.round(estado.processando.pct * 100)}%</span></div>
-        <div class="progresso"><i style="width:${Math.round(estado.processando.pct * 100)}%"></i></div></div></div>` : ''}
+        <div style="display:flex;justify-content:space-between;gap:12px;font-size:13px;margin-bottom:6px"><span id="progTexto" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(estado.processando.texto)}</span><span class="num" id="progPct" style="flex:none">${Math.round(estado.processando.pct * 100)}%</span></div>
+        <div class="progresso"><i id="progBarra" style="width:${Math.round(estado.processando.pct * 100)}%"></i></div></div></div>` : ''}
       <div class="cartao">${tabela(
         [{ nome: 'Arquivo' }, { nome: 'Tipo' }, { nome: 'Págs.', num: 1 }, { nome: 'Tags / itens', num: 1 }, { nome: 'Locais', num: 1 }, { nome: 'Fusão' }, { nome: 'Situação' }, { nome: 'Enviado' }, { nome: '' }],
         linhas ? [linhas] : [],
@@ -360,6 +402,8 @@ const documentos = {
   depois(e, alvo) {
     const inp = alvo.querySelector('#entradaDocs');
     if (inp) inp.addEventListener('change', ev => receberArquivos([...ev.target.files]));
+    const drive = alvo.querySelector('#importarDrive');
+    if (drive) drive.addEventListener('click', () => receberDoDrive());
     const caixa = alvo.querySelector('#visorCaixa');
     if (!caixa) return;
     const sel = estado.param || estado.filtros.foco?.documentoId;
@@ -399,7 +443,8 @@ const documentos = {
     },
     async processarTudo() {
       const e = emp();
-      for (const d of e.documentos.filter(x => !x.processadoEm)) await processarDocumento(d);
+      const fila = e.documentos.filter(x => !x.processadoEm);
+      for (let i = 0; i < fila.length; i++) await processarDocumento(fila[i], { i, n: fila.length });
       const aud = await auditarNoProcessamento(e);
       await salvar();
       render();
@@ -419,10 +464,45 @@ const documentos = {
   },
 };
 
+/* "Importar do Google Drive": login → Picker → download → o mesmo caminho do
+   <input type="file">. A barra de progresso mostra o download; depois cada
+   PDF é processado como se tivesse vindo do disco. */
+async function receberDoDrive() {
+  if (estado.processando) { aviso('Espere o processamento atual terminar.'); return; }
+  if (!driveConfigurado()) {
+    aviso('Google Drive ainda não configurado: preencha CLIENT_ID e API_KEY em js/core/drive.js (passo a passo no LEIA-ME).');
+    return;
+  }
+  LOTE.i = 0; LOTE.n = 1;
+  try {
+    const r = await importarDoDrive((texto, pct) => {
+      if (!estado.processando) { estado.processando = { texto, pct: 0 }; render(); }
+      return atualizarProgresso(texto, pct);
+    });
+    estado.processando = null;
+    if (r.cancelado) { render(); return; }
+    if (r.pulados.length) {
+      console.warn('[drive] arquivos não baixados:', r.pulados);
+      aviso(`${r.pulados.length} arquivo(s) do Drive não puderam ser baixados — veja o console.`);
+    }
+    if (!r.arquivos.length) { render(); aviso('Nenhum PDF encontrado no que foi escolhido.'); return; }
+    aviso(`${r.arquivos.length} PDF(s) baixados do Drive. Processando…`);
+    await receberArquivos(r.arquivos);
+  } catch (err) {
+    estado.processando = null;
+    console.error(err);
+    render();
+    aviso('Google Drive: ' + err.message);
+  }
+}
+
 async function receberArquivos(arquivos) {
   const e = emp();
-  for (const f of arquivos) {
-    if (!/pdf$/i.test(f.type) && !/\.pdf$/i.test(f.name)) { aviso('Só PDF por enquanto: ' + f.name); continue; }
+  const validos = arquivos.filter(f => /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name));
+  for (const f of arquivos) if (!validos.includes(f)) aviso('Só PDF por enquanto: ' + f.name);
+  let indice = 0;
+  for (const f of validos) {
+    const lote = { i: indice++, n: validos.length };
     const rev = /[-_ ]R(\d{2})\b/i.exec(f.name) || /(\d{2})Folha/i.exec(f.name);
     const meta = {
       id: novoId('doc'), nome: f.name, bytes: f.size, enviadoEm: new Date().toISOString(),
@@ -443,9 +523,9 @@ async function receberArquivos(arquivos) {
       store.enviarAnexo(f, { projetoId: e.id, nome: f.name }).then(url => { if (url) { meta.anexo = url; salvar(); } });
     }
     render();
-    await processarDocumento(meta);
+    await processarDocumento(meta, lote);
   }
-  await salvar({ texto: `${arquivos.length} documento(s) enviado(s)`, tipo: 'documento' });
+  await salvar({ texto: `${validos.length} documento(s) enviado(s)`, tipo: 'documento' });
   const aud = await auditarNoProcessamento(e);
   await salvar();
   render();
@@ -495,20 +575,52 @@ function dataUrlParaBytes(dataUrl) {
   return bytes;
 }
 
-function atualizarProgresso(texto, pct) {
-  estado.processando = { texto, pct };
-  const barra = document.querySelector('.progresso i');
-  if (barra) {
-    barra.style.width = Math.round(pct * 100) + '%';
-    const rot = barra.parentElement.previousElementSibling;
-    if (rot && rot.firstElementChild) rot.firstElementChild.textContent = texto;
-  }
+/* A BARRA DE PROGRESSO.
+
+   O bug do "2%": a versão anterior atualizava a largura da barra e o texto,
+   mas NUNCA o número ao lado — ele ficava no valor que o render inicial
+   escreveu (0.02 → "2%") até o fim, enquanto a barra andava. E a fase cara
+   (consolidar: recortes + chamadas à IA) não reportava nada, então a barra
+   parava em ~85% da página por minutos.
+
+   Agora:
+   - os três pedaços (texto, número, barra) têm id e são atualizados juntos;
+   - `LOTE` guarda em que arquivo do lote estamos: o percentual mostrado é o
+     do LOTE inteiro — (arquivosProntos + fraçãoDoAtual) / totalDeArquivos —
+     e não recomeça do zero a cada PDF;
+   - `consolidar` recebe um callback e reporta local a local;
+   - a função devolve uma Promise que cede ao navegador de tempos em tempos,
+     para a barra ser de fato pintada durante um trecho síncrono longo. */
+const LOTE = { i: 0, n: 1 };
+let ultimaCedida = 0;
+
+function atualizarProgresso(texto, pctDoc) {
+  const dentro = Math.min(1, Math.max(0, Number(pctDoc) || 0));
+  const pct = Math.min(1, Math.max(0, (LOTE.i + dentro) / Math.max(1, LOTE.n)));
+  const rotulo = LOTE.n > 1 ? `Arquivo ${LOTE.i + 1} de ${LOTE.n} · ${texto}` : texto;
+  estado.processando = { texto: rotulo, pct };
+  const barra = document.getElementById('progBarra');
+  const t = document.getElementById('progTexto');
+  const n = document.getElementById('progPct');
+  const numero = Math.round(pct * 100) + '%';
+  if (barra) barra.style.width = numero;
+  if (t) t.textContent = rotulo;
+  if (n) n.textContent = numero;
+  /* cede ao navegador no máximo a cada ~80 ms: o suficiente para pintar, sem
+     custar tempo de processamento */
+  const agora = performance.now();
+  if (agora - ultimaCedida < 80) return undefined;
+  ultimaCedida = agora;
+  return new Promise(r => setTimeout(r, 0));
 }
 
-async function processarDocumento(meta) {
+async function processarDocumento(meta, lote = null) {
   const e = emp();
-  estado.processando = { texto: 'abrindo ' + meta.nome, pct: 0.02 };
+  LOTE.i = lote ? lote.i : 0;
+  LOTE.n = lote ? lote.n : 1;
+  estado.processando = { texto: 'abrindo ' + meta.nome, pct: LOTE.i / LOTE.n };
   render();
+  await atualizarProgresso('abrindo ' + meta.nome, 0);
   try {
     const blob = estado.pdfs.get(meta.id)?.blob || await store.lerArquivo(meta.id);
     let doc = await openPdf(new Uint8Array(await blob.arrayBuffer()));
@@ -562,14 +674,21 @@ async function processarDocumento(meta) {
     }
     e.tagsPorDoc = e.tagsPorDoc || {};
     e.tagsPorDoc[meta.id] = [];
-    for (let p = 1; p <= doc.numPages; p++) {
+    /* dentro de cada página: a análise vetorial é rápida; a consolidação é
+       onde o tempo vai quando a IA está ligada (um recorte + uma chamada por
+       local). O peso reflete isso para a barra andar no ritmo real. */
+    const pesoAnalise = iaLigada() ? 0.2 : 0.7;
+    const paginas = doc.numPages;
+    for (let p = 1; p <= paginas; p++) {
       const folha = await analisarFolha(doc, p, meta, (texto, pct) =>
-        atualizarProgresso(`${meta.nome} — página ${p}: ${texto}`, (p - 1 + pct) / doc.numPages));
-      await consolidar(e, folha, meta);
+        atualizarProgresso(`${meta.nome} — página ${p} de ${paginas}: ${texto}`, (p - 1 + pct * pesoAnalise) / paginas));
+      await consolidar(e, folha, meta, (texto, pct) =>
+        atualizarProgresso(`${meta.nome} — página ${p} de ${paginas}: ${texto}`, (p - 1 + pesoAnalise + pct * (1 - pesoAnalise)) / paginas));
       meta.tags += folha.tags.length;
       meta.locaisLidos = locaisVivos(e).length;
       e.tagsPorDoc[meta.id].push(...folha.tags.map(t => ({ x: t.x, y: t.y, forma: t.forma, numero: t.numero, pagina: p })));
     }
+    await atualizarProgresso(`${meta.nome} — concluído`, 1);
     if (meta.substitui) {
       const ant = e.documentos.find(d => d.id === meta.substitui);
       if (ant) registrarHistorico(e, { texto: `Revisão ${meta.revisao || 'nova'} de ${ant.nome} processada — versão anterior mantida no histórico`, tipo: 'revisao' });

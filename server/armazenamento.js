@@ -207,5 +207,65 @@ function fatiar(corpo, limite) {
   return { campos, arquivos };
 }
 
-/* Trocar por `s3({ ... })` no dia da migração. Nenhuma rota muda. */
-export default discoLocal;
+/* ------------------------------------------------------------------ */
+/* implementação no banco (tabela `blobs` do db.js)                    */
+/* ------------------------------------------------------------------ */
+
+/* Para quando o disco não é confiável — o caso do Render no plano gratuito,
+   onde /server/dados some a cada hibernação. Com o banco no Turso, os bytes
+   da prancha vão para o mesmo lugar que o projeto, e a "outra máquina"
+   consegue abrir a prancha depois de o servidor ter reiniciado.
+
+   Mesma chave sharded do disco, para o índice em `arquivos` não saber qual
+   dos dois está por trás. */
+
+export const noBanco = {
+  nome: 'banco',
+  raiz: null,
+
+  async put(bytes, { tipo = 'application/pdf' } = {}) {
+    const banco = await import('./db.js');
+    const hash = sha256(bytes);
+    const ext = EXTENSAO[tipo] || '.bin';
+    const chave = `${hash.slice(0, 2)}/${hash.slice(2, 4)}/${hash}${ext}`;
+    await banco.guardarBlob(chave, bytes, tipo);
+    return { chave, bytes: bytes.length, sha256: hash };
+  },
+
+  async get(chave) {
+    const banco = await import('./db.js');
+    const b = await banco.lerBlob(chave);
+    if (!b) throw new Error('blob não encontrado');
+    return b;
+  },
+
+  url(_chave, meta = {}) {
+    return meta.id ? `/api/files/${encodeURIComponent(meta.id)}` : null;
+  },
+
+  async remover(chave) {
+    const banco = await import('./db.js');
+    return banco.apagarBlob(chave);
+  },
+
+  async espaco() {
+    const banco = await import('./db.js');
+    return banco.espacoBlobs();
+  },
+};
+
+/* ------------------------------------------------------------------ */
+/* qual dos dois                                                       */
+/* ------------------------------------------------------------------ */
+
+/* ARMAZENAMENTO=disco|banco decide à mão. Sem isso: banco quando há Turso
+   configurado (se o banco precisou sair do disco, os arquivos também
+   precisam), disco em qualquer outro caso — que é o comportamento de sempre
+   numa máquina de escritório. Trocar por `s3({ ... })` no dia da migração:
+   nenhuma rota muda. */
+const escolha = (process.env.ARMAZENAMENTO || '').trim().toLowerCase();
+const armazenamento = escolha === 'banco' ? noBanco
+  : escolha === 'disco' ? discoLocal
+  : (process.env.TURSO_DATABASE_URL ? noBanco : discoLocal);
+
+export default armazenamento;

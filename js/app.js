@@ -18,6 +18,7 @@ export const estado = {
   filtros: {},
   saudeIA: null,          // null = não consultado, false = servidor fora do ar
   capacidades: { db: false, assets: false },
+  nuvemPendentes: null,   // { novos, maisNovos }: projetos que existem só neste navegador
 };
 
 export const emp = () => estado.emps.find(e => e.id === estado.empId) || null;
@@ -214,7 +215,43 @@ export async function iniciarApp() {
   if (estado.empId) await hidratar(estado.empId);
   if (!estado.empId && estado.rota !== 'empreendimentos') estado.rota = 'empreendimentos';
   render();
+  /* o que está só neste navegador sobe para o servidor, sem perguntar, quando
+     o servidor não tem nada com aquele id — não há o que sobrescrever */
+  if (store.naNuvem()) sincronizarComNuvem();
 }
+
+/**
+ * Sobe os projetos que existem só neste navegador (nunca sobrescreve) e
+ * anota os que existem nos dois lugares com a cópia daqui mais nova — esses
+ * ficam para a pessoa decidir no aviso da tela de Empreendimentos.
+ */
+export async function sincronizarComNuvem() {
+  try {
+    const feito = await store.enviarLocaisParaNuvem({ soNovos: true });
+    if (feito.projetos) {
+      estado.emps = (await store.listarEmpreendimentos()).map(migrar);
+      aviso(`${feito.projetos} empreendimento(s) que estavam só neste navegador foram enviados ao servidor`
+        + (feito.arquivos ? ` com ${feito.arquivos} PDF(s)` : '') + '.');
+    }
+    if (feito.falhas.length) console.warn('[nuvem] ao enviar projetos locais:', feito.falhas);
+    estado.nuvemPendentes = await store.projetosSoLocais();
+  } catch (e) {
+    console.warn('[nuvem] sincronização local → servidor falhou:', e.message);
+  }
+  render();
+}
+
+/* O servidor acordou depois de a página ter aberto em modo local (storage.js
+   sonda em segundo plano): recarrega a lista de lá e sobe o que ficou aqui. */
+window.addEventListener('prancharia:nuvem', async () => {
+  aviso('Servidor compartilhado no ar — carregando os empreendimentos de lá.');
+  try {
+    estado.emps = (await store.listarEmpreendimentos()).map(migrar);
+    if (estado.empId) await hidratar(estado.empId);
+  } catch (e) { console.warn('[nuvem] não consegui recarregar a lista:', e.message); }
+  render();
+  sincronizarComNuvem();
+});
 
 export async function gravarGlossario() { await store.salvarGlossario(regrasAprendidas()); }
 export { store, novoId, registrarHistorico, aprenderRegra, esquecerRegra, regrasAprendidas, empreendimentoVazio, migrar };

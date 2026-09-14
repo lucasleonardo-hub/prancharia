@@ -298,6 +298,9 @@ app.get('/api/health', async (_req, res) => {
     timeoutMemorialMs: TEMPO_LIMITE_MEMORIAL,
     banco: bd,
     erroBanco,
+    /* o frontend avisa quando isto é false: no Render free o disco é efêmero
+       e tudo o que está em /server/dados some na próxima hibernação */
+    persistente: bd ? !!bd.persistente : false,
     armazenamento: armazenamento.nome,
     autenticacao: 'nenhuma',
     rotas: [
@@ -336,10 +339,20 @@ app.post('/api/vision/process-local', async (req, res) => {
     const pLocal = paraInline(imagemLocal, 'imagemLocal');
     if (!pLocal) throw new Error('imagemLocal é obrigatória');
     const pLeg = imagemLegenda ? paraInline(imagemLegenda, 'imagemLegenda') : null;
+    /* PIPELINE HÍBRIDO: o pacote `vetor` traz o que o frontend já extraiu
+       vetorialmente (passo 1) — tags, legenda, tabelas de código e, agora,
+       as especificações já montadas para este local e as lacunas dele. A IA
+       recebe tudo isso como dado estruturado e revisa a imagem (passo 2). */
     partes = [
       { text: 'IMAGEM 1 — REGIÃO DO LOCAL:' }, pLocal,
       ...(pLeg ? [{ text: 'IMAGEM 2 — BLOCO DE LEGENDAS DA PRANCHA:' }, pLeg] : [{ text: 'IMAGEM 2 não foi enviada: esta prancha não tem bloco de legendas recortável.' }]),
-      { text: contexto({ local, tags: vetor.tags || [], legenda: vetor.legenda || [], codigos: vetor.codigos || [], documento, pagina }) },
+      { text: contexto({
+        local, documento, pagina,
+        tags: vetor.tags || [], legenda: vetor.legenda || [], codigos: vetor.codigos || [],
+        especificacoes: Array.isArray(vetor.especificacoes) ? vetor.especificacoes : [],
+        lacunas: Array.isArray(vetor.lacunas) ? vetor.lacunas : [],
+        ambientes: Array.isArray(vetor.ambientes) ? vetor.ambientes : [],
+      }) },
     ];
   } catch (err) {
     const ms = agora() - t0;
@@ -350,14 +363,18 @@ app.post('/api/vision/process-local', async (req, res) => {
   try {
     const empresa = await empresaDaRequisicao(req);
     const { bruto, tokens, modelo, provedor } = await gerar('visao', partes, TEMPO_LIMITE, empresa);
-    const especificacoes = sanear(bruto);
+    const revisao = {};
+    const especificacoes = sanear(bruto, revisao);
     const ms = agora() - t0;
     registrar({ ok: true, ms, local: local.nome, itens: especificacoes.length, tokens,
-      erro: (provedor !== 'gemini' ? `via ${provedor} · ` : '') + (empresa ? `ctx ${empresa.nome}` : '') });
+      erro: `${revisao.confirmar} conf · ${revisao.completar} compl · ${revisao.novo} novos`
+        + (revisao.semJustificativa ? ` · ${revisao.semJustificativa} sem evidência (descartados)` : '')
+        + (provedor !== 'gemini' ? ` · via ${provedor}` : '') + (empresa ? ` · ctx ${empresa.nome}` : '') });
     res.json({
       ok: true, motor: 'multimodal_gemini', provedor, modelo, ms, tokens: tokens || null,
       empresa: empresa ? { id: empresa.id, nome: empresa.nome } : null,
       descartados: (Array.isArray(bruto) ? bruto.length : 0) - especificacoes.length,
+      revisao,
       especificacoes,
     });
   } catch (err) {
@@ -487,8 +504,9 @@ app.post('/api/vision/process-sheet', async (req, res) => {
     documento = '', pagina = null,
     imagens = [],            // [{ rotulo, base64 }] — recortes dos quadros, ou a folha
     locais = [],             // nomes dos locais que já existem na árvore
-    jaLidos = [],            // o que a leitura vetorial já tirou desta folha
+    jaLidos = [],            // o que a leitura vetorial já tirou desta folha (resumo em texto)
     lacunas = [],            // locais sem categoria essencial
+    vetor = null,            // o pacote estruturado do passo 1: { ambientes, legendas, tabelas }
   } = req.body || {};
 
   const rotulo = `folha ${imagens.length} img × ${locais.length} locais`;
@@ -525,7 +543,7 @@ app.post('/api/vision/process-sheet', async (req, res) => {
       partes.push({ text: `IMAGEM ${i + 1} — ${(im && im.rotulo) || 'região da prancha'}:` }, p);
     });
     partes.push({ text: contextoQuadro({
-      documento, pagina, locais, jaLidos, lacunas,
+      documento, pagina, locais, jaLidos, lacunas, vetor,
       regioes: imagens.map(im => (im && im.rotulo) || 'região da prancha'),
     }) });
   } catch (err) {
@@ -541,7 +559,9 @@ app.post('/api/vision/process-sheet', async (req, res) => {
     const ms = agora() - t0;
     const comLocal = itens.filter(i => i.local).length;
     registrar({ ok: true, ms, local: rotulo, itens: itens.length, tokens,
-      erro: `${comLocal} com local declarado` + (provedor !== 'gemini' ? ` · via ${provedor}` : '') + (empresa ? ` · ctx ${empresa.nome}` : '') });
+      erro: `${comLocal} com local · ${recusadas.confirmar} conf · ${recusadas.completar} compl · ${recusadas.novo} novos`
+        + (recusadas.semJustificativa ? ` · ${recusadas.semJustificativa} sem evidência` : '')
+        + (provedor !== 'gemini' ? ` · via ${provedor}` : '') + (empresa ? ` · ctx ${empresa.nome}` : '') });
     res.json({
       ok: true, motor: 'multimodal_gemini', provedor, modelo, ms, tokens: tokens || null,
       empresa: empresa ? { id: empresa.id, nome: empresa.nome } : null,
@@ -731,7 +751,11 @@ app.listen(PORTA, () => {
   console.log(`  GEMINI_API_KEY ..... ${CHAVE ? 'configurada' : 'AUSENTE — o frontend vai cair no motor vetorial'}`);
   console.log(`  banco .............. ${est.motor} · ${est.arquivo}`);
   console.log(`  conteúdo ........... ${est.empresas} empresa(s), ${est.projetos} projeto(s), ${est.arquivos} arquivo(s)`);
-  console.log(`  pranchas em ........ ${armazenamento.nome} (${armazenamento.raiz || 's3'})`);
+  console.log(`  pranchas em ........ ${armazenamento.nome}${armazenamento.raiz ? ` (${armazenamento.raiz})` : ''}`);
+  if (!est.persistente) {
+    console.log(`  ATENÇÃO ............ DISCO EFÊMERO: este host apaga /server/dados a cada reinício/hibernação.`);
+    console.log(`                       Os projetos vão SUMIR. Configure TURSO_DATABASE_URL + TURSO_AUTH_TOKEN (ver LEIA-ME).`);
+  }
   console.log(`  autenticação ....... NENHUMA — não exponha esta porta na internet`);
   console.log('');
   console.log(`  dados .............. GET/POST /api/companies · /api/projects · /api/glossary`);

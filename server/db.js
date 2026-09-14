@@ -4,20 +4,31 @@
    as empresas e o índice das pranchas. O banco é SQLite — um arquivo só, que
    se copia, se versiona e se leva para outra máquina num anexo de e-mail.
 
-   DUAS IMPLEMENTAÇÕES, UM CONTRATO. `better-sqlite3` é o driver rápido, mas é
-   módulo nativo: exige compilador na máquina de quem instala. O Node 22 traz
-   `node:sqlite` embutido, com a mesma forma de API. Este arquivo tenta o
-   primeiro e cai no segundo, então o servidor sobe mesmo numa máquina onde o
-   `npm install` falhou — que foi exatamente o caso ao escrever isto.
+   TRÊS IMPLEMENTAÇÕES, UM CONTRATO.
+     - `better-sqlite3`: o driver rápido, mas é módulo nativo (exige compilador).
+     - `node:sqlite`: embutido no Node 22+, mesma forma de API. Entra quando o
+       primeiro não está instalado.
+     - `@libsql/client` (Turso): SQLite remoto, por HTTP. Entra quando
+       TURSO_DATABASE_URL está definida. É O QUE RESOLVE O RENDER FREE: o
+       disco do plano gratuito é efêmero — cada hibernação/deploy zera
+       /server/dados — e com o banco fora do disco os projetos sobrevivem.
 
-   PARÂMETROS SEMPRE POSICIONAIS (`?`). Os dois drivers divergem no nome dos
+   Os dois primeiros são síncronos e o terceiro é assíncrono, então todos
+   passam por um adaptador pequeno com quatro métodos assíncronos:
+     get(sql, args) → linha | undefined
+     all(sql, args) → linhas
+     run(sql, args) → { changes }
+     exec(sql)      → várias instruções de uma vez (esquema)
+
+   PARÂMETROS SEMPRE POSICIONAIS (`?`). Os drivers divergem no nome dos
    parâmetros nomeados; no posicional eles concordam. Não troque por `:nome`.
 
    O ESQUEMA, EM UMA FRASE: uma `empresa` tem muitos `projetos`; um projeto é
    um documento JSON inteiro (a árvore que o frontend já monta) mais as
    colunas que a listagem precisa ler sem abrir o JSON; `arquivos` é o índice
-   das pranchas, cujos bytes moram no Armazenamento (disco hoje, S3 depois);
-   `glossario` guarda as regras aprendidas, globais ou de uma empresa só. */
+   das pranchas, cujos bytes moram no Armazenamento (disco, ou a tabela
+   `blobs` deste mesmo banco quando o disco não é confiável); `glossario`
+   guarda as regras aprendidas, globais ou de uma empresa só. */
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -25,38 +36,96 @@ import crypto from 'node:crypto';
 
 const PASTA = process.env.DADOS_DIR || path.join(process.cwd(), 'dados');
 const ARQUIVO = process.env.DB_FILE || path.join(PASTA, 'prancharia.db');
+const TURSO_URL = (process.env.TURSO_DATABASE_URL || '').trim();
+const TURSO_TOKEN = (process.env.TURSO_AUTH_TOKEN || '').trim();
+/* O Render define RENDER=true em todo serviço. Sem banco remoto e sem disco
+   montado (DADOS_DIR apontando para o mount), o que está em /server/dados
+   some na próxima hibernação — e o frontend precisa saber disso para avisar. */
+const NO_RENDER = /^(1|true)$/i.test(process.env.RENDER || '');
 
 /* ------------------------------------------------------------------ */
-/* abertura: better-sqlite3 quando existir, node:sqlite quando não      */
+/* abertura: libsql (Turso) > better-sqlite3 > node:sqlite              */
 /* ------------------------------------------------------------------ */
 
 let bd = null;
 let motor = 'nenhum';
+let abrindo = null;
+
+/** Embrulha um driver síncrono (better-sqlite3 ou node:sqlite) no contrato. */
+function adaptadorSincrono(db) {
+  return {
+    async get(sql, args = []) { return db.prepare(sql).get(...args); },
+    async all(sql, args = []) { return db.prepare(sql).all(...args); },
+    async run(sql, args = []) { const r = db.prepare(sql).run(...args); return { changes: Number(r.changes) || 0 }; },
+    async exec(sql) { db.exec(sql); },
+  };
+}
+
+/** O Turso/libSQL: cada chamada é uma requisição HTTP, já assíncrona. */
+async function adaptadorLibsql() {
+  const { createClient } = await import('@libsql/client');
+  const cli = createClient({ url: TURSO_URL, authToken: TURSO_TOKEN || undefined });
+  /* linhas do libsql são array-like com as colunas também por nome; BLOB volta
+     como ArrayBuffer. Normaliza para objeto simples e Buffer, que é o que o
+     resto do arquivo espera dos outros dois drivers. */
+  const linha = (r, colunas) => {
+    if (!r) return undefined;
+    const o = {};
+    for (const c of colunas) {
+      const v = r[c];
+      o[c] = v instanceof ArrayBuffer ? Buffer.from(v) : (ArrayBuffer.isView(v) ? Buffer.from(v.buffer, v.byteOffset, v.byteLength) : v);
+    }
+    return o;
+  };
+  const exec = async (sql, args) => cli.execute({ sql, args: args.map(a => (a === undefined ? null : a)) });
+  return {
+    async get(sql, args = []) { const r = await exec(sql, args); return linha(r.rows[0], r.columns); },
+    async all(sql, args = []) { const r = await exec(sql, args); return r.rows.map(x => linha(x, r.columns)); },
+    async run(sql, args = []) { const r = await exec(sql, args); return { changes: Number(r.rowsAffected) || 0 }; },
+    async exec(sql) { await cli.executeMultiple(sql); },
+  };
+}
 
 async function abrir() {
   if (bd) return bd;
-  fs.mkdirSync(path.dirname(ARQUIVO), { recursive: true });
-
-  try {
-    const { default: Better } = await import('better-sqlite3');
-    bd = new Better(ARQUIVO);
-    motor = 'better-sqlite3';
-  } catch {
-    const { DatabaseSync } = await import('node:sqlite');
-    bd = new DatabaseSync(ARQUIVO);
-    motor = 'node:sqlite';
-  }
-
-  /* WAL deixa leitura e escrita concorrerem sem trancar uma à outra: com
-     duas pessoas na mesma base isso é a diferença entre funcionar e travar. */
-  try { bd.exec('PRAGMA journal_mode = WAL'); } catch { /* alguns sistemas de arquivo de rede recusam WAL */ }
-  bd.exec('PRAGMA foreign_keys = ON');
-  migrar();
-  return bd;
+  if (abrindo) return abrindo;
+  abrindo = (async () => {
+    let novo;
+    if (TURSO_URL) {
+      novo = await adaptadorLibsql();
+      motor = 'libsql';
+    } else {
+      fs.mkdirSync(path.dirname(ARQUIVO), { recursive: true });
+      try {
+        const { default: Better } = await import('better-sqlite3');
+        novo = adaptadorSincrono(new Better(ARQUIVO));
+        motor = 'better-sqlite3';
+      } catch {
+        const { DatabaseSync } = await import('node:sqlite');
+        novo = adaptadorSincrono(new DatabaseSync(ARQUIVO));
+        motor = 'node:sqlite';
+      }
+      /* WAL deixa leitura e escrita concorrerem sem trancar uma à outra: com
+         duas pessoas na mesma base isso é a diferença entre funcionar e travar. */
+      try { await novo.exec('PRAGMA journal_mode = WAL'); } catch { /* alguns sistemas de arquivo de rede recusam WAL */ }
+      try { await novo.exec('PRAGMA foreign_keys = ON'); } catch { /* ok */ }
+    }
+    await migrar(novo);
+    bd = novo;
+    return bd;
+  })();
+  try { return await abrindo; } finally { abrindo = null; }
 }
 
 export const motorDoBanco = () => motor;
-export const caminhoDoBanco = () => ARQUIVO;
+export const caminhoDoBanco = () => (TURSO_URL ? semSegredo(TURSO_URL) : ARQUIVO);
+/** Os dados sobrevivem a um reinício do processo? */
+export const bancoPersistente = () => !!TURSO_URL || !NO_RENDER || !!process.env.DADOS_DIR;
+
+function semSegredo(url) {
+  try { const u = new URL(url); u.search = ''; u.username = ''; u.password = ''; return u.toString(); }
+  catch { return 'libsql'; }
+}
 
 /* ------------------------------------------------------------------ */
 /* esquema                                                             */
@@ -64,8 +133,8 @@ export const caminhoDoBanco = () => ARQUIVO;
 
 /* Idempotente de propósito: roda em toda subida, e subir duas vezes não
    quebra nada. É o que permite atualizar o servidor sem passo manual. */
-function migrar() {
-  bd.exec(`
+async function migrar(d) {
+  await d.exec(`
     CREATE TABLE IF NOT EXISTS empresas (
       id                        TEXT PRIMARY KEY,
       nome                      TEXT NOT NULL,
@@ -107,6 +176,14 @@ function migrar() {
       regras         TEXT NOT NULL DEFAULT '[]',
       atualizado_em  TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS blobs (
+      chave       TEXT PRIMARY KEY,
+      tipo        TEXT NOT NULL DEFAULT 'application/pdf',
+      bytes       INTEGER NOT NULL DEFAULT 0,
+      conteudo    BLOB NOT NULL,
+      criado_em   TEXT NOT NULL
+    );
   `);
 }
 
@@ -138,17 +215,17 @@ const umaEmpresa = (r) => r && ({
 
 export async function listarEmpresas() {
   const d = await abrir();
-  const linhas = d.prepare(`
+  const linhas = await d.all(`
     SELECT e.*, (SELECT COUNT(*) FROM projetos p WHERE p.empresa_id = e.id) AS projetos
       FROM empresas e ORDER BY e.nome COLLATE NOCASE
-  `).all();
+  `);
   return linhas.map(r => ({ ...umaEmpresa(r), projetos: Number(r.projetos) || 0 }));
 }
 
 export async function lerEmpresa(id) {
   if (!id) return null;
   const d = await abrir();
-  return umaEmpresa(d.prepare('SELECT * FROM empresas WHERE id = ?').get(String(id))) || null;
+  return umaEmpresa(await d.get('SELECT * FROM empresas WHERE id = ?', [String(id)])) || null;
 }
 
 /**
@@ -171,16 +248,16 @@ export async function salvarEmpresa(dados = {}) {
     atualizadoEm: t,
   };
 
-  d.prepare(`
+  await d.run(`
     INSERT INTO empresas (id, nome, regras_ia, fornecedores_homologados, vocabulario, criado_em, atualizado_em)
          VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       nome = excluded.nome, regras_ia = excluded.regras_ia,
       fornecedores_homologados = excluded.fornecedores_homologados,
       vocabulario = excluded.vocabulario, atualizado_em = excluded.atualizado_em
-  `).run(novo.id, novo.nome, String(novo.regrasIa),
+  `, [novo.id, novo.nome, String(novo.regrasIa),
     JSON.stringify(novo.fornecedoresHomologados), JSON.stringify(novo.vocabulario),
-    novo.criadoEm, novo.atualizadoEm);
+    novo.criadoEm, novo.atualizadoEm]);
 
   return novo;
 }
@@ -188,8 +265,11 @@ export async function salvarEmpresa(dados = {}) {
 export async function apagarEmpresa(id) {
   const d = await abrir();
   /* ON DELETE SET NULL: apagar a construtora não apaga o levantamento dos
-     projetos dela. Eles voltam para "sem empresa" e podem ser reatribuídos. */
-  const r = d.prepare('DELETE FROM empresas WHERE id = ?').run(String(id));
+     projetos dela. Eles voltam para "sem empresa" e podem ser reatribuídos.
+     Feito também à mão porque, por HTTP, o PRAGMA foreign_keys não é
+     garantido por conexão. */
+  await d.run('UPDATE projetos SET empresa_id = NULL WHERE empresa_id = ?', [String(id)]);
+  const r = await d.run('DELETE FROM empresas WHERE id = ?', [String(id)]);
   return Number(r.changes) > 0;
 }
 
@@ -204,8 +284,8 @@ export async function listarProjetos({ empresaId = null, limite = 200 } = {}) {
                  FROM projetos ${empresaId ? 'WHERE empresa_id = ?' : ''}
                 ORDER BY atualizado_em DESC LIMIT ?`;
   const linhas = empresaId
-    ? d.prepare(sql).all(String(empresaId), Number(limite))
-    : d.prepare(sql).all(Number(limite));
+    ? await d.all(sql, [String(empresaId), Number(limite)])
+    : await d.all(sql, [Number(limite)]);
   return linhas.map(r => ({
     id: r.id, empresaId: r.empresa_id, nome: r.nome, tipo: r.tipo,
     bytes: Number(r.bytes) || 0, criadoEm: r.criado_em, atualizadoEm: r.atualizado_em,
@@ -214,7 +294,7 @@ export async function listarProjetos({ empresaId = null, limite = 200 } = {}) {
 
 export async function lerProjeto(id) {
   const d = await abrir();
-  const r = d.prepare('SELECT * FROM projetos WHERE id = ?').get(String(id));
+  const r = await d.get('SELECT * FROM projetos WHERE id = ?', [String(id)]);
   if (!r) return null;
   const emp = json(r.dados_json, null);
   if (!emp) return null;
@@ -235,24 +315,24 @@ export async function salvarProjeto(emp = {}) {
   const d = await abrir();
   const t = agora();
   const texto = JSON.stringify(emp);
-  const anterior = d.prepare('SELECT criado_em FROM projetos WHERE id = ?').get(String(emp.id));
+  const anterior = await d.get('SELECT criado_em FROM projetos WHERE id = ?', [String(emp.id)]);
 
-  d.prepare(`
+  await d.run(`
     INSERT INTO projetos (id, empresa_id, nome, tipo, dados_json, bytes, criado_em, atualizado_em)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       empresa_id = excluded.empresa_id, nome = excluded.nome, tipo = excluded.tipo,
       dados_json = excluded.dados_json, bytes = excluded.bytes, atualizado_em = excluded.atualizado_em
-  `).run(String(emp.id), emp.empresaId ? String(emp.empresaId) : null,
+  `, [String(emp.id), emp.empresaId ? String(emp.empresaId) : null,
     String(emp.nome || ''), String(emp.tipo || 'outro'), texto, texto.length,
-    anterior?.criado_em || emp.criadoEm || t, t);
+    anterior?.criado_em || emp.criadoEm || t, t]);
 
   return { id: emp.id, bytes: texto.length, atualizadoEm: t };
 }
 
 export async function apagarProjeto(id) {
   const d = await abrir();
-  const r = d.prepare('DELETE FROM projetos WHERE id = ?').run(String(id));
+  const r = await d.run('DELETE FROM projetos WHERE id = ?', [String(id)]);
   return Number(r.changes) > 0;
 }
 
@@ -272,19 +352,19 @@ export async function registrarArquivo(meta = {}) {
     chave: meta.chave,
     criadoEm: agora(),
   };
-  d.prepare(`
+  await d.run(`
     INSERT INTO arquivos (id, projeto_id, nome, tipo, bytes, sha256, chave, criado_em)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       projeto_id = excluded.projeto_id, nome = excluded.nome, tipo = excluded.tipo,
       bytes = excluded.bytes, sha256 = excluded.sha256, chave = excluded.chave
-  `).run(linha.id, linha.projetoId, linha.nome, linha.tipo, linha.bytes, linha.sha256, linha.chave, linha.criadoEm);
+  `, [linha.id, linha.projetoId, linha.nome, linha.tipo, linha.bytes, linha.sha256, linha.chave, linha.criadoEm]);
   return linha;
 }
 
 export async function lerArquivoMeta(id) {
   const d = await abrir();
-  const r = d.prepare('SELECT * FROM arquivos WHERE id = ?').get(String(id));
+  const r = await d.get('SELECT * FROM arquivos WHERE id = ?', [String(id)]);
   return r ? { id: r.id, projetoId: r.projeto_id, nome: r.nome, tipo: r.tipo,
     bytes: Number(r.bytes), sha256: r.sha256, chave: r.chave, criadoEm: r.criado_em } : null;
 }
@@ -293,15 +373,52 @@ export async function lerArquivoMeta(id) {
 export async function acharPorHash(sha256) {
   if (!sha256) return null;
   const d = await abrir();
-  const r = d.prepare('SELECT * FROM arquivos WHERE sha256 = ? LIMIT 1').get(String(sha256));
+  const r = await d.get('SELECT * FROM arquivos WHERE sha256 = ? LIMIT 1', [String(sha256)]);
   return r ? { id: r.id, chave: r.chave, nome: r.nome, tipo: r.tipo, bytes: Number(r.bytes) } : null;
 }
 
 export async function listarArquivosDoProjeto(projetoId) {
   const d = await abrir();
-  return d.prepare('SELECT id, nome, tipo, bytes, criado_em FROM arquivos WHERE projeto_id = ? ORDER BY criado_em')
-    .all(String(projetoId))
-    .map(r => ({ id: r.id, nome: r.nome, tipo: r.tipo, bytes: Number(r.bytes), criadoEm: r.criado_em }));
+  const linhas = await d.all('SELECT id, nome, tipo, bytes, criado_em FROM arquivos WHERE projeto_id = ? ORDER BY criado_em', [String(projetoId)]);
+  return linhas.map(r => ({ id: r.id, nome: r.nome, tipo: r.tipo, bytes: Number(r.bytes), criadoEm: r.criado_em }));
+}
+
+/* ------------------------------------------------------------------ */
+/* blobs: os bytes das pranchas, quando o disco não é confiável        */
+/* ------------------------------------------------------------------ */
+
+/* É o armazenamento "banco" de armazenamento.js. Uma A0 vetorial tem 2–4 MB;
+   cabe folgado no BLOB do SQLite e no plano gratuito do Turso. A chave é o
+   mesmo caminho sharded que o disco usaria — trocar um pelo outro não muda o
+   índice em `arquivos`. */
+
+export async function guardarBlob(chave, conteudo, tipo = 'application/pdf') {
+  const d = await abrir();
+  const existe = await d.get('SELECT bytes FROM blobs WHERE chave = ?', [String(chave)]);
+  if (existe) return { chave, bytes: Number(existe.bytes) };
+  await d.run('INSERT INTO blobs (chave, tipo, bytes, conteudo, criado_em) VALUES (?, ?, ?, ?, ?)',
+    [String(chave), String(tipo), conteudo.length, conteudo, agora()]);
+  return { chave, bytes: conteudo.length };
+}
+
+export async function lerBlob(chave) {
+  const d = await abrir();
+  const r = await d.get('SELECT conteudo FROM blobs WHERE chave = ?', [String(chave)]);
+  if (!r || !r.conteudo) return null;
+  const c = r.conteudo;
+  return Buffer.isBuffer(c) ? c : Buffer.from(c.buffer ? c.buffer : c);
+}
+
+export async function apagarBlob(chave) {
+  const d = await abrir();
+  const r = await d.run('DELETE FROM blobs WHERE chave = ?', [String(chave)]);
+  return Number(r.changes) > 0;
+}
+
+export async function espacoBlobs() {
+  const d = await abrir();
+  const r = await d.get('SELECT COUNT(*) n, COALESCE(SUM(bytes),0) b FROM blobs');
+  return { arquivos: Number(r?.n) || 0, bytes: Number(r?.b) || 0 };
 }
 
 /* ------------------------------------------------------------------ */
@@ -317,10 +434,10 @@ const escopoDe = (empresaId) => (empresaId ? `empresa:${empresaId}` : 'global');
  */
 export async function lerGlossario(empresaId = null) {
   const d = await abrir();
-  const pega = (esc) => json(d.prepare('SELECT regras FROM glossario WHERE escopo = ?').get(esc)?.regras, []);
-  const global = pega('global');
+  const pega = async (esc) => json((await d.get('SELECT regras FROM glossario WHERE escopo = ?', [esc]))?.regras, []);
+  const global = await pega('global');
   if (!empresaId) return global;
-  const daEmpresa = pega(escopoDe(empresaId));
+  const daEmpresa = await pega(escopoDe(empresaId));
   const mapa = new Map(global.map(r => [String(r.exato || '').toLowerCase(), r]));
   for (const r of daEmpresa) mapa.set(String(r.exato || '').toLowerCase(), r);
   return [...mapa.values()];
@@ -328,10 +445,10 @@ export async function lerGlossario(empresaId = null) {
 
 export async function salvarGlossario(regras = [], empresaId = null) {
   const d = await abrir();
-  d.prepare(`
+  await d.run(`
     INSERT INTO glossario (escopo, regras, atualizado_em) VALUES (?, ?, ?)
     ON CONFLICT(escopo) DO UPDATE SET regras = excluded.regras, atualizado_em = excluded.atualizado_em
-  `).run(escopoDe(empresaId), JSON.stringify(Array.isArray(regras) ? regras : []), agora());
+  `, [escopoDe(empresaId), JSON.stringify(Array.isArray(regras) ? regras : []), agora()]);
   return true;
 }
 
@@ -339,13 +456,14 @@ export async function salvarGlossario(regras = [], empresaId = null) {
 
 export async function estatisticas() {
   const d = await abrir();
-  const n = (sql) => Number(d.prepare(sql).get()?.n) || 0;
+  const n = async (sql) => Number((await d.get(sql))?.n) || 0;
   return {
-    motor, arquivo: ARQUIVO,
-    empresas: n('SELECT COUNT(*) n FROM empresas'),
-    projetos: n('SELECT COUNT(*) n FROM projetos'),
-    arquivos: n('SELECT COUNT(*) n FROM arquivos'),
-    bytesProjetos: n('SELECT COALESCE(SUM(bytes),0) n FROM projetos'),
+    motor, arquivo: caminhoDoBanco(),
+    persistente: bancoPersistente(),
+    empresas: await n('SELECT COUNT(*) n FROM empresas'),
+    projetos: await n('SELECT COUNT(*) n FROM projetos'),
+    arquivos: await n('SELECT COUNT(*) n FROM arquivos'),
+    bytesProjetos: await n('SELECT COALESCE(SUM(bytes),0) n FROM projetos'),
   };
 }
 

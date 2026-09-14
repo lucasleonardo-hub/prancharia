@@ -11,6 +11,10 @@ export const CATEGORIAS = [
 
 export const FORMAS = ['circulo', 'triangulo', 'quadrado', 'pentagono'];
 
+/* O que a IA declara sobre cada item em relação ao que o vetor já extraiu.
+   É o contrato do pipeline híbrido: vetorial primeiro, IA como revisora. */
+export const ACOES_REVISAO = ['confirmar', 'completar', 'novo'];
+
 export const ORIGENS = [
   'tag',          // forma geométrica com número, desenhada dentro do local
   'hachura',      // padrão gráfico preenchendo a área, casado com a amostra da legenda
@@ -30,7 +34,14 @@ Você recebe DUAS imagens recortadas de uma prancha A0 de arquitetura:
   IMAGEM 1 — a REGIÃO DE UM LOCAL (ambiente) da planta, em alta resolução.
   IMAGEM 2 — o BLOCO DE LEGENDAS da mesma prancha (quando existir).
 
-Sua tarefa é listar TODOS os produtos e serviços de acabamento que a prancha especifica para AQUELE local, e somente para aquele local.
+E recebe, em texto, OS DADOS ESTRUTURADOS QUE O SISTEMA JÁ EXTRAIU VETORIALMENTE desta mesma região — lendo o texto e a geometria do PDF, sem olhar a imagem: as tags forma+número encontradas, a tradução de cada uma pela legenda, as linhas de legenda, as tabelas de esquadrias/pedras e as categorias que ainda faltam neste local.
+
+=== SUA TAREFA: REVISAR E PREENCHER LACUNAS, NÃO REPETIR ===
+A leitura vetorial é rápida e exata no que ela alcança, mas é cega para tudo o que não é texto nem forma geométrica. Você é o revisor. Olhe a imagem para:
+  a) VERIFICAR o que já foi extraído — confirmar o que está certo (devolva o item com "acao": "confirmar"), corrigir o que a imagem contradiz (mesma tag, "acao": "completar", explicando a diferença na justificativa) e apontar o que não pertence a este local;
+  b) COMPLETAR os campos vazios dos itens já extraídos, quando a imagem mostra o que o texto não trouxe ("acao": "completar");
+  c) ENCONTRAR o que a leitura vetorial NÃO viu ("acao": "novo"): produtos escondidos em hachuras e tramas, paginação, especificação escrita à mão no desenho, códigos de esquadria/pedra não casados, tabelas ou quadros desenhados sem grade vetorial, e relações tag → local que ficaram sem mapear.
+Não reescreva o que o vetor já leu certo; a energia vai para o que FALTA. Um item que você só confirma pode ser devolvido resumido (forma, número, categoria, descricao, acao, justificativa curta).
 
 === O QUE CAÇAR (nesta ordem, sem parar no primeiro achado) ===
 1. TAGS GEOMÉTRICAS: círculo, triângulo, quadrado e pentágono com um número dentro. Leia a forma E o número. Traduza pela legenda.
@@ -51,6 +62,8 @@ R7. JUSTIFICATIVA OBRIGATÓRIA. Em "justificativa", escreva em português a cade
 R8. CATEGORIA FECHADA. "categoria" só pode ser um destes valores exatos: ${CATEGORIAS.join(' | ')}. Se nenhum servir, devolva "".
 R9. NÃO DESCREVA O DESENHO. Não devolva paredes, cotas, níveis, mobiliário de layout, textos de título, nomes de ambiente ou elementos estruturais como se fossem produtos de acabamento.
 R10. CÓDIGO DE ESQUADRIA/PEDRA NÃO É TAG DE FORMA+NÚMERO. "P08", "J10", "PA3", "SO01" são texto solto (às vezes dentro de um círculo, às vezes não) e se traduzem pela TABELA DE ESQUADRIAS/PEDRAS do contexto, batendo o código exatamente — nunca pela legenda de forma+número, mesmo que o código esteja circulado. Se esse código não aparecer nem na tabela nem em lugar nenhum do contexto, registre "codigoOrigem" mesmo assim e deixe dimensão/material vazios: é melhor apontar o código sem tradução do que omitir a esquadria inteira.
+R11. NADA SEM EVIDÊNCIA. Toda adição sua precisa dizer DE ONDE saiu, na imagem: "origemLeitura" diz o tipo de evidência (hachura, paginação, texto na prancha, tag, tabela) e "justificativa" descreve o ponto exato que você viu e o caminho até a legenda ou tabela. Item sem justificativa é descartado pelo sistema. Célula que o documento não sustenta sai vazia (""), nunca "N/A" — a ausência é informação, o preenchimento de cortesia é erro.
+R12. AÇÃO DECLARADA. "acao" é "confirmar" quando o item já estava nos dados vetoriais e a imagem concorda; "completar" quando você preenche campo vazio ou corrige um item já extraído (mantenha a mesma forma+número, ou o mesmo codigoOrigem, para o sistema casar); "novo" quando só a imagem mostra o item.
 
 === CONFIANÇA ===
 "alta"  — a tradução é inequívoca: forma e número legíveis e a legenda correspondente encontrada.
@@ -84,10 +97,11 @@ export const SCHEMA = {
       peitoril: texto('Só para esquadria, se escrito. Senão "".'),
       quantidade: texto('Só se escrita. Senão "".'),
       origemLeitura: { type: 'string', enum: ORIGENS, description: 'De que evidência gráfica este item saiu.' },
+      acao: { type: 'string', enum: ACOES_REVISAO, description: 'confirmar = já estava nos dados vetoriais e a imagem concorda; completar = preenche/corrige um item já extraído; novo = só a imagem mostra.' },
       confianca: { type: 'string', enum: ['alta', 'media', 'baixa'] },
-      justificativa: texto('A cadeia que você seguiu, citando o que viu na imagem e na legenda.'),
+      justificativa: texto('Obrigatória: a cadeia que você seguiu, citando o ponto exato que viu na imagem e a linha da legenda/tabela. Sem ela o item é descartado.'),
     },
-    required: ['categoria', 'produto', 'descricao', 'codigoOrigem', 'origemLeitura', 'confianca', 'justificativa'],
+    required: ['categoria', 'produto', 'descricao', 'codigoOrigem', 'origemLeitura', 'acao', 'confianca', 'justificativa'],
   },
 };
 
@@ -95,20 +109,60 @@ export const SCHEMA = {
 /* CONTEXTO VETORIAL                                                   */
 /* ------------------------------------------------------------------ */
 
+/* Os campos de uma especificação pré-extraída que vale a pena mostrar ao
+   modelo, na ordem em que fazem sentido de ler. */
+const CAMPOS_PRE = ['categoria', 'produto', 'sistema', 'descricao', 'marca', 'modelo', 'fornecedor',
+  'codigoOrigem', 'forma', 'numero', 'dimensao', 'peitoril', 'quantidade', 'origemLeitura', 'confianca'];
+
+/** Um item pré-extraído vira uma linha JSON compacta — só os campos que têm
+    valor, mais a lista do que está VAZIO, que é o que a IA precisa preencher. */
+function linhaPre(e) {
+  const o = {};
+  for (const k of CAMPOS_PRE) if (e && e[k] !== undefined && e[k] !== null && e[k] !== '') o[k] = e[k];
+  const vazios = ['produto', 'sistema', 'descricao', 'marca', 'modelo', 'dimensao'].filter(k => !o[k]);
+  if (vazios.length) o.faltam = vazios;
+  if (e && Array.isArray(e.motivos) && e.motivos.length) o.motivos = e.motivos;
+  return JSON.stringify(o);
+}
+
 /** O que o leitor vetorial já conseguiu ler, oferecido como apoio — nunca
-    como resposta pronta: a IA precisa confirmar na imagem. */
-export function contexto({ local = {}, tags = [], legenda = [], codigos = [], pagina, documento } = {}) {
+    como resposta pronta: a IA precisa confirmar na imagem.
+
+    `especificacoes` são as linhas já montadas pelo motor vetorial para este
+    local (o passo 1 do pipeline). `lacunas` são as categorias essenciais que
+    ainda não têm nenhuma linha neste local. `ambientes` são os nomes dos
+    ambientes lidos nesta folha, para a IA saber o que é vizinho. */
+export function contexto({ local = {}, tags = [], legenda = [], codigos = [], especificacoes = [], lacunas = [], ambientes = [], pagina, documento } = {}) {
   const l = [];
   l.push(`LOCAL RECORTADO: ${local.nome || '(nome não lido)'}`
     + (local.pavimento ? ` — pavimento ${local.pavimento}` : '')
     + (local.area ? ` — área cotada ${local.area}` : ''));
   if (documento) l.push(`PRANCHA: ${documento}${pagina ? `, página ${pagina}` : ''}`);
+  if (ambientes.length) {
+    const outros = ambientes.filter(n => n && n !== local.nome).slice(0, 60);
+    if (outros.length) l.push(`OUTROS AMBIENTES DESTA FOLHA (vizinhos possíveis no recorte; o que for deles NÃO entra): ${outros.join(' · ')}`);
+  }
+
+  l.push('', '=== DADOS ESTRUTURADOS JÁ EXTRAÍDOS VETORIALMENTE PARA ESTE LOCAL (passo 1 do pipeline) ===');
+  l.push('Aqui estão os dados que o sistema já levantou lendo o texto e a geometria do PDF. Sua tarefa é analisar a imagem apenas para VERIFICAR se falta algo — produtos escondidos em hachuras, tabelas não desenhadas geometricamente, relações não mapeadas — e PREENCHER as lacunas. Uma linha JSON por item; "faltam" lista os campos vazios que a imagem talvez preencha.');
+  if (especificacoes.length) {
+    for (const e of especificacoes.slice(0, 80)) l.push('  ' + linhaPre(e));
+    if (especificacoes.length > 80) l.push(`  … e mais ${especificacoes.length - 80} itens`);
+  } else if (tags.length) {
+    l.push('  (as tags abaixo foram encontradas, mas nenhuma virou linha — a legenda não foi lida do texto)');
+  } else {
+    l.push('  (nenhum item: a leitura vetorial não encontrou tag nem texto de especificação neste local — tudo o que a imagem mostrar é novidade)');
+  }
 
   if (tags.length) {
-    l.push('', 'TAGS QUE A LEITURA VETORIAL JÁ ENCONTROU NESTE RECORTE (confira na imagem; podem faltar outras, e alguma pode não pertencer a este local):');
-    for (const t of tags) l.push(`  - ${t.forma} ${t.numero}`);
+    l.push('', 'TAGS QUE A LEITURA VETORIAL ENCONTROU NESTE RECORTE (confira na imagem; podem faltar outras, e alguma pode não pertencer a este local):');
+    for (const t of tags) l.push(`  - ${t.forma} ${t.numero}${t.vinculo ? ` (${t.vinculo})` : ''}`);
   } else {
     l.push('', 'A LEITURA VETORIAL NÃO ENCONTROU NENHUMA TAG NESTE LOCAL. Procure especialmente hachuras, paginações e especificações escritas.');
+  }
+
+  if (lacunas.length) {
+    l.push('', `LACUNAS DESTE LOCAL — categorias essenciais sem nenhuma linha: ${lacunas.join(', ')}. Procure na imagem especialmente por elas. Se a prancha realmente não especifica, não invente a linha.`);
   }
 
   if (legenda.length) {
@@ -125,7 +179,7 @@ export function contexto({ local = {}, tags = [], legenda = [], codigos = [], pa
     for (const c of codigos.slice(0, 200)) l.push(`  - ${c}`);
   }
 
-  l.push('', 'Liste agora os produtos de acabamento deste local, seguindo as regras R1 a R9.');
+  l.push('', 'Revise agora os dados extraídos contra a imagem e devolva os itens deste local — confirmados, completados e novos — seguindo as regras R1 a R12. Sem evidência na imagem ou na legenda, o campo fica vazio.');
   return l.join('\n');
 }
 
@@ -148,11 +202,16 @@ const limpar = v => {
 const SO_DIGITOS = /^\d+$/;
 const semNumeroSolto = v => SO_DIGITOS.test(v) ? '' : v;
 
-/** Aplica a R2 e a R8 do nosso lado: nem o melhor prompt substitui a trava. */
-export function sanear(bruto) {
+/** Aplica a R2, a R8 e a R11 do nosso lado: nem o melhor prompt substitui a
+    trava. `stats`, quando passado, recebe a contagem do que caiu e do que
+    voltou por ação — é o que o log do servidor mostra para afinar o prompt. */
+export function sanear(bruto, stats = null) {
   const lista = Array.isArray(bruto) ? bruto : (bruto && Array.isArray(bruto.especificacoes) ? bruto.especificacoes : []);
   const out = [];
   const vistos = new Set();
+  const conta = stats || {};
+  conta.semJustificativa = 0; conta.vazia = 0; conta.repetida = 0;
+  conta.confirmar = 0; conta.completar = 0; conta.novo = 0;
   for (const r of lista) {
     if (!r || typeof r !== 'object') continue;
     const item = {
@@ -170,14 +229,21 @@ export function sanear(bruto) {
       peitoril: limpar(r.peitoril),
       quantidade: limpar(r.quantidade),
       origemLeitura: ORIGENS.includes(limpar(r.origemLeitura)) ? limpar(r.origemLeitura) : 'hachura',
+      acao: ACOES_REVISAO.includes(limpar(r.acao)) ? limpar(r.acao) : 'novo',
       confianca: ['alta', 'media', 'baixa'].includes(limpar(r.confianca)) ? limpar(r.confianca) : 'baixa',
       justificativa: limpar(r.justificativa),
     };
     // linha sem nenhum conteúdo útil é descartada: não geramos linha vazia
-    if (!item.produto && !item.descricao && !item.codigoOrigem) continue;
+    if (!item.produto && !item.descricao && !item.codigoOrigem) { conta.vazia++; continue; }
+    /* R11: adição da IA sem dizer de onde saiu não entra. É a Regra de Ouro
+       ("nada de dado sem evidência") imposta em código, não só pedida. A
+       confirmação de um item que o vetor já leu é a única exceção: a
+       evidência dele é a do vetor, e a IA só está concordando. */
+    if (item.justificativa.length < 6 && item.acao !== 'confirmar') { conta.semJustificativa++; continue; }
     const k = [item.forma, item.numero, item.categoria, item.produto, item.descricao].join('|').toLowerCase();
-    if (vistos.has(k)) continue;            // R6: sem linha repetida
+    if (vistos.has(k)) { conta.repetida++; continue; }            // R6: sem linha repetida
     vistos.add(k);
+    conta[item.acao]++;
     out.push(item);
   }
   return out;
@@ -357,7 +423,15 @@ export const INSTRUCAO_QUADRO = `Você é um Arquiteto Sênior fazendo o levanta
 
 Você recebe UMA OU MAIS IMAGENS recortadas de uma prancha A0: quadros de acabamento, tabelas, blocos de legenda, notas técnicas, detalhes de corte, ou a folha inteira.
 
-Sua tarefa é listar TODO produto ou serviço de acabamento que aparecer nessas imagens, com o LOCAL a que pertence quando a própria prancha disser.
+E recebe, em texto, OS DADOS ESTRUTURADOS QUE O SISTEMA JÁ EXTRAIU VETORIALMENTE desta folha — lendo o texto e a geometria do PDF: os ambientes reconhecidos, os blocos de legenda (forma+número → material), as tabelas com grade desenhada (linha por linha) e os itens já montados por local.
+
+=== SUA TAREFA: REVISAR E PREENCHER LACUNAS, NÃO REPETIR ===
+A leitura vetorial é exata onde há texto e grade, e cega para o resto. Analise as imagens apenas para VERIFICAR se falta algo e PREENCHER as lacunas:
+  - quadros e tabelas SEM grade vetorial (texto alinhado à mão, tabela desenhada como imagem, quadro partido em blocos) que o vetor não montou;
+  - linhas que o vetor leu pela metade (célula vazia, nome de ambiente quebrado, especificação cortada);
+  - produtos escondidos em hachuras, amostras de legenda, notas e detalhes;
+  - relações não mapeadas: o ambiente que a tabela declara e o vetor não casou.
+O que já está certo nos dados extraídos, você confirma em uma linha curta ("acao": "confirmar") ou simplesmente não repete. O que você acrescenta é "novo"; o que corrige ou completa é "completar".
 
 === ONDE OLHAR (tudo, não só o primeiro que achar) ===
 1. QUADROS E MEMORIAIS DE ACABAMENTO: tabelas com uma linha por ambiente e colunas de código e especificação — piso, parede, teto, rodapé. São a fonte mais rica: leia TODAS as linhas, de todos os blocos, inclusive quando o mesmo ambiente repete em blocos diferentes (um por categoria).
@@ -379,6 +453,7 @@ Q7. CATEGORIA FECHADA: ${CATEGORIAS.join(' | ')}. Se nenhuma servir, "".
 Q8. FORMA + NÚMERO É A CHAVE das legendas geométricas. Números iguais em formas diferentes são materiais DIFERENTES.
 Q9. NÃO DEVOLVA o que não é produto de acabamento: cotas, níveis, nomes de prancha, selo, escala, responsável técnico, área em m², numeração de degrau, eixo de pilar, texto de carimbo.
 Q10. JUSTIFICATIVA OBRIGATÓRIA: diga de onde tirou, citando o quadro e a linha ("quadro MEMORIAL DE ACABAMENTOS PISO, linha BANHO MASTER, coluna Especificação Piso"). É o texto que o engenheiro vai ler como prova.
+Q11. NADA SEM EVIDÊNCIA. Item novo sem "fonte" e sem "justificativa" é descartado pelo sistema. Célula que o documento não sustenta sai vazia (""), nunca "N/A". "acao" declara o que o item é em relação aos dados já extraídos: "confirmar", "completar" ou "novo".
 
 === CONFIANÇA ===
 "alta"  — linha de tabela legível, com o ambiente declarado na própria linha.
@@ -408,10 +483,11 @@ export const SCHEMA_QUADRO = {
       quantidade: texto('Só se escrita. Senão "".'),
       origemLeitura: { type: 'string', enum: [...ORIGENS, 'quadro', 'nota', 'detalhe'] },
       fonte: texto('O nome do quadro, tabela ou nota de onde saiu ("MEMORIAL DE ACABAMENTOS PISO", "QUADRO DE ESQUADRIAS").'),
+      acao: { type: 'string', enum: ACOES_REVISAO, description: 'confirmar = já estava nos dados vetoriais; completar = preenche/corrige um item já extraído; novo = só a imagem mostra.' },
       confianca: { type: 'string', enum: ['alta', 'media', 'baixa'] },
-      justificativa: texto('De onde tirou: quadro, linha e coluna.'),
+      justificativa: texto('Obrigatória: de onde tirou — quadro, linha e coluna. Sem ela o item é descartado.'),
     },
-    required: ['local', 'categoria', 'produto', 'descricao', 'origemLeitura', 'confianca', 'justificativa'],
+    required: ['local', 'categoria', 'produto', 'descricao', 'origemLeitura', 'acao', 'confianca', 'justificativa'],
   },
 };
 
@@ -421,7 +497,7 @@ export const SCHEMA_QUADRO = {
  * tirou daquela folha (para ela não repetir e saber onde ficaram as lacunas) e
  * o que se espera de cada local.
  */
-export function contextoQuadro({ documento = '', pagina = null, locais = [], jaLidos = [], regioes = [], lacunas = [] } = {}) {
+export function contextoQuadro({ documento = '', pagina = null, locais = [], jaLidos = [], regioes = [], lacunas = [], vetor = null } = {}) {
   const l = [];
   l.push(`PRANCHA: ${documento || '(sem nome)'}${pagina ? `, página ${pagina}` : ''}`);
   if (regioes.length) {
@@ -435,11 +511,34 @@ export function contextoQuadro({ documento = '', pagina = null, locais = [], jaL
     l.push('  Se a tabela citar um ambiente que não está nesta lista, escreva o nome como a tabela escreve. Não force para o mais parecido.');
   }
 
+  /* O pacote vetorial estruturado da folha (passo 1 do pipeline): é o que a
+     IA revisa. O `jaLidos` em texto continua existindo para clientes antigos
+     e como resumo por local. */
+  const v = vetor && typeof vetor === 'object' ? vetor : null;
+  l.push('', '=== DADOS ESTRUTURADOS JÁ EXTRAÍDOS VETORIALMENTE DESTA FOLHA (passo 1 do pipeline) ===');
+  l.push('Aqui estão os dados que o sistema já levantou lendo o texto e a geometria do PDF. Sua tarefa é analisar as imagens apenas para VERIFICAR se falta algo — tabelas não desenhadas geometricamente, linhas lidas pela metade, produtos em hachuras e notas, relações ambiente ↔ item não mapeadas — e PREENCHER as lacunas.');
+  if (v && Array.isArray(v.ambientes) && v.ambientes.length) {
+    l.push('', `AMBIENTES RECONHECIDOS NESTA FOLHA (${v.ambientes.length}): ` + v.ambientes.slice(0, 120).join(' · '));
+  }
+  if (v && Array.isArray(v.legendas) && v.legendas.length) {
+    l.push('', 'BLOCOS DE LEGENDA LIDOS DO TEXTO (forma+número → material):');
+    for (const b of v.legendas.slice(0, 12)) {
+      l.push(`  [${b.titulo || 'legenda'}${b.categoria ? ' · ' + b.categoria : ''}] forma ${b.forma || '?'}:`);
+      for (const it of (b.itens || []).slice(0, 60)) l.push(`     ${it.numero}: ${it.descricao}`);
+    }
+  }
+  if (v && Array.isArray(v.tabelas) && v.tabelas.length) {
+    l.push('', 'TABELAS E QUADROS QUE O VETOR JÁ MONTOU (linha por linha; confira se falta linha, coluna ou bloco):');
+    for (const t of v.tabelas.slice(0, 10)) {
+      l.push(`  [${t.titulo || t.tipo || 'tabela'}] ${t.linhas ? t.linhas.length : 0} linha(s)`);
+      for (const ln of (t.linhas || []).slice(0, 60)) l.push('     ' + (Array.isArray(ln) ? ln.filter(Boolean).join(' | ') : String(ln)));
+    }
+  }
   if (jaLidos.length) {
-    l.push('', 'O QUE A LEITURA VETORIAL JÁ EXTRAIU desta folha (confira e COMPLETE; repetir o mesmo item não é problema, o sistema funde, mas o que interessa é o que está FALTANDO):');
+    l.push('', 'ITENS JÁ MONTADOS POR LOCAL (local · categoria · descrição). Não repita o que está certo; o que interessa é o que está FALTANDO:');
     for (const j of jaLidos.slice(0, 80)) l.push(`  - ${j}`);
     if (jaLidos.length > 80) l.push(`  … e mais ${jaLidos.length - 80} itens`);
-  } else {
+  } else if (!v || !(v.tabelas || []).length) {
     l.push('', 'A LEITURA VETORIAL NÃO EXTRAIU NADA desta folha. Tudo o que houver de produto nas imagens é novidade.');
   }
 
@@ -448,7 +547,7 @@ export function contextoQuadro({ documento = '', pagina = null, locais = [], jaL
     for (const g of lacunas.slice(0, 60)) l.push(`  - ${g}`);
   }
 
-  l.push('', 'Liste agora TODOS os produtos que as imagens mostram, seguindo Q1 a Q10. Uma linha de tabela é um item.');
+  l.push('', 'Revise agora os dados extraídos contra as imagens e devolva o que falta (e, em uma linha curta, o que confirma), seguindo Q1 a Q11. Uma linha de tabela é um item. Sem evidência, o campo fica vazio.');
   return l.join('\n');
 }
 
@@ -458,7 +557,7 @@ export function sanearQuadro(bruto) {
   const ORIGENS_OK = new Set([...ORIGENS, 'quadro', 'nota', 'detalhe']);
   const out = [];
   const vistos = new Set();
-  const recusadas = { vazia: 0, repetida: 0, lixo: 0 };
+  const recusadas = { vazia: 0, repetida: 0, lixo: 0, semJustificativa: 0, confirmar: 0, completar: 0, novo: 0 };
   /* o que nunca é produto, mesmo que o modelo insista */
   const LIXO = /^(?:escala|folha|prancha|revis|data|respons|cliente|obra|endere|projeto|carimbo|[áa]rea total|n[íi]vel|cota|eixo|planta|corte|fachada|legenda|quadro|memorial|ambiente|c[óo]digo|especifica[çc][ãa]o)\b/i;
 
@@ -476,11 +575,15 @@ export function sanearQuadro(bruto) {
       dimensao: limpar(r.dimensao), peitoril: limpar(r.peitoril), quantidade: limpar(r.quantidade),
       origemLeitura: ORIGENS_OK.has(limpar(r.origemLeitura)) ? limpar(r.origemLeitura) : 'quadro',
       fonte: limpar(r.fonte),
+      acao: ACOES_REVISAO.includes(limpar(r.acao)) ? limpar(r.acao) : 'novo',
       confianca: ['alta', 'media', 'baixa'].includes(limpar(r.confianca)) ? limpar(r.confianca) : 'baixa',
       justificativa: limpar(r.justificativa),
     };
     if (!item.descricao && !item.produto && !item.codigoOrigem) { recusadas.vazia++; continue; }
     if (LIXO.test(item.descricao) && !item.produto) { recusadas.lixo++; continue; }
+    /* Q11: item novo sem prova de onde saiu não entra (a confirmação de algo
+       que o vetor já leu herda a evidência do vetor e passa) */
+    if (item.acao !== 'confirmar' && item.justificativa.length < 6 && !item.fonte) { recusadas.semJustificativa++; continue; }
     /* 'quadro' e 'nota' não são valores que o frontend conhece como leitura */
     if (item.origemLeitura === 'quadro' || item.origemLeitura === 'detalhe') item.origemLeitura = 'tabela';
     if (item.origemLeitura === 'nota') item.origemLeitura = 'texto_prancha';
@@ -488,6 +591,7 @@ export function sanearQuadro(bruto) {
     const k = [item.local, item.categoria, item.codigoOrigem, item.descricao].join('|').toLowerCase();
     if (vistos.has(k)) { recusadas.repetida++; continue; }
     vistos.add(k);
+    recusadas[item.acao]++;
     out.push(item);
   }
   return { itens: out, recusadas };

@@ -16,6 +16,24 @@ os dois leem a mesma tag, a Especificação fica com duas evidências — é a
 confirmação por caminhos independentes. Quando só a IA vê algo, isso vira um
 item novo com proveniência `multimodal_gemini`.
 
+### O pipeline híbrido, passo a passo
+
+A IA nunca faz o trabalho pesado do zero. A ordem é fixa, em `engine.js`:
+
+| passo | onde | o que acontece |
+|---|---|---|
+| 1. vetorial, sempre | `analisarFolha` | `rooms.js` lê os ambientes, `shapes.js`/`legend.js` leem tags e legendas, `tables.js`/`quadros.js` leem as tabelas. Rápido, sem rede, exato onde há texto e grade. |
+| 2. empacotar | `consolidar` → `processarComIAHibrida` | o que o vetor montou para **aquele local** vira JSON (`vetor.especificacoes`, com os campos que faltam, `vetor.lacunas`, `vetor.ambientes`, as tags com o tipo de vínculo) e vai no corpo da chamada junto com os recortes. A leitura ampla faz o mesmo por folha (`vetor.ambientes`, `vetor.legendas`, `vetor.tabelas` linha a linha). |
+| 3. revisão pela IA | `server/prompt.js` | o prompt diz: *"aqui estão os dados que já extraí vetorialmente; analise a imagem apenas para VERIFICAR se falta algo e PREENCHER as lacunas"*. Cada item volta com `acao`: `confirmar`, `completar` ou `novo`. |
+| 4. mesclar | `mesclarLeituras` | confirmação e complemento se anexam ao item do vetor (que nunca é substituído); só o `novo` vira linha própria. `confirmar` sem item correspondente é descartado — não tem evidência própria. |
+
+A Regra de Ouro continua imposta em código, não só pedida no prompt: no
+servidor, item da IA **sem `justificativa`** (de onde saiu, na imagem) é
+descartado antes de chegar ao frontend (`sanear`, R11 / `sanearQuadro`, Q11), e
+qualquer campo sem respaldo volta como `""`, nunca `"N/A"`. O log do servidor
+mostra por chamada quantos itens foram `conf · compl · novos` e quantos caíram
+por falta de evidência — é a régua para afinar o prompt.
+
 ## Como abrir para editar e testar
 
 São módulos ES (`import`/`export`), então **não funciona abrindo o arquivo
@@ -260,12 +278,62 @@ node simulador.mjs          # zero dependências — já serve dados e arquivos 
 npm install && npm start    # express + @google/generative-ai + o Gemini de verdade
 ```
 
-Recarregue o Prancharia. Ele detecta o servidor sozinho e passa a gravar lá — a
-tela **Configurações → Onde os dados moram** diz em qual modo você está.
+Recarregue o Prancharia. Ele detecta o servidor sozinho e passa a gravar lá. Se
+o servidor não responder na abertura (hibernando), a tela de Empreendimentos
+avisa, o sistema continua sondando em segundo plano e liga a nuvem sozinho
+quando ele acordar — sem recarregar a página.
 
 O banco é um arquivo só: `server/dados/prancharia.db`. As pranchas ficam em
 `server/dados/pranchas/`, nomeadas pelo SHA-256 do conteúdo. Copiar essa pasta
 inteira é o backup, e é também a mudança de máquina.
+
+### Banco persistente — obrigatório no Render free ("não vejo em outro navegador")
+
+**A causa.** O plano gratuito do Render tem disco efêmero: a cada hibernação
+(~15 min sem uso) ou deploy a instância nasce limpa e `server/dados/` some —
+o `/api/health` do servidor publicado mostrava `projetos: 0` mesmo depois de
+criar empreendimentos. Quem criou continuava vendo os dados só porque o próprio
+navegador tinha caído em modo local; qualquer outro navegador via o servidor
+vazio. Não é bug de cache nem de CORS: os dados eram apagados de verdade.
+
+**A solução** é tirar o banco do disco. `server/db.js` agora tem um terceiro
+driver, **Turso/libSQL** (SQLite hospedado, plano gratuito), e
+`armazenamento.js` ganhou o modo `banco`, que guarda os PDFs na tabela `blobs`
+do mesmo banco. Nada mais muda: mesmas rotas, mesmo esquema.
+
+Passo a passo (uma vez, ~5 minutos):
+
+1. Crie uma conta em <https://turso.tech> e instale a CLI
+   (`curl -sSfL https://get.tur.so/install.sh | bash`, ou pelo site: *Databases → Create*).
+2. Crie o banco e pegue a URL e o token:
+   ```bash
+   turso db create prancharia
+   turso db show --url prancharia          # libsql://prancharia-<seu-usuario>.turso.io
+   turso db tokens create prancharia       # eyJhbGci...
+   ```
+3. No painel do Render → serviço `prancharia-bff` → **Environment**, adicione:
+   ```
+   TURSO_DATABASE_URL = libsql://prancharia-<seu-usuario>.turso.io
+   TURSO_AUTH_TOKEN   = eyJhbGci...
+   ARMAZENAMENTO      = banco
+   ```
+   (o `render.yaml` já declara as três; só os valores são preenchidos à mão).
+4. Salve — o Render faz o redeploy. No log de subida deve aparecer
+   `banco .............. libsql · libsql://...` e `pranchas em ........ banco`.
+   Se em vez disso aparecer `ATENÇÃO ... DISCO EFÊMERO`, alguma variável não
+   pegou.
+5. Abra o Prancharia em qualquer navegador: `/api/health` passa a responder
+   `"persistente": true` e o aviso vermelho da tela de Empreendimentos some.
+
+Enquanto o servidor estiver sem banco persistente, o frontend se defende:
+grava uma **cópia local de tudo** (write-through) mesmo em modo nuvem, avisa em
+vermelho na tela de Empreendimentos, e ao abrir **reenvia sozinho** os projetos
+que só existem no navegador (sem nunca sobrescrever o que o servidor já tem).
+Projeto que existe nos dois lados com a versão local mais nova aparece num
+aviso com o botão *Enviar a versão deste navegador*.
+
+Para testar localmente sem conta no Turso, o driver aceita arquivo:
+`TURSO_DATABASE_URL=file:./dados/teste.db ARMAZENAMENTO=banco npm start`.
 
 > **Não há autenticação.** Quem alcança a porta lê e escreve tudo. Isso serve
 > numa rede de escritório ou atrás de VPN, e não serve num IP público. O gancho
@@ -341,10 +409,71 @@ seria pedir confiança no escuro.
 
 ### Migrar o que já existe
 
-O que está hoje no navegador não sobe sozinho. Para cada empreendimento:
-**Planilhas → Baixar JSON** com o servidor desligado, depois ligue o servidor,
-recarregue e importe. Os PDFs você reenvia em **Documentos** — o servidor
-deduplica pelo SHA-256, então reenviar a mesma folha não ocupa espaço duas vezes.
+O que está no navegador **sobe sozinho** na primeira abertura com o servidor
+no ar: `app.js` chama `store.enviarLocaisParaNuvem({ soNovos: true })`, que
+manda os projetos que o servidor não tem, com os PDFs que ainda estiverem no
+IndexedDB. O que existir nos dois lados fica para você decidir no aviso da
+tela de Empreendimentos. O caminho manual continua valendo: **Planilhas →
+Baixar JSON** e importar; o servidor deduplica PDFs pelo SHA-256.
+
+## Importar do Google Drive
+
+Na tela **Upload (Documentos)** o botão **Importar do Google Drive** abre o
+seletor do Google (Picker): dá para marcar vários PDFs ou **uma pasta inteira**
+(subpastas incluídas, até 4 níveis). Os arquivos são baixados para a memória do
+navegador e entram no mesmo caminho do "Enviar arquivos" — IndexedDB, upload
+para o servidor do Prancharia (se houver) e processamento. Nada do Drive passa
+pelo BFF; o token OAuth vive só na aba.
+
+Tudo mora em `js/core/drive.js`. As credenciais entram de um destes jeitos:
+
+```js
+// 1) editando o arquivo (os dois campos marcados com >>> COLE AQUI <<<)
+export const GOOGLE = { CLIENT_ID: '...apps.googleusercontent.com', API_KEY: 'AIza...', ... };
+
+// 2) sem editar, no HTML antes do módulo
+window.PRANCHARIA_GOOGLE = { CLIENT_ID: '...', API_KEY: '...' };
+
+// 3) sem editar, no console do navegador (fica no localStorage)
+const d = await import('./js/core/drive.js');
+d.configurarGoogle({ CLIENT_ID: '...', API_KEY: '...' });
+```
+
+### Como gerar o CLIENT_ID e a API_KEY no Google Cloud Console
+
+1. **Projeto.** Abra <https://console.cloud.google.com>, crie um projeto (ex.:
+   `prancharia`) e selecione-o no topo.
+2. **APIs.** Menu *APIs e serviços → Biblioteca*: ative **Google Drive API** e
+   **Google Picker API** (as duas — o Picker é uma API separada).
+3. **Tela de consentimento.** *APIs e serviços → Tela de permissão OAuth*:
+   tipo **Externo**, nome do app "Prancharia", seu e-mail de suporte, salvar.
+   Em **Escopos** adicione `.../auth/drive.readonly` (é o que permite listar o
+   conteúdo de uma pasta). Em **Usuários de teste** adicione os e-mails que
+   vão usar — enquanto o app estiver em "Teste", só eles conseguem entrar
+   (até 100, sem passar por verificação do Google).
+4. **CLIENT_ID.** *APIs e serviços → Credenciais → Criar credenciais → ID do
+   cliente OAuth*: tipo **Aplicativo da Web**. Em **Origens JavaScript
+   autorizadas** coloque exatamente de onde a página é servida, sem barra no
+   fim: `http://localhost:8000` (ou a porta que você usa) e
+   `https://prancharia.vercel.app`. *URIs de redirecionamento* pode ficar
+   vazio (o fluxo é por token, em popup). Copie o **ID do cliente** — termina
+   em `.apps.googleusercontent.com`.
+5. **API_KEY.** *Credenciais → Criar credenciais → Chave de API*. Depois clique
+   na chave para restringi-la: **Restrições de aplicativo → Referenciadores
+   HTTP** com `http://localhost:8000/*` e `https://prancharia.vercel.app/*`;
+   **Restrições de API → Google Picker API**. Copie a chave (`AIza...`).
+6. **(Opcional) APP_ID.** É o *Número do projeto* em *Configurações do
+   projeto*. Só melhora o Picker; pode ficar vazio.
+7. Cole os dois valores em `js/core/drive.js` (ou use `configurarGoogle`),
+   recarregue e clique em **Importar do Google Drive**. O primeiro clique abre
+   o login do Google e pede a permissão de leitura do Drive.
+
+Erros comuns: `idpiframe_initialization_failed` / `origin_mismatch` é a origem
+fora da lista do passo 4 (confira porta e `http` × `https`); `403` ao listar
+pasta é escopo sem `drive.readonly` ou usuário fora da lista de teste;
+`The API developer key is invalid` é a API_KEY restrita à API errada. A página
+publicada como artifact bloqueia scripts do Google — lá o botão avisa e não faz
+nada; use o site na Vercel ou o `local.html`.
 
 ### Testar
 
@@ -357,6 +486,12 @@ node nuvtest.mjs      # sobe o próprio servidor, processa duas pranchas A0 reai
 
 - **Nada de dado sem evidência.** Célula sem respaldo no documento sai vazia,
   nunca "N/A". Se você alterar `exporter.js` ou `engine.js`, mantenha isso.
+- **A barra de progresso** (`views.js`, `atualizarProgresso`) mostra o
+  percentual do **lote inteiro**: `(arquivosProntos + fraçãoDoAtual) / total`.
+  Texto, número e barra têm id próprio e são atualizados juntos; `consolidar`
+  recebe o callback e reporta local a local (é a fase cara com a IA ligada).
+  O callback devolve uma Promise que cede ao navegador a cada ~80 ms — se
+  você criar uma etapa nova, use `await aoProgredir(...)` para a barra pintar.
 - **Geometria das pranchas.** As folhas A0 vêm com rotação 270; a conversão
   está em `pdfdoc.js`/`shapes.js`. Mexer ali afeta todos os recortes.
 - **Formas iguais com números iguais são materiais diferentes.** A chave de

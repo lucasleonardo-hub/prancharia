@@ -26,11 +26,30 @@ export async function analisarDocumento(bytes, docMeta, aoProgredir = () => {}) 
   const doc = await openPdf(bytes);
   const folhas = [];
   for (let n = 1; n <= doc.numPages; n++) {
-    aoProgredir(`página ${n} de ${doc.numPages}`, (n - 1) / doc.numPages);
+    await aoProgredir(`página ${n} de ${doc.numPages}`, (n - 1) / doc.numPages);
     folhas.push(await analisarFolha(doc, n, docMeta, aoProgredir));
   }
   return { doc, folhas };
 }
+
+/* ------------------------------------------------------------------ */
+/* PIPELINE HÍBRIDO                                                    */
+/*                                                                     */
+/* Passo 1 — VETORIAL, SEMPRE (analisarFolha): rooms.js lê os ambientes, */
+/*   shapes.js/legend.js leem tags e legendas, tables.js/quadros.js     */
+/*   leem as tabelas. É rápido, exato onde há texto e grade, e não      */
+/*   depende de rede.                                                   */
+/* Passo 2 — EMPACOTAR (consolidar → processarComIAHibrida): o que o    */
+/*   vetor já montou vira JSON e vai para a IA junto com os recortes.   */
+/* Passo 3 — REVISÃO PELA IA (server/prompt.js): a IA verifica se falta */
+/*   algo e preenche lacunas. Cada item volta com `acao`: confirmar,    */
+/*   completar ou novo, e com a justificativa de onde saiu — sem ela o  */
+/*   servidor descarta. `mesclarLeituras` aplica o resultado por cima   */
+/*   da leitura vetorial, que nunca é substituída.                      */
+/*                                                                     */
+/* `aoProgredir(texto, fracao)` pode devolver uma Promise: o engine     */
+/* espera por ela, o que dá ao navegador a chance de pintar a barra.    */
+/* ------------------------------------------------------------------ */
 
 /* Um título pode chegar partido em vários pedaços de texto ("LEGENDA" e
    "PISO" separados pelo espaçamento do desenho). Junta o que está na mesma
@@ -51,7 +70,7 @@ function juntarLinha(inicio, textos) {
 export async function analisarFolha(doc, numero, docMeta, aoProgredir = () => {}) {
   const page = await doc.getPage(numero);
   const vp = page.getViewport({ scale: 1 });
-  aoProgredir('lendo traçados', 0.1);
+  await aoProgredir('lendo traçados', 0.1);
 
   const formas = coletorDeFormas(isRed);
   const fios = coletorDeFios();
@@ -59,7 +78,7 @@ export async function analisarFolha(doc, numero, docMeta, aoProgredir = () => {}
   await walkPaths(page, p => { formas.visit(p); fios.visit(p); mascara.visit(p); });
   const mask = mascara.finalizar();
   const textos = await readText(page);
-  aoProgredir('lendo tags e legendas', 0.5);
+  await aoProgredir('lendo tags e legendas', 0.5);
 
   const tags = montarTags(formas.resultado, textos);
   const usadas = new Set(tags.map(t => Math.round(t.x) + ':' + Math.round(t.y)));
@@ -74,7 +93,7 @@ export async function analisarFolha(doc, numero, docMeta, aoProgredir = () => {}
   const pavimentos = lerPavimentos(textos);
   const janelas = janelasDePlanta(ambientes.filter(a => a.confianca === 'alta'));
 
-  aoProgredir('vinculando tags aos ambientes', 0.7);
+  await aoProgredir('vinculando tags aos ambientes', 0.7);
   const vinculos = ambientes.length
     ? vincularTags(mask, ambientes, tags, [0, 0, vp.width, vp.height])
     : tags.map(t => ({ tag: t, ambiente: null, folga: Infinity }));
@@ -104,7 +123,7 @@ export async function analisarFolha(doc, numero, docMeta, aoProgredir = () => {}
     a.pavimento = melhor && d < 500 ? melhor.nome : '';
   }
 
-  aoProgredir('lendo tabelas', 0.85);
+  await aoProgredir('lendo tabelas', 0.85);
   const titulos = [];
   for (const t of textos) {
     if (!t.horizontal) continue;
@@ -369,7 +388,9 @@ export async function processarComIAHibrida(base64Local, base64Legenda, dadosVet
   if (!base64Local) return vetorial;
 
   try {
-    const daIA = await lerComMultimodal(base64Local, base64Legenda, dadosVetoriais);
+    /* passo 2: a leitura vetorial deste local vai junto, já montada, para a
+       IA revisar em vez de refazer */
+    const daIA = await lerComMultimodal(base64Local, base64Legenda, dadosVetoriais, vetorial);
     anotarSucesso();
     if (!daIA.length) return vetorial;
     return mesclarLeituras(vetorial, daIA, dadosVetoriais);
@@ -379,22 +400,63 @@ export async function processarComIAHibrida(base64Local, base64Legenda, dadosVet
   }
 }
 
-/** A chamada ao BFF e o mapeamento da resposta para Especificação/Evidência. */
-async function lerComMultimodal(base64Local, base64Legenda, dados) {
-  const { itens = [], legendas = {}, local = null, docMeta = {}, pagina = 1, tipologia = '', base = null, codigos = [] } = dados;
+/* Categorias que todo ambiente costuma ter especificadas. Quando o vetor não
+   trouxe nenhuma linha de uma delas, é lacuna — e é para lá que a IA olha. */
+const ESSENCIAIS = ['Piso', 'Paredes', 'Teto'];
+
+/** O pacote vetorial de um local, no formato que o prompt do servidor lê:
+    uma linha por especificação já montada, só com os campos preenchidos. */
+export function pacoteVetorialDoLocal(vetorial = [], local = null) {
+  const CAMPOS = ['categoria', 'produto', 'sistema', 'descricao', 'marca', 'modelo', 'fornecedor',
+    'codigoOrigem', 'forma', 'numero', 'dimensao', 'peitoril', 'quantidade', 'origemLeitura', 'confianca', 'motivos'];
+  const especificacoes = vetorial.slice(0, 80).map(e => {
+    const o = {};
+    for (const k of CAMPOS) {
+      const v = e[k];
+      if (v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length)) continue;
+      o[k] = v;
+    }
+    return o;
+  });
+  /* as lacunas contam também o que outras folhas já deram a este local: a
+     IA não precisa procurar piso num ambiente cujo piso a prancha anterior
+     já especificou */
+  const vivo = x => x && x.status !== 'excluido';
+  const tem = new Set([
+    ...vetorial.map(e => e.categoria),
+    ...((local && local.especificacoes) || []).filter(vivo).map(e => e.categoria),
+  ].filter(Boolean));
+  const lacunas = ESSENCIAIS.filter(c => !tem.has(c));
+  return { especificacoes, lacunas };
+}
+
+/** A chamada ao BFF e o mapeamento da resposta para Especificação/Evidência.
+    `vetorial` é a leitura já montada deste local (passo 1), que vai no corpo
+    como dado estruturado para a IA verificar e completar. */
+async function lerComMultimodal(base64Local, base64Legenda, dados, vetorial = []) {
+  const { itens = [], legendas = {}, local = null, docMeta = {}, pagina = 1, tipologia = '', base = null, codigos = [], ambientesDaFolha = [] } = dados;
 
   const imagemLocal = await imagem(base64Local);
   if (!imagemLocal) throw new Error('sem recorte do local para enviar');
   const imagemLegenda = await imagem(base64Legenda);
 
+  const { especificacoes, lacunas } = pacoteVetorialDoLocal(vetorial, local);
   const corpo = await chamarBff(IA.rota, {
     local: local ? { nome: local.nome, pavimento: local.pavimento || '', area: local.area || '' } : {},
     documento: docMeta.nome || '', pagina,
     imagemLocal, imagemLegenda,
     vetor: {
-      tags: itens.map(({ tag }) => ({ forma: tag.forma, numero: tag.numero })),
+      tags: itens.map(({ tag, vinculo }) => ({
+        forma: tag.forma, numero: tag.numero,
+        vinculo: !vinculo || !vinculo.ambiente ? 'sem ambiente'
+          : vinculo.porProximidade ? 'vínculo proposto por proximidade' : 'dentro do ambiente',
+      })),
       legenda: linhasDaLegenda(legendas),
       codigos,
+      /* passo 2: o que o vetor já montou, para a IA revisar em vez de refazer */
+      especificacoes,
+      lacunas,
+      ambientes: ambientesDaFolha,
     },
   });
 
@@ -421,6 +483,9 @@ async function lerComMultimodal(base64Local, base64Legenda, dados) {
       pavimento: local ? (local.pavimento || '') : '',
       tipologia,
     });
+    /* o que a IA declarou sobre este item em relação ao vetor — só a
+       mesclagem usa; não é persistido */
+    esp.__acao = ['confirmar', 'completar', 'novo'].includes(r.acao) ? r.acao : 'novo';
     esp.evidencias.push(criarEvidencia({
       documentoOrigem: { docId: docMeta.id, pagina, nomeDoc: docMeta.nome },
       tipo: r.origemLeitura === 'hachura' || r.origemLeitura === 'paginacao' ? 'hachura' : 'tag',
@@ -490,9 +555,19 @@ function mesclarLeituras(vetorial, daIA, dados = {}) {
   for (const e of vetorial) { const k = enxuto(e.descricao); if (k) porDesc.set(k + '|' + (e.categoria || ''), e); }
 
   const novas = [];
+  let confirmacoesSoltas = 0;
   for (const ia of daIA) {
+    const acao = ia.__acao || 'novo';
+    delete ia.__acao;
     const alvo = (ia.forma && ia.numero && porTag.get(`${ia.forma}:${ia.numero}`))
+      || (ia.codigoOrigem ? vetorial.find(e => e.codigoOrigem && e.codigoOrigem.toLowerCase() === ia.codigoOrigem.toLowerCase()) : null)
       || (ia.descricao ? porDesc.get(enxuto(ia.descricao) + '|' + (ia.categoria || '')) : null);
+
+    /* "confirmar" sem nada para confirmar: a IA disse que concorda com um
+       item que o vetor não tem. Sem evidência própria (o servidor dispensa a
+       justificativa da confirmação), esse item não pode virar linha — é a
+       Regra de Ouro. Conta e segue. */
+    if (!alvo && acao === 'confirmar') { confirmacoesSoltas++; continue; }
 
     if (alvo) {
       // confirmação: a mesma informação por dois caminhos
@@ -511,6 +586,9 @@ function mesclarLeituras(vetorial, daIA, dados = {}) {
       continue;
     }
     novas.push(ia);   // só a imagem viu: hachura, paginação, texto no desenho
+  }
+  if (confirmacoesSoltas) {
+    console.info(`[IA] ${confirmacoesSoltas} confirmação(ões) sem item correspondente no vetor foram ignoradas (sem evidência própria).`);
   }
   return vetorial.concat(novas);
 }
@@ -588,12 +666,18 @@ function leituraVetorial({ itens = [], legendas = {}, local = null, docMeta = {}
 /* Executa as tarefas com no máximo `n` em voo, preservando a ordem do
    resultado. Sem isto, 43 locais × uma chamada de rede cada viram uma espera
    longa demais; com n=3 a prancha fecha em um terço do tempo. */
-async function emParalelo(tarefas, n = 1) {
-  if (n <= 1) { const out = []; for (const t of tarefas) out.push(await t()); return out; }
+async function emParalelo(tarefas, n = 1, aoConcluir = null) {
+  let feitas = 0;
+  const terminou = async () => { feitas++; if (aoConcluir) await aoConcluir(feitas, tarefas.length); };
+  if (n <= 1) {
+    const out = [];
+    for (const t of tarefas) { out.push(await t()); await terminou(); }
+    return out;
+  }
   const out = new Array(tarefas.length);
   let i = 0;
   const trabalhador = async () => {
-    while (i < tarefas.length) { const k = i++; out[k] = await tarefas[k](); }
+    while (i < tarefas.length) { const k = i++; out[k] = await tarefas[k](); await terminou(); }
   };
   await Promise.all(Array.from({ length: Math.min(n, tarefas.length) }, trabalhador));
   return out;
@@ -764,10 +848,11 @@ function codigosDeTabelas(folha) {
  * árvore de Locais. Termina projetando as listas antigas para o exporter e as
  * views continuarem funcionando.
  */
-export async function consolidar(emp, folha, docMeta) {
+export async function consolidar(emp, folha, docMeta, aoProgredir = () => {}) {
   emp.locais = emp.locais || [];
   emp.especificacoesSemLocal = emp.especificacoesSemLocal || [];
 
+  await aoProgredir('casando ambientes com a árvore', 0.02);
   const criados = casarLocais(emp, folha, docMeta);
   const indice = indiceDeChaves(emp);
   const registrados = [];
@@ -808,6 +893,7 @@ export async function consolidar(emp, folha, docMeta) {
     .map(a => ({ id: a.__local ? a.__local.id : null, caixa: a.bboxTexto }));
 
   const codigosDaFolha = codigosDeTabelas(folha);
+  const ambientesDaFolha = (folha.ambientes || []).map(a => a.nome).filter(Boolean);
 
   const tarefas = [...porLocal.values()].map(({ local, itens }) => async () => {
     const outrasCaixas = local
@@ -818,13 +904,23 @@ export async function consolidar(emp, folha, docMeta) {
       : null;
     return processarComIAHibrida(imgLocal, imgLegenda, {
       itens, legendas: folha.legendas, local, docMeta, pagina: folha.pagina, tipologia, base,
-      codigos: codigosDaFolha,
+      codigos: codigosDaFolha, ambientesDaFolha,
       recorteDetalhe: (caixa) => recorteBase64(folha.page, janelaDoDetalhe(caixa, base), { largura: OPCOES_RECORTE.larguraDetalhe }),
     });
   });
   /* o vetorial é síncrono e não ganha nada com paralelismo; a chamada de rede
-     ganha muito. A incorporação continua em ordem, uma de cada vez. */
-  const lotes = await emParalelo(tarefas, iaLigada() ? Math.max(1, IA.paralelas) : 1);
+     ganha muito. A incorporação continua em ordem, uma de cada vez.
+
+     A barra: com a IA ligada esta é a fase cara (um recorte + uma chamada por
+     local), e ocupa 2%→80% do consolidar; sem IA ela é instantânea e o resto
+     (tabelas, quadros) é o que resta. */
+  const comIA = iaLigada();
+  const fimLocais = comIA ? 0.8 : 0.5;
+  await aoProgredir(comIA ? `IA revisando ${tarefas.length} local(is)` : `montando ${tarefas.length} local(is)`, 0.04);
+  const lotes = await emParalelo(tarefas, comIA ? Math.max(1, IA.paralelas) : 1,
+    (feitas, total) => aoProgredir(
+      comIA ? `IA revisou ${feitas} de ${total} locais` : `local ${feitas} de ${total}`,
+      0.04 + (fimLocais - 0.04) * (feitas / Math.max(1, total))));
   for (const especs of lotes) {
     for (const esp of especs) {
       const r = incorporarEspecificacao(emp, indice, esp);
@@ -833,6 +929,7 @@ export async function consolidar(emp, folha, docMeta) {
   }
 
   // 2) tabelas desenhadas na prancha
+  await aoProgredir('incorporando tabelas e quadros', fimLocais + 0.03);
   for (const tb of folha.tabelas) {
     const linhas = tb.tipo === 'esquadrias' ? deEsquadrias(emp, tb, folha, docMeta)
                  : tb.tipo === 'pedras' ? dePedras(emp, tb, folha, docMeta)
@@ -858,6 +955,7 @@ export async function consolidar(emp, folha, docMeta) {
          não repetir. O vínculo aqui é pelo NOME que a própria tabela declara —
          mais forte que o geométrico, porque está escrito. */
   if (iaLigada() && IA.lerQuadrosComIA) {
+    await aoProgredir('IA revisando quadros, tabelas e notas da folha', fimLocais + 0.08);
     const antes = registrados.length;
     for (const esp of await leituraAmpla(emp, folha, docMeta)) {
       const r = incorporarEspecificacao(emp, indice, esp);
@@ -868,6 +966,7 @@ export async function consolidar(emp, folha, docMeta) {
     }
   }
 
+  await aoProgredir('gravando o acervo da folha', 0.97);
   // 3) acervo de legendas e tabelas da folha
   folha.tabelas.forEach(t => emp.tabelas.push({
     documentoId: docMeta.id, documento: docMeta.nome, pagina: folha.pagina,
@@ -881,6 +980,7 @@ export async function consolidar(emp, folha, docMeta) {
 
   // 4) projeção inversa: as listas antigas viram vista da árvore
   sincronizar(emp);
+  await aoProgredir('folha concluída', 1);
   return { criados, achados: registrados };
 }
 
@@ -993,6 +1093,10 @@ async function leituraAmpla(emp, folha, docMeta) {
       documento: docMeta.nome || '', pagina: folha.pagina,
       imagens, locais: nomes, jaLidos,
       lacunas: lacunasDeCobertura(emp),
+      /* passo 2 do pipeline: o pacote estruturado do que o vetor leu nesta
+         folha — ambientes, legendas e tabelas linha a linha — para a IA
+         verificar o que falta em vez de reler tudo */
+      vetor: pacoteVetorialDaFolha(folha),
     }, IA.timeoutQuadroMs);
     anotarSucesso();
   } catch (err) {
@@ -1068,6 +1172,28 @@ async function leituraAmpla(emp, folha, docMeta) {
     }
   }
   return out;
+}
+
+/** O que rooms.js, legend.js, tables.js e quadros.js leram desta folha, em
+    JSON compacto, para a rota de leitura ampla. */
+export function pacoteVetorialDaFolha(folha) {
+  const ambientes = (folha.ambientes || []).map(a => a.nome).filter(Boolean).slice(0, 150);
+  const legendas = ((folha.legendas && folha.legendas.blocos) || []).slice(0, 12).map(b => ({
+    forma: b.forma || '', titulo: b.titulo || '', categoria: b.categoria || '',
+    itens: (b.itens || []).slice(0, 60).map(i => ({ numero: i.numero, descricao: i.descricao })),
+  }));
+  const tabelas = [];
+  for (const t of (folha.tabelas || []).slice(0, 8)) {
+    tabelas.push({ tipo: t.tipo, titulo: t.titulo || '', linhas: t.linhas.slice(0, 60).map(l => l.celulas) });
+  }
+  for (const q of (folha.quadros || []).slice(0, 8)) {
+    tabelas.push({
+      tipo: q.chave === 'codigo' ? 'quadro_por_codigo' : 'quadro_por_ambiente',
+      titulo: q.titulo || '',
+      linhas: (q.linhas || []).slice(0, 60).map(l => [l.local, l.grupo, l.codigo, l.dimensao, l.tipo, l.especificacao, l.modelo, l.quantidade].filter(Boolean)),
+    });
+  }
+  return { ambientes, legendas, tabelas };
 }
 
 /* Igual ao `espDeLinha`, mas a proveniência é da IA. */

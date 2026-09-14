@@ -47,6 +47,12 @@ export const NUVEM = {
      acontece mesmo fora de localhost */
   escolhido: false,
   ultimoErro: null,
+  /* o último /api/health que respondeu, e se o servidor guarda os dados de
+     verdade (false = disco efêmero: o que for gravado lá some ao reiniciar) */
+  saude: null,
+  persistente: null,
+  /* quantas vezes a sondagem em segundo plano ainda vai tentar */
+  tentativasRestantes: 0,
 };
 
 try {
@@ -187,10 +193,11 @@ export async function iniciar() {
          modo local, silenciosamente, e não vê os empreendimentos de ninguém. */
       let s = await sondar(6000);
       if (!s) s = await sondar(25000);
-      /* health que responde mas sem banco não serve: melhor cair no local do
-         que gravar contra um servidor que não persiste. */
-      NUVEM.ligada = !!(s && s.ok && s.banco);
-      if (s && s.ok && !s.banco) console.warn('[nuvem] BFF no ar mas sem banco:', s.erroBanco || 'motivo não informado');
+      aplicarSaude(s);
+      /* Ainda fora do ar: continua tentando em segundo plano. Quando o
+         servidor acordar, a nuvem liga sozinha e a tela é avisada por um
+         evento — sem a pessoa precisar recarregar. */
+      if (!NUVEM.ligada) revalidarEmSegundoPlano();
     }
     if (NUVEM.ligada) {
       console.info(`[nuvem] ligada em ${NUVEM.base}`);
@@ -202,6 +209,56 @@ export async function iniciar() {
     return { db: !!_db, assets: !!_assets, nuvem: false };
   })();
   return _pronto;
+}
+
+/** Lê o /api/health e decide se a nuvem está ligada. */
+function aplicarSaude(s) {
+  NUVEM.saude = s || null;
+  /* health que responde mas sem banco não serve: melhor cair no local do
+     que gravar contra um servidor que não persiste. */
+  NUVEM.ligada = !!(s && s.ok && s.banco);
+  NUVEM.persistente = s && s.ok && s.banco ? (s.persistente !== false) : null;
+  if (s && s.ok && !s.banco) console.warn('[nuvem] BFF no ar mas sem banco:', s.erroBanco || 'motivo não informado');
+  if (NUVEM.ligada && NUVEM.persistente === false) {
+    console.warn('[nuvem] o servidor está num disco EFÊMERO: tudo o que for gravado lá some quando ele reiniciar. Configure TURSO_DATABASE_URL (ver LEIA-ME).');
+  }
+}
+
+/* Sondagem em segundo plano: a cada 20s, por até 10 minutos. Quando o
+   servidor responder, liga a nuvem, limpa o cache e avisa a interface pelo
+   evento `prancharia:nuvem` — app.js recarrega a lista e sobe o que estava
+   só neste navegador. */
+let _revalidando = null;
+function revalidarEmSegundoPlano(intervaloMs = 20000, tentativas = 30) {
+  if (_revalidando || NUVEM.ligada || NUVEM.modo === 'local') return;
+  NUVEM.tentativasRestantes = tentativas;
+  _revalidando = (async () => {
+    while (NUVEM.tentativasRestantes-- > 0 && !NUVEM.ligada) {
+      await new Promise(r => setTimeout(r, intervaloMs));
+      if (NUVEM.ligada || NUVEM.modo === 'local') break;
+      const s = await sondar(15000);
+      if (!s) continue;
+      aplicarSaude(s);
+      if (NUVEM.ligada) {
+        invalidarCache();
+        console.info(`[nuvem] o servidor acordou: nuvem ligada em ${NUVEM.base}`);
+        try { window.dispatchEvent(new CustomEvent('prancharia:nuvem', { detail: { ligada: true, base: NUVEM.base } })); } catch { /* sem window */ }
+      }
+    }
+    _revalidando = null;
+  })();
+}
+
+/** Força uma sondagem agora (botão "tentar de novo"). Devolve se ligou. */
+export async function religarNuvem() {
+  if (NUVEM.ligada) return true;
+  const s = await sondar(30000);
+  aplicarSaude(s);
+  if (NUVEM.ligada) {
+    invalidarCache();
+    try { window.dispatchEvent(new CustomEvent('prancharia:nuvem', { detail: { ligada: true, base: NUVEM.base } })); } catch { /* ok */ }
+  }
+  return NUVEM.ligada;
 }
 
 export const temBanco = () => NUVEM.ligada || !!_db;
@@ -341,6 +398,12 @@ export async function salvarEmpreendimento(emp) {
     await api('/api/projects', { metodo: 'POST', corpo: limpo });
     invalidarCache('projetos');
     invalidarCache(`projeto:${emp.id}`);
+    /* CÓPIA LOCAL TAMBÉM (write-through). Se o servidor perder os dados — o
+       disco efêmero do Render free faz isso a cada hibernação — este
+       navegador ainda tem o projeto, e `enviarLocaisParaNuvem` devolve
+       tudo ao servidor. Antes, em modo nuvem, o navegador não guardava
+       nada e a perda era definitiva. */
+    salvarLocal(emp);
     return true;
   }
 
@@ -410,6 +473,74 @@ export async function listarEmpreendimentos() {
   return [...mapa.values()].sort((a, b) => (b.criadoEm || '').localeCompare(a.criadoEm || ''));
 }
 
+/* ------------------------------------------------------------------ */
+/* o que está só neste navegador                                       */
+/* ------------------------------------------------------------------ */
+
+/* Dois caminhos deixam projeto preso num navegador: a página abriu em modo
+   local (servidor hibernando) e a pessoa trabalhou assim, ou o servidor
+   perdeu o banco (disco efêmero). Nos dois casos o localStorage tem a cópia
+   e o servidor não — e é isso que "não vejo os empreendimentos em outro
+   navegador" significa. As duas funções abaixo medem e resolvem isso. */
+
+function projetosLocais() {
+  try { return Object.values(JSON.parse(localStorage.getItem(LOCAL_CHAVE) || '{}')).filter(e => e && e.id); }
+  catch { return []; }
+}
+
+/**
+ * Projetos que existem neste navegador e não no servidor (`novos`), e os que
+ * existem nos dois mas a cópia daqui é mais recente (`maisNovos`). Vazio fora
+ * da nuvem.
+ */
+export async function projetosSoLocais() {
+  if (!NUVEM.ligada) return { novos: [], maisNovos: [] };
+  const locais = projetosLocais();
+  if (!locais.length) return { novos: [], maisNovos: [] };
+  let remotos = [];
+  try { remotos = await listarEmpreendimentos(); } catch { return { novos: [], maisNovos: [] }; }
+  const porId = new Map(remotos.map(p => [p.id, p]));
+  const novos = [], maisNovos = [];
+  for (const e of locais) {
+    const r = porId.get(e.id);
+    if (!r) { novos.push(e); continue; }
+    if (e.atualizadoEm && r.atualizadoEm && e.atualizadoEm > r.atualizadoEm) maisNovos.push(e);
+  }
+  return { novos, maisNovos };
+}
+
+/**
+ * Sobe para o servidor o que está só aqui. `soNovos: true` (o padrão, usado
+ * na abertura) manda apenas o que o servidor não tem — nunca sobrescreve.
+ * Com `soNovos: false` também sobe a cópia local mais recente por cima da do
+ * servidor, que é o que o botão do aviso faz depois que a pessoa decidiu.
+ * Os PDFs que ainda estão no IndexedDB deste navegador sobem junto.
+ */
+export async function enviarLocaisParaNuvem({ soNovos = true } = {}) {
+  const { novos, maisNovos } = await projetosSoLocais();
+  const fila = soNovos ? novos : novos.concat(maisNovos);
+  const feito = { projetos: 0, arquivos: 0, falhas: [] };
+  for (const e of fila) {
+    try {
+      await api('/api/projects', { metodo: 'POST', corpo: e });
+      feito.projetos++;
+      for (const d of (e.documentos || [])) {
+        const blob = await lerLocalmente(d.id);
+        if (!blob) continue;
+        try {
+          const fd = new FormData();
+          fd.append('arquivoId', d.id); fd.append('projetoId', e.id); fd.append('nome', d.nome || `${d.id}.pdf`);
+          fd.append('arquivo', blob, d.nome || `${d.id}.pdf`);
+          await api('/api/upload', { metodo: 'POST', cru: fd, timeoutMs: NUVEM.timeoutUploadMs });
+          feito.arquivos++;
+        } catch (err) { feito.falhas.push(`${d.nome || d.id}: ${err.message}`); }
+      }
+    } catch (err) { feito.falhas.push(`${e.nome || e.id}: ${err.message}`); }
+  }
+  if (feito.projetos) { invalidarCache('projetos'); invalidarCache('projeto'); invalidarCache('arquivos:'); }
+  return feito;
+}
+
 /**
  * O corpo de um projeto. Fora da nuvem devolve null — ali `listarEmpreendimentos`
  * já entrega o objeto inteiro e não há segundo passo.
@@ -422,16 +553,21 @@ export async function carregarEmpreendimento(id) {
   });
 }
 
-export async function apagarEmpreendimento(id) {
-  if (NUVEM.ligada) {
-    await api(`/api/projects/${encodeURIComponent(id)}`, { metodo: 'DELETE' });
-    invalidarCache('projeto');
-    return;
-  }
+function apagarLocal(id) {
   try {
     const todos = JSON.parse(localStorage.getItem(LOCAL_CHAVE) || '{}');
     delete todos[id]; localStorage.setItem(LOCAL_CHAVE, JSON.stringify(todos));
   } catch { /* ok */ }
+}
+
+export async function apagarEmpreendimento(id) {
+  if (NUVEM.ligada) {
+    await api(`/api/projects/${encodeURIComponent(id)}`, { metodo: 'DELETE' });
+    invalidarCache('projeto');
+    apagarLocal(id);        // senão a cópia local voltaria como "só neste navegador"
+    return;
+  }
+  apagarLocal(id);
   if (_db) {
     try {
       const snap = await _db.doc('empreendimentos/' + id).collection('dados').limit(60).get();

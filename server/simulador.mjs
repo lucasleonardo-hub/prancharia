@@ -278,7 +278,7 @@ const servidor = http.createServer((req, res) => {
     return banco.estatisticas().then(
       (bd) => enviar(res, 200, { ok: true, servico: 'prancharia-bff', modelo: 'simulado',
         chaveConfigurada: false, simulando: true, lentoMs: LENTO, falhando: FALHAR,
-        banco: bd, armazenamento: armazenamento.nome, autenticacao: 'nenhuma' }),
+        banco: bd, persistente: !!(bd && bd.persistente), armazenamento: armazenamento.nome, autenticacao: 'nenhuma' }),
       (e) => enviar(res, 200, { ok: true, servico: 'prancharia-bff', modelo: 'simulado',
         chaveConfigurada: false, simulando: true, banco: null, erroBanco: e.message }));
   }

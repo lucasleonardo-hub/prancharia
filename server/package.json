@@ -13,10 +13,13 @@
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
+    "@libsql/client": "^0.15.4",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "openai": "^4.68.0"
   },
-  "engines": { "node": ">=22" }
+  "engines": {
+    "node": ">=22"
+  }
 }

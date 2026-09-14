@@ -21,10 +21,21 @@ services:
         value: 24.21.0
       - key: CORS_ORIGIN
         value: "https://prancharia.vercel.app"
-    # O plano "free" do Render não suporta disco persistente: o SQLite e as
-    # pranchas em /server/dados somem a cada deploy/reinício. Descomente o
-    # bloco abaixo (e troque o plano para "starter" ou superior) para manter
-    # os dados entre deploys.
+      # BANCO PERSISTENTE — OBRIGATÓRIO NO PLANO FREE. O disco do Render free
+      # é efêmero: /server/dados (SQLite + PDFs) some a cada hibernação ou
+      # deploy, e é isso que fazia os empreendimentos "sumirem em outro
+      # navegador". Crie um banco gratuito em https://turso.tech e preencha os
+      # dois valores à mão no painel Environment do Render (ver LEIA-ME).
+      - key: TURSO_DATABASE_URL
+        sync: false
+      - key: TURSO_AUTH_TOKEN
+        sync: false
+      # "banco" guarda os PDFs das pranchas na tabela blobs do próprio banco —
+      # o único lugar que sobrevive ao reinício no plano free.
+      - key: ARMAZENAMENTO
+        value: banco
+    # Alternativa ao Turso: disco persistente (plano "starter" ou superior).
+    # Descomente o bloco abaixo, troque o plano e aponte DADOS_DIR para o mount.
     # disk:
     #   name: prancharia-dados
     #   mountPath: /opt/render/project/src/server/dados
