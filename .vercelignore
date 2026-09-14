@@ -1,9 +1,12 @@
 # O backend não é frontend: vai para o Render/Railway, não para a Vercel.
 server/
 
-# Dados de exemplo e scripts de depuração — não fazem parte do app publicado.
+# Dados de exemplo, scripts de teste e depuração — não fazem parte do app publicado.
 dados/
-*.mjs
-probe.html
-local.html
+testes/
+static-server.mjs
 LEIA-ME.md
+
+# index.html é a versão sem <head> para publicar como artifact; o site usa o
+# documento completo (local.html), servido na raiz pelo rewrite do vercel.json.
+index.html

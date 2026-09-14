@@ -7,6 +7,7 @@ import { pendencias } from './core/exporter.js';
 import { carregarAprendidas, regrasAprendidas, aprender as aprenderRegra, esquecer as esquecerRegra } from './core/glossario.js';
 import { VIEWS } from './ui/views.js';
 import { fecharGaveta } from './ui/drawer.js';
+import { iaLigada } from './core/ia.js';
 
 export const estado = {
   emps: [],
@@ -23,18 +24,27 @@ export const estado = {
 
 export const emp = () => estado.emps.find(e => e.id === estado.empId) || null;
 
-/** Menu enxuto, de propósito: cinco botões, sempre os mesmos, focados no
-    empreendimento aberto. Sem projeto aberto não há menu — só a home. */
+/** Menu enxuto, de propósito: o fluxo do levantamento na ordem em que ele
+    acontece (documentos → locais → produtos → revisão → exportar), e embaixo
+    o que é memória e ajuste. Sem projeto aberto não há menu — só a home. */
 export function menuDe(e) {
   if (!e) return [];
   return [
-    { id: 'documentos', nome: 'Upload', ico: 'arquivo', cont: x => x.documentos.length },
+    { grupo: 'Levantamento' },
+    { id: 'documentos', nome: 'Documentos', ico: 'arquivo', cont: x => x.documentos.length },
     { id: 'locais', nome: 'Locais', ico: 'planta', cont: x => (x.locais || []).filter(a => a.status !== 'excluido').length },
     { id: 'produtos', nome: 'Produtos', ico: 'caixa' },
-    { id: 'pendencias', nome: 'Evidências', ico: 'alerta', cont: x => pendencias(x).length },
+    { id: 'pendencias', nome: 'Revisão', ico: 'alerta', cont: x => pendencias(x).length },
+    { id: 'planilhas', nome: 'Exportar', ico: 'baixar' },
+    { grupo: 'Base' },
+    { id: 'glossario', nome: 'Glossário', ico: 'livro' },
     { id: 'config', nome: 'Configurações', ico: 'ajuste' },
   ];
 }
+
+/* Telas que não estão no menu mas vivem "dentro" de um item dele: é o que
+   mantém o item certo aceso quando a pessoa está numa subtela. */
+const PAI_DA_ROTA = { estrutura: 'config', fornecedores: 'produtos', rastro: 'locais', ambientes: 'locais', acabamentos: 'locais', esquadrias: 'locais' };
 
 export const ICONES = {
   painel: '<path d="M3 3h7v7H3zM14 3h7v4h-7zM14 10h7v11h-7zM3 13h7v8H3z"/>',
@@ -56,6 +66,10 @@ export const ICONES = {
   busca: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/>',
   livro: '<path d="M4 4h7a2 2 0 0 1 2 2v14a2 2 0 0 0-2-2H4z"/><path d="M20 4h-7a2 2 0 0 0-2 2v14a2 2 0 0 1 2-2h7z"/>',
   ajuste: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/>',
+  baixar: '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>',
+  upload: '<path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>',
+  seta: '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
+  check: '<path d="m5 12 5 5L20 7"/>',
 };
 
 export const SVG_FORMA = {
@@ -123,11 +137,12 @@ export function render() {
   const alvo = document.getElementById('conteudo');
   const view = VIEWS[estado.rota] || (e ? VIEWS.locais : VIEWS.empreendimentos);
   const menu = menuDe(e);
+  const rotaAcesa = PAI_DA_ROTA[estado.rota] || estado.rota;
   document.getElementById('nav').innerHTML = menu.map(m => {
     if (m.grupo) return `<div class="grupo">${m.grupo}</div>`;
     let c = '';
     try { c = m.cont ? (m.global ? m.cont() : (e ? m.cont(e) : '')) : ''; } catch { c = ''; }
-    const ativo = estado.rota === m.id && (!m.param || estado.param === m.param);
+    const ativo = rotaAcesa === m.id && (!m.param || estado.param === m.param);
     return `<button data-rota="${m.id}" ${m.param ? `data-param="${m.param}"` : ''} ${ativo ? 'aria-current="page"' : ''}>
       <svg class="ico" viewBox="0 0 24 24" aria-hidden="true" stroke-linecap="round" stroke-linejoin="round">${ICONES[m.ico] || ICONES.caixa}</svg>
       <span>${m.nome}</span>${c ? `<span class="cont">${c}</span>` : ''}</button>`;
@@ -135,13 +150,33 @@ export function render() {
 
   const trilha = [`<b>${e ? esc(e.nome) : 'Prancharia'}</b>`];
   if (e) trilha.push('<span class="selo neutro">' + esc(tipoDe(e).nome) + '</span>');
-  const item = menu.find(m => m.id === estado.rota && (!m.param || estado.param === m.param));
+  const item = menu.find(m => m.id === rotaAcesa && (!m.param || estado.param === m.param));
   if (item) trilha.push('<span>/</span>', esc(item.nome));
   document.getElementById('trilha').innerHTML = trilha.join(' ');
+  renderEstadoSistema();
 
   alvo.innerHTML = `<div class="faixa">${view.render(e)}</div>`;
   view.depois?.(e, alvo);
   alvo.scrollTop = 0;
+}
+
+/* O rodapé da barra lateral diz, sem a pessoa precisar procurar, onde os
+   dados estão indo (servidor compartilhado ou só este navegador) e qual
+   motor vai ler a próxima prancha. São as duas coisas que mudam o resultado
+   de tudo o mais — e que antes só apareciam em avisos espalhados. */
+export function renderEstadoSistema() {
+  const el = document.getElementById('estadoSistema');
+  if (!el) return;
+  const nuvem = store.naNuvem();
+  const efemero = nuvem && store.NUVEM.persistente === false;
+  const ia = iaLigada();
+  const tNuvem = nuvem ? (efemero ? 'Servidor sem banco' : 'Servidor conectado') : 'Só neste navegador';
+  const tIa = ia ? 'IA multimodal' : 'Leitura vetorial';
+  el.innerHTML = `
+    <button type="button" class="estado-item" data-rota="config" title="${nuvem ? (efemero ? 'Conectado, mas o disco do servidor é efêmero' : 'Gravando no servidor compartilhado') : 'Os dados ficam só neste navegador'}">
+      <i class="ponto ${nuvem ? (efemero ? 'atencao' : 'bom') : 'neutro'}"></i><span>${tNuvem}</span></button>
+    <button type="button" class="estado-item" data-rota="config" title="${ia ? 'A IA multimodal soma à leitura vetorial' : 'Só a leitura vetorial, sem rede'}">
+      <i class="ponto ${ia ? 'accent' : 'neutro'}"></i><span>${tIa}</span></button>`;
 }
 
 /* ---------- eventos globais ---------- */
@@ -271,6 +306,77 @@ export function fecharModal() {
   if (!m) return;
   m.hidden = true; m.innerHTML = '';
   document.body.style.overflow = '';
+  /* um diálogo aberto por `perguntar`/`confirmar` que fecha por qualquer
+     outro caminho (Escape) resolve como cancelado */
+  const r = _resolverDialogo; _resolverDialogo = null;
+  if (r) r(null);
+}
+
+/* ---------- diálogos: o substituto de prompt() e confirm() ----------
+   Os nativos quebram o visual, não aceitam mais de um campo e não dão
+   contexto. Estes dois usam o mesmo modal de sempre e devolvem uma Promise:
+   `perguntar` resolve com { id: valor } ou null; `confirmar` com true/false. */
+let _resolverDialogo = null;
+
+function campoDialogo(c) {
+  const id = 'dlg_' + c.id;
+  const rotulo = `<label for="${id}">${esc(c.rotulo || c.id)}</label>`;
+  let controle;
+  if (c.tipo === 'select') {
+    controle = `<select id="${id}" data-dlg="${esc(c.id)}">${c.vazio === false ? '' : '<option value=""></option>'}${(c.opcoes || []).map(o => {
+      const [v, t] = Array.isArray(o) ? o : [o, o];
+      return `<option value="${esc(v)}" ${String(v) === String(c.valor ?? '') ? 'selected' : ''}>${esc(t)}</option>`;
+    }).join('')}</select>`;
+  } else if (c.tipo === 'textarea') {
+    controle = `<textarea id="${id}" data-dlg="${esc(c.id)}" rows="${c.linhas || 3}" placeholder="${esc(c.placeholder || '')}">${esc(c.valor || '')}</textarea>`;
+  } else {
+    controle = `<input id="${id}" data-dlg="${esc(c.id)}" type="${c.tipo || 'text'}" value="${esc(c.valor || '')}" placeholder="${esc(c.placeholder || '')}" ${c.lista ? `list="${esc(c.lista)}"` : ''} autocomplete="off">`;
+  }
+  return `<div class="campo">${rotulo}${controle}${c.ajuda ? `<p class="ajuda-campo">${esc(c.ajuda)}</p>` : ''}</div>`;
+}
+
+export function perguntar({ titulo, texto = '', campos = [], ok = 'Salvar', cancelar = 'Cancelar', extra = '' }) {
+  return new Promise((resolve) => {
+    _resolverDialogo = resolve;
+    abrirModal(`
+      <header><h2>${esc(titulo)}</h2>${texto ? `<p>${esc(texto)}</p>` : ''}</header>
+      <div class="corpo">${campos.map(campoDialogo).join('')}${extra}</div>
+      <footer>
+        <button type="button" class="btn discreto" data-dlg-cancelar>${esc(cancelar)}</button>
+        <button type="button" class="btn primario" data-dlg-ok>${esc(ok)}</button>
+      </footer>`, (m) => {
+      m.querySelector('.modal-caixa').classList.add('modal-pergunta');
+      const ler = () => Object.fromEntries([...m.querySelectorAll('[data-dlg]')].map(el => [el.dataset.dlg, (el.value || '').trim()]));
+      const fim = (valor) => { const r = _resolverDialogo; _resolverDialogo = null; fecharModal(); if (r) r(valor); };
+      m.querySelector('[data-dlg-ok]').addEventListener('click', () => fim(ler()));
+      m.querySelector('[data-dlg-cancelar]').addEventListener('click', () => fim(null));
+      m.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter' && ev.target.tagName !== 'TEXTAREA' && ev.target.tagName !== 'BUTTON') { ev.preventDefault(); fim(ler()); }
+      });
+      m.addEventListener('click', (ev) => { if (ev.target === m) fim(null); });
+      const primeiro = m.querySelector('[data-dlg]');
+      if (primeiro) { primeiro.focus(); if (primeiro.select) primeiro.select(); }
+    });
+  });
+}
+
+export function confirmar({ titulo, texto = '', ok = 'Confirmar', cancelar = 'Cancelar', perigo = false }) {
+  return new Promise((resolve) => {
+    _resolverDialogo = (v) => resolve(!!v);
+    abrirModal(`
+      <header><h2>${esc(titulo)}</h2>${texto ? `<p>${esc(texto)}</p>` : ''}</header>
+      <footer>
+        <button type="button" class="btn discreto" data-dlg-cancelar>${esc(cancelar)}</button>
+        <button type="button" class="btn ${perigo ? 'perigo' : 'primario'}" data-dlg-ok>${esc(ok)}</button>
+      </footer>`, (m) => {
+      m.querySelector('.modal-caixa').classList.add('modal-pergunta', 'modal-curto');
+      const fim = (v) => { const r = _resolverDialogo; _resolverDialogo = null; fecharModal(); if (r) r(v); };
+      m.querySelector('[data-dlg-ok]').addEventListener('click', () => fim(true));
+      m.querySelector('[data-dlg-cancelar]').addEventListener('click', () => fim(false));
+      m.addEventListener('click', (ev) => { if (ev.target === m) fim(false); });
+      m.querySelector('[data-dlg-ok]').focus();
+    });
+  });
 }
 document.addEventListener('keydown', ev => {
   if (ev.key !== 'Escape') return;

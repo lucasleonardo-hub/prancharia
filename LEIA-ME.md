@@ -56,20 +56,44 @@ npx serve .        # abra o local.html na porta que aparecer
 
 | arquivo | para quê |
 |---|---|
-| `local.html` | documento completo (`<!doctype>`, `<head>`, `<body>`). É este que você abre no navegador para desenvolver. |
+| `local.html` | documento completo (`<!doctype>`, `<head>`, `<body>`). É o que você abre no navegador para desenvolver **e o que a Vercel serve na raiz** (`vercel.json` reescreve `/` para ele; `index.html` fica fora do deploy). |
 | `index.html` | o mesmo conteúdo **sem** doctype/html/head/body. É o formato que a publicação como artifact exige — ela embrulha o arquivo automaticamente. |
 
 Se você editar a marcação de um, replique no outro. O `local.html` é gerado a
 partir do `index.html`: pegue tudo o que está antes de `<div id="app">` como
-cabeça e o resto como corpo.
+cabeça e o resto como corpo. (Antes a Vercel servia o `index.html` cru, sem
+doctype nem `<meta viewport>` — o site rodava em quirks mode e no celular
+abria na largura de desktop. Foi isso que o rewrite corrigiu.)
+
+## As telas
+
+O menu lateral segue a ordem do trabalho, e só aparece com um empreendimento
+aberto:
+
+| menu | rota | o que é |
+|---|---|---|
+| Documentos | `#/documentos` | envio (botão, arrastar e soltar, Google Drive), processamento e o visor da prancha |
+| Locais | `#/locais` | a grade de locais com busca e filtros; a ficha de cada um (`#/locais/<id>`) concentra acabamentos, esquadrias, pendências e evidências; a fila de triagem dos itens sem local |
+| Produtos | `#/produtos` | cada material distinto, com edição global; leva a Marcas e fornecedores (`#/fornecedores`) |
+| Revisão | `#/pendencias` | o que a leitura não decidiu sozinha, agrupado por problema, com ações em lote |
+| Exportar | `#/planilhas` | XLSX no layout da planilha, CSV, JSON e o cofre do Obsidian |
+| Glossário | `#/glossario` | regras aprendidas, regras do processo e a lista de sistemas construtivos |
+| Configurações | `#/config` | estrutura do tipo (cada nível leva a `#/estrutura/<nivel>`), motor de leitura e onde os dados moram (com o backup do servidor) |
+
+O rodapé da barra lateral mostra o tempo todo onde os dados estão indo
+(servidor compartilhado ou só este navegador) e qual motor lê a próxima
+prancha. Os diálogos de edição e confirmação são do próprio sistema
+(`perguntar` e `confirmar` em `app.js`) — nada de `prompt()`/`confirm()`.
 
 ## Estrutura
 
 ```
-index.html          corpo da página + bootstrap do módulo
-local.html          versão para rodar em servidor local
+index.html          corpo da página + bootstrap do módulo (formato de artifact)
+local.html          documento completo: desenvolvimento local e o site na Vercel
 css/app.css         sistema visual inteiro (tokens, componentes, tema claro/escuro)
-js/app.js           estado, rotas, menu lateral, render, ações globais
+js/app.js           estado, rotas, menu lateral, render, diálogos, ações globais
+static-server.mjs   servidor estático mínimo para desenvolvimento (node static-server.mjs 8000)
+testes/             suítes (iatest, fustest, nuvtest, e2e) e scripts de depuração
 js/core/
   tipos.js          taxonomia de tipos de empreendimento — define quais níveis
                     hierárquicos existem (torre, tipologia, unidade, pavimento)
@@ -222,14 +246,16 @@ FALHAR=1 node server/simulador.mjs     # responde 502, para testar o fallback
 
 O `server.js` também tem esse modo: `npm run simular`.
 
-Duas suítes na raiz sobem simuladores e validam a ligação inteira:
+Duas suítes em `testes/` sobem simuladores e validam a ligação inteira
+(elas foram escritas num ambiente Linux com o Playwright em
+`/home/claude`; ajuste os caminhos do topo de cada arquivo antes de rodar):
 
 ```bash
-node iatest.mjs      # pranchas: chamada, mesclagem híbrida, proveniência,
-                     # timeout, disjuntor, fallback
-node fustest.mjs     # memorial: casamento semântico, enriquecimento só em
-                     # campo vazio, conflito, evidência com trecho literal,
-                     # travas contra alucinação de ID e contra falta de prova
+node testes/iatest.mjs      # pranchas: chamada, mesclagem híbrida, proveniência,
+                            # timeout, disjuntor, fallback
+node testes/fustest.mjs     # memorial: casamento semântico, enriquecimento só em
+                            # campo vazio, conflito, evidência com trecho literal,
+                            # travas contra alucinação de ID e contra falta de prova
 ```
 
 ### O que o servidor garante
@@ -372,7 +398,12 @@ GET    /api/glossary[?companyId=]      global, ou global + empresa
 POST   /api/glossary
 POST   /api/upload                     multipart; campo `arquivo`
 GET    /api/files/:id                  os bytes de volta
+GET    /api/backup                     tudo num JSON: empresas, projetos inteiros e glossário
 ```
+
+O `/api/backup` existe por causa do disco efêmero: **Configurações › Dados ›
+Baixar backup do servidor** guarda o levantamento inteiro num arquivo (sem os
+PDFs, que são identificados pelo SHA-256 e podem ser reenviados).
 
 As três rotas do Gemini aceitam `companyId` no corpo **ou** `X-Empresa-Id` no
 cabeçalho. Empresa inexistente não é erro: a chamada segue sem contexto.
@@ -413,12 +444,12 @@ O que está no navegador **sobe sozinho** na primeira abertura com o servidor
 no ar: `app.js` chama `store.enviarLocaisParaNuvem({ soNovos: true })`, que
 manda os projetos que o servidor não tem, com os PDFs que ainda estiverem no
 IndexedDB. O que existir nos dois lados fica para você decidir no aviso da
-tela de Empreendimentos. O caminho manual continua valendo: **Planilhas →
-Baixar JSON** e importar; o servidor deduplica PDFs pelo SHA-256.
+tela de Empreendimentos. O caminho manual continua valendo: **Exportar →
+JSON** e importar; o servidor deduplica PDFs pelo SHA-256.
 
 ## Importar do Google Drive
 
-Na tela **Upload (Documentos)** o botão **Importar do Google Drive** abre o
+Na tela **Documentos** o botão **Google Drive** abre o
 seletor do Google (Picker): dá para marcar vários PDFs ou **uma pasta inteira**
 (subpastas incluídas, até 4 níveis). Os arquivos são baixados para a memória do
 navegador e entram no mesmo caminho do "Enviar arquivos" — IndexedDB, upload
@@ -478,13 +509,13 @@ nada; use o site na Vercel ou o `local.html`.
 ### Testar
 
 ```bash
-node nuvtest.mjs      # sobe o próprio servidor, processa duas pranchas A0 reais
-                      # e confere que o levantamento atravessa para outra máquina
+node testes/nuvtest.mjs   # sobe o próprio servidor, processa duas pranchas A0 reais
+                          # e confere que o levantamento atravessa para outra máquina
 ```
 
 ## Exportar para o Obsidian
 
-Em **Planilhas → Obsidian** o levantamento vira um cofre de notas Markdown
+Em **Exportar → Obsidian** o levantamento vira um cofre de notas Markdown
 (`js/core/obsidian.js`), tudo ligado por `[[links]]`:
 
 ```

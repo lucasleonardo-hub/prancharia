@@ -305,7 +305,7 @@ app.get('/api/health', async (_req, res) => {
     autenticacao: 'nenhuma',
     rotas: [
       'GET/POST /api/companies', 'GET/POST /api/projects', 'GET/POST /api/glossary',
-      'POST /api/upload', 'GET /api/files/:id',
+      'POST /api/upload', 'GET /api/files/:id', 'GET /api/backup',
       'POST /api/vision/process-local', 'POST /api/vision/process-sheet', 'POST /api/text/process-memorial',
       'POST /api/pdf/ocr',
     ],
@@ -736,6 +736,35 @@ app.get('/api/files/:id', rota(async (req, res) => {
 
 app.get('/api/projects/:id/files', rota(async (req, res) => {
   res.json({ ok: true, arquivos: await banco.listarArquivosDoProjeto(req.params.id) });
+}));
+
+/* ================================================================== */
+/* BACKUP: tudo o que o banco sabe, num JSON só                        */
+/* ================================================================== */
+
+/* Existe por causa do disco efêmero do Render free: um clique em
+   Configurações › Dados baixa empresas, projetos (com a árvore inteira) e
+   glossário. Os PDFs ficam de fora — são os bytes que o SHA-256 identifica e
+   podem ser reenviados; o levantamento é o que não se recupera. */
+app.use('/api/backup', autenticar);
+app.get('/api/backup', rota(async (_req, res) => {
+  const cabecalhos = await banco.listarProjetos({ limite: 500 });
+  const projetos = [];
+  for (const c of cabecalhos) {
+    const p = await banco.lerProjeto(c.id);
+    if (p) projetos.push(p);
+  }
+  const corpo = {
+    ok: true, servico: 'prancharia-bff', versao: 1, geradoEm: new Date().toISOString(),
+    empresas: await banco.listarEmpresas(),
+    glossario: await banco.lerGlossario(null),
+    projetos,
+  };
+  const nome = `prancharia-backup-${corpo.geradoEm.slice(0, 10)}.json`;
+  res.setHeader('Content-Disposition', `attachment; filename="${nome}"`);
+  res.setHeader('Cache-Control', 'no-store');
+  console.log(`${new Date().toISOString().slice(11, 19)} | bkp | ${projetos.length} projeto(s), ${corpo.empresas.length} empresa(s)`);
+  res.json(corpo);
 }));
 
 app.use((_req, res) => res.status(404).json({ ok: false, erro: 'endpoint inexistente' }));

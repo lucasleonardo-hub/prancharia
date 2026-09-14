@@ -2,6 +2,7 @@ import {
   estado, emp, esc, celula, seloConfianca, seloStatus, marcaForma, aviso, salvar, irPara,
   ROTULO_FORMA, render, store, novoId, gravarGlossario, aprenderRegra, esquecerRegra, regrasAprendidas,
   abrirModal, fecharModal, empreendimentoVazio, hidratar, sincronizarComNuvem, migrar,
+  perguntar, confirmar, ICONES,
 } from '../app.js';
 import { importarDoDrive, driveConfigurado } from '../core/drive.js';
 import { OBSIDIAN, configurarObsidian, testarObsidian, enviarParaObsidian, zipDoCofre, notasDoEmpreendimento } from '../core/obsidian.js';
@@ -236,7 +237,8 @@ const empreendimentos = {
       const t = tipoDe(e);
       const st = statusProcessamento(e);
       const niveis = niveisDe(e);
-      return `<article class="cartao-selecao ${e.id === estado.empId ? 'atual' : ''}">
+      const pend = pendencias(e).length;
+      return `<article class="cartao-selecao emp ${e.id === estado.empId ? 'atual' : ''}">
         <div class="topo">
           <div style="min-width:0">
             <h3>${esc(e.nome)}</h3>
@@ -244,20 +246,18 @@ const empreendimentos = {
           </div>
           <span class="selo ${st.tom}" style="margin-left:auto;flex:none">${esc(st.rotulo)}</span>
         </div>
-        ${niveis.length ? `<div class="cadeia-tipo">${['Empreendimento', ...niveis.map(n => n.singular), 'Ambiente']
-          .map((c, i) => `${i ? '<i>›</i>' : ''}<span>${esc(c)}</span>`).join('')}</div>` : ''}
         <dl class="emp-numeros">
           <div><dt>Docs</dt><dd>${e.documentos.length}</dd></div>
           <div><dt>Locais</dt><dd>${locaisVivos(e).length}</dd></div>
           <div><dt>Itens</dt><dd>${itens(e).length}</dd></div>
-          <div><dt>Pendências</dt><dd>${pendencias(e).length}</dd></div>
+          <div><dt>Pend.</dt><dd class="${pend ? 'tom-aviso' : ''}">${pend}</dd></div>
         </dl>
-        <div class="meta">Atualizado em ${e.atualizadoEm ? new Date(e.atualizadoEm).toLocaleString('pt-BR') : '—'}</div>
+        <div class="meta">${niveis.length ? niveis.map(n => esc(n.plural)).join(' · ') + ' · ' : ''}atualizado ${e.atualizadoEm ? new Date(e.atualizadoEm).toLocaleDateString('pt-BR') : '—'}</div>
         <div class="acoes">
           <button class="btn primario pequeno" data-acao="abrirEmpreendimento" data-id="${e.id}">Abrir</button>
-          <button class="btn pequeno" data-acao="abrirDocumentos" data-id="${e.id}">PDFs</button>
+          <button class="btn pequeno" data-acao="abrirDocumentos" data-id="${e.id}">Documentos</button>
           <button class="btn pequeno" data-acao="editarEmp" data-id="${e.id}">Editar</button>
-          <button class="btn pequeno" data-acao="duplicarEmp" data-id="${e.id}">Duplicar</button>
+          <button class="btn pequeno discreto" data-acao="duplicarEmp" data-id="${e.id}">Duplicar</button>
           <button class="btn pequeno discreto" data-acao="apagarEmp" data-id="${e.id}">Excluir</button>
         </div>
       </article>`;
@@ -290,7 +290,7 @@ const empreendimentos = {
       const p = estado.nuvemPendentes;
       const n = p ? (p.novos.length + p.maisNovos.length) : 0;
       if (!n) { aviso('Nada pendente neste navegador.'); return; }
-      if (!confirm(`Enviar ${n} empreendimento(s) deste navegador para o servidor? A versão do servidor será substituída pela daqui.`)) return;
+      if (!await confirmar({ titulo: `Enviar ${n} empreendimento(s) ao servidor?`, texto: 'A versão que está no servidor será substituída pela deste navegador.', ok: 'Enviar' })) return;
       aviso('Enviando…');
       const feito = await store.enviarLocaisParaNuvem({ soNovos: false });
       estado.emps = (await store.listarEmpreendimentos()).map(migrar);
@@ -346,7 +346,7 @@ const empreendimentos = {
     },
     async apagarEmp({ id }) {
       const e = estado.emps.find(x => x.id === id);
-      if (!confirm(`Excluir “${e ? e.nome : 'este empreendimento'}” e todos os seus dados?`)) return;
+      if (!await confirmar({ titulo: `Excluir “${e ? e.nome : 'este empreendimento'}”?`, texto: 'Documentos, locais, especificações e histórico deste empreendimento serão apagados. Não dá para desfazer.', ok: 'Excluir', perigo: true })) return;
       await store.apagarEmpreendimento(id);
       estado.emps = estado.emps.filter(x => x.id !== id);
       if (estado.empId === id) estado.empId = null;
@@ -363,39 +363,49 @@ const documentos = {
     const foco = estado.filtros.foco;
     const sel = estado.param || foco?.documentoId;
     const doc = e.documentos.find(d => d.id === sel);
-    const linhas = e.documentos.map(d => `<tr>
-      <td><button class="btn discreto" style="padding:0;font-weight:600" data-acao="verDoc" data-id="${d.id}">${esc(d.nome)}</button>
-        <div style="color:var(--ink-3);font-size:12px">${esc(d.revisao ? 'revisão ' + d.revisao + ' · ' : '')}${(d.bytes / 1048576).toFixed(1)} MB</div></td>
-      <td>${d.tipo === 'memorial' ? '<span class="selo neutro">memorial</span>' : '<span class="selo neutro">prancha</span>'}</td>
-      <td class="num">${d.paginas || 1}</td>
+    const linhas = e.documentos.map(d => {
+      const fusao = d.motorFusao === 'multimodal_gemini' ? '<span class="selo bom">fusão semântica</span>'
+        : d.tipo === 'memorial' && d.processadoEm ? '<span class="selo neutro">cruzamento por texto</span>' : '';
+      const sub = [
+        d.tipo === 'memorial' ? 'memorial' : 'prancha',
+        `${d.paginas || 1} pág.`,
+        `${(d.bytes / 1048576).toFixed(1)} MB`,
+        d.revisao ? 'revisão ' + d.revisao : '',
+        d.enviadoEm ? 'enviado ' + new Date(d.enviadoEm).toLocaleDateString('pt-BR') : '',
+        d.ocrAplicado ? 'OCR' : '',
+      ].filter(Boolean).join(' · ');
+      return `<tr>
+      <td class="celula-doc"><button class="btn discreto link-doc" data-acao="verDoc" data-id="${d.id}" title="${esc(d.nome)}">${esc(d.nome)}</button>
+        <div class="sub">${esc(sub)}</div></td>
       <td class="num">${d.tipo === 'memorial' ? (d.itens || 0) : (d.tags || 0)}</td>
       <td class="num">${d.locaisLidos ?? d.ambientes ?? 0}</td>
-      <td>${d.motorFusao === 'multimodal_gemini' ? '<span class="selo bom">fusão semântica</span>'
-        : d.tipo === 'memorial' && d.processadoEm ? '<span class="selo neutro">cruzamento por texto</span>' : '<span class="vazio-celula"></span>'}</td>
-      <td>${d.processadoEm ? `<span class="selo bom">processado</span>` : '<span class="selo atencao">aguardando</span>'}</td>
-      <td>${esc(d.enviadoEm ? new Date(d.enviadoEm).toLocaleString('pt-BR') : '')}</td>
-      <td style="white-space:nowrap">
+      <td><div class="selos">${d.processadoEm ? `<span class="selo bom">processado</span>` : '<span class="selo atencao">aguardando</span>'}${fusao}</div></td>
+      <td style="white-space:nowrap;text-align:right">
         <button class="btn pequeno" data-acao="verDoc" data-id="${d.id}">Abrir</button>
-        <button class="btn pequeno discreto" data-acao="removerDoc" data-id="${d.id}">Remover</button></td></tr>`).join('');
+        <button class="btn pequeno discreto" data-acao="removerDoc" data-id="${d.id}">Remover</button></td></tr>`;
+    }).join('');
     return `
       <div class="cabeca"><div><h1>Documentos</h1><p class="desc">Pranchas, memoriais e cadernos do empreendimento. Das pranchas o sistema lê tags, legendas e tabelas; dos memoriais lê o texto corrido, marca e modelo. Envie as pranchas antes dos memoriais para que os trechos encontrem o local certo.</p></div>
         <div class="acoes">
-          <label class="btn primario" for="entradaDocs">Enviar arquivos</label>
           <input id="entradaDocs" type="file" accept="application/pdf" multiple hidden>
           <button class="btn" id="importarDrive" type="button" title="${driveConfigurado() ? 'Escolher PDFs ou uma pasta no seu Google Drive' : 'Preencha CLIENT_ID e API_KEY em js/core/drive.js para ligar'}">
             <svg class="ico" viewBox="0 0 24 24" aria-hidden="true" stroke-linejoin="round"><path d="M8.5 3.5h7l6 10.5-3.5 6h-12L2.5 14z"/><path d="M8.5 3.5 2.5 14M15.5 3.5l-7 12.5M21.5 14h-13"/></svg>
-            Importar do Google Drive</button>
+            Google Drive</button>
           ${e.documentos.some(d => !d.processadoEm) ? '<button class="btn" data-acao="processarTudo">Processar pendentes</button>' : ''}
           ${e.documentos.some(d => d.tipo === 'memorial') ? '<button class="btn" data-acao="reprocessarMemoriais">Recruzar memoriais</button>' : ''}
+          <label class="btn primario" for="entradaDocs"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" stroke-linecap="round" stroke-linejoin="round">${ICONES.upload}</svg>Enviar arquivos</label>
         </div></div>
       ${estado.processando ? `<div class="cartao"><div class="corpo">
         <div style="display:flex;justify-content:space-between;gap:12px;font-size:13px;margin-bottom:6px"><span id="progTexto" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(estado.processando.texto)}</span><span class="num" id="progPct" style="flex:none">${Math.round(estado.processando.pct * 100)}%</span></div>
-        <div class="progresso"><i id="progBarra" style="width:${Math.round(estado.processando.pct * 100)}%"></i></div></div></div>` : ''}
-      <div class="cartao">${tabela(
-        [{ nome: 'Arquivo' }, { nome: 'Tipo' }, { nome: 'Págs.', num: 1 }, { nome: 'Tags / itens', num: 1 }, { nome: 'Locais', num: 1 }, { nome: 'Fusão' }, { nome: 'Situação' }, { nome: 'Enviado' }, { nome: '' }],
-        linhas ? [linhas] : [],
-        { tituloVazio: 'Nenhum documento enviado', textoVazio: 'Envie as pranchas em PDF. Os arquivos ficam neste navegador e os dados extraídos acompanham o empreendimento.' })}
-      </div>
+        <div class="progresso"><i id="progBarra" style="width:${Math.round(estado.processando.pct * 100)}%"></i></div></div></div>`
+      : `<label class="zona-solta" for="entradaDocs" id="zonaSolta">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true" stroke-linecap="round" stroke-linejoin="round">${ICONES.upload}</svg>
+        <div><b>Arraste os PDFs para cá</b><span>ou clique para escolher. Pranchas de arquitetura e memoriais descritivos, um ou vários de uma vez.</span></div>
+      </label>`}
+      ${e.documentos.length ? `<div class="cartao">${tabela(
+        [{ nome: 'Arquivo' }, { nome: 'Tags / itens', num: 1 }, { nome: 'Locais', num: 1 }, { nome: 'Situação' }, { nome: '' }],
+        [linhas])}
+      </div>` : ''}
       ${doc ? `<div class="cartao"><header><h2>${esc(doc.nome)}</h2>
         <div class="acoes"><span class="pilula">${doc.paginas || 1} página(s)</span></div></header>
         <div id="visorCaixa"></div></div>` : ''}`;
@@ -405,6 +415,22 @@ const documentos = {
     if (inp) inp.addEventListener('change', ev => receberArquivos([...ev.target.files]));
     const drive = alvo.querySelector('#importarDrive');
     if (drive) drive.addEventListener('click', () => receberDoDrive());
+    /* arrastar e soltar em qualquer ponto da tela de Documentos; a faixa é
+       recriada a cada render, então os ouvintes não se acumulam */
+    const faixa = alvo.firstElementChild;
+    const zona = alvo.querySelector('#zonaSolta');
+    if (faixa) {
+      const liga = (on) => zona?.classList.toggle('sobre', on);
+      faixa.addEventListener('dragenter', ev => { ev.preventDefault(); liga(true); });
+      faixa.addEventListener('dragover', ev => { ev.preventDefault(); liga(true); });
+      faixa.addEventListener('dragleave', ev => { if (!faixa.contains(ev.relatedTarget)) liga(false); });
+      faixa.addEventListener('drop', ev => {
+        ev.preventDefault(); liga(false);
+        if (estado.processando) { aviso('Espere o processamento atual terminar.'); return; }
+        const arquivos = [...(ev.dataTransfer?.files || [])];
+        if (arquivos.length) receberArquivos(arquivos);
+      });
+    }
     const caixa = alvo.querySelector('#visorCaixa');
     if (!caixa) return;
     const sel = estado.param || estado.filtros.foco?.documentoId;
@@ -423,7 +449,8 @@ const documentos = {
     verDoc({ id }) { irPara('documentos', id); },
     async removerDoc({ id }) {
       const e = emp();
-      if (!confirm('Remover o documento e os itens extraídos dele?')) return;
+      const d = e.documentos.find(x => x.id === id);
+      if (!await confirmar({ titulo: 'Remover este documento?', texto: `${d ? d.nome : 'O arquivo'} e os itens que só existem por causa dele saem do levantamento. Itens com outras fontes perdem apenas esta evidência.`, ok: 'Remover', perigo: true })) return;
       e.documentos = e.documentos.filter(d => d.id !== id);
       /* o item que só existia por causa deste documento sai; o que tinha
          outras origens perde apenas a evidência daquele arquivo */
@@ -744,7 +771,9 @@ const estrutura = {
         <button class="btn pequeno" data-acao="editarNivel" data-nivel="${nivel}" data-id="${it.id}">Editar</button>
         <button class="btn pequeno discreto" data-acao="removerNivel" data-nivel="${nivel}" data-id="${it.id}">Remover</button></td></tr>`).join('');
 
-    return `<div class="cabeca"><div><h1>${esc(def.plural)}</h1>
+    return `<div class="cabeca"><div>
+      <button class="btn discreto pequeno voltar" data-rota="config">← Configurações</button>
+      <h1>${esc(def.plural)}</h1>
       <p class="desc">${esc(def.ajuda)} Este nível existe porque o tipo do empreendimento é <b>${esc(tipoDe(e).nome)}</b>.</p></div>
       <div class="acoes">
         ${nivel === 'pavimento' ? '<button class="btn" data-acao="importarPavimentos">Trazer das pranchas</button>' : ''}
@@ -765,28 +794,30 @@ const estrutura = {
   acoes: {
     async novoNivel({ nivel }) {
       const e = emp();
-      const nome = prompt(`Nome do novo ${rotuloNivel(e, nivel).toLowerCase()}`);
-      if (!nome?.trim()) return;
-      e.estrutura[nivel].push({ id: novoId('niv'), nome: nome.trim(), descricao: '', origem: 'manual' });
-      await salvar({ texto: `${rotuloNivel(e, nivel)} criado: ${nome.trim()}`, tipo: 'estrutura' });
+      const rot = rotuloNivel(e, nivel);
+      const r = await perguntar({ titulo: `Adicionar ${rot.toLowerCase()}`, ok: 'Adicionar',
+        campos: [{ id: 'nome', rotulo: 'Nome', placeholder: `Ex.: ${rot} 01` }, { id: 'descricao', rotulo: 'Descrição (opcional)' }] });
+      if (!r || !r.nome) return;
+      e.estrutura[nivel].push({ id: novoId('niv'), nome: r.nome, descricao: r.descricao || '', origem: 'manual' });
+      await salvar({ texto: `${rot} criado: ${r.nome}`, tipo: 'estrutura' });
       render();
     },
     async editarNivel({ nivel, id }) {
       const e = emp();
       const it = e.estrutura[nivel].find(x => x.id === id); if (!it) return;
-      const nome = prompt(`Nome do ${rotuloNivel(e, nivel).toLowerCase()}`, it.nome);
-      if (nome === null) return;
-      const desc = prompt('Descrição (opcional)', it.descricao || '');
+      const r = await perguntar({ titulo: `Editar ${rotuloNivel(e, nivel).toLowerCase()}`,
+        campos: [{ id: 'nome', rotulo: 'Nome', valor: it.nome }, { id: 'descricao', rotulo: 'Descrição (opcional)', valor: it.descricao || '' }] });
+      if (!r) return;
       const antes = it.nome;
-      it.nome = nome.trim() || antes;
-      if (desc !== null) it.descricao = desc.trim();
+      it.nome = r.nome || antes;
+      it.descricao = r.descricao || '';
       await salvar({ texto: `${rotuloNivel(e, nivel)} editado`, tipo: 'estrutura', antes, depois: it.nome });
       render();
     },
     async removerNivel({ nivel, id }) {
       const e = emp();
       const it = e.estrutura[nivel].find(x => x.id === id);
-      if (!confirm(`Remover “${it ? it.nome : ''}”? Os locais vinculados ficam sem esse vínculo.`)) return;
+      if (!await confirmar({ titulo: `Remover “${it ? it.nome : ''}”?`, texto: 'Os locais vinculados a este item ficam sem o vínculo.', ok: 'Remover', perigo: true })) return;
       e.estrutura[nivel] = e.estrutura[nivel].filter(x => x.id !== id);
       const campo = nivel + 'Id';
       for (const a of (e.locais || [])) if (a[campo] === id) a[campo] = '';
@@ -854,15 +885,19 @@ const ambientes = {
   acoes: {
     abrirAmbiente({ id }) { irPara('locais', id); },
     async novoAmbiente() {
-      const nome = prompt('Nome do local, exatamente como está na prancha');
-      if (!nome?.trim()) return;
       const e = emp();
+      const pavs = [...new Set([...(e.estrutura.pavimento || []).map(p => p.nome), ...locaisVivos(e).map(a => a.pavimento)].filter(Boolean))];
+      const r = await perguntar({ titulo: 'Adicionar local', texto: 'Escreva o nome exatamente como está na prancha — é assim que as tags e o memorial vão encontrá-lo.', ok: 'Adicionar',
+        campos: [{ id: 'nome', rotulo: 'Nome do local', placeholder: 'Ex.: SALA DE ESTAR' },
+          ...(pavs.length ? [{ id: 'pavimento', rotulo: rotuloNivel(e, 'pavimento'), tipo: 'select', opcoes: pavs }] : [])] });
+      if (!r || !r.nome) return;
       e.locais = e.locais || [];
-      const novo = criarLocal(nome.trim());
+      const novo = criarLocal(r.nome, '', r.pavimento || '');
       Object.assign(novo, {
         tipologia: (e.estrutura.tipologia[0] || {}).nome || '',
         origem: 'manual', confianca: 'alta', status: 'confirmado',
       });
+      const nome = r.nome;
       e.locais.push(novo);
       sincronizar(e);
       await salvar({ texto: `Local adicionado manualmente: ${nome.trim()}`, tipo: 'ambiente' });
@@ -876,7 +911,7 @@ const ambientes = {
     },
     async excluirAmbiente({ id }) {
       const a = acharAmbiente(id); if (!a) return;
-      if (!confirm(`Excluir o local “${a.nome}”?`)) return;
+      if (!await confirmar({ titulo: `Excluir o local “${a.nome}”?`, texto: 'As especificações dentro dele saem do levantamento. A exclusão fica registrada no histórico.', ok: 'Excluir', perigo: true })) return;
       a.status = 'excluido';
       await salvar({ texto: `Local excluído: ${a.nome}`, tipo: 'ambiente' });
       irPara('locais');
@@ -889,9 +924,9 @@ const ambientes = {
     },
     async renomearAmbiente({ id }) {
       const a = acharAmbiente(id); if (!a) return;
-      const novo = prompt('Nome do ambiente', a.nome);
-      if (novo === null) return;
-      const antes = a.nome; a.nome = novo.trim() || antes;
+      const r = await perguntar({ titulo: 'Renomear local', campos: [{ id: 'nome', rotulo: 'Nome do local', valor: a.nome }] });
+      if (!r) return;
+      const antes = a.nome; a.nome = r.nome || antes;
       for (const x of (a.especificacoes || [])) x.localNome = a.nome;
       a.status = 'corrigido';
       await salvar({ texto: `Local renomeado: “${antes}” → “${a.nome}”`, tipo: 'ambiente', antes, depois: a.nome });
@@ -932,10 +967,34 @@ function fichaAmbiente(e, id) {
   const docs = [...new Set(itens.flatMap(i => (i.evidencias || []).map(nomeDoc)).concat((a.evidencias || []).map(nomeDoc)))].filter(Boolean);
   const doMemorial = itens.filter(i => i.origemLeitura === 'memorial'
     || (i.evidencias || []).some(f => /memorial/i.test(f.tituloLegenda || '') || /memorial/i.test(nomeDoc(f))));
+  const faltando = ESSENCIAIS_LOCAL.filter(c => !itens.some(i => i.categoria === c));
+  const semCat = itens.filter(i => !i.categoria);
+  const grupos = [...cats, ...(semCat.length ? [''] : [])];
+  const confirmados = itens.length ? Math.round(itens.filter(x => x.status === 'confirmado' || x.status === 'corrigido').length / itens.length * 100) : 0;
+
+  /* Uma tabela só, agrupada por categoria: era o que "Produtos deste local"
+     e "Quadro de acabamentos" mostravam em dobro. A linha de grupo carrega a
+     cor da categoria; o item sem categoria ganha o seletor ali mesmo. */
+  const linhaItem = i => `<tr>
+    <td><b>${i.produto ? esc(i.produto) : (i.codigoOrigem ? `<span class="num">${esc(i.codigoOrigem)}</span>` : '<span class="vazio-celula"></span>')}</b>
+      ${!i.categoria ? `<div class="sub"><span class="cat" data-editavel="categoria" data-id="${i.id}">definir categoria</span></div>` : ''}</td>
+    <td style="max-width:200px"><span data-editavel="sistema" data-id="${i.id}">${celula(i.sistema)}</span></td>
+    <td style="max-width:360px"><span data-editavel="descricao" data-id="${i.id}">${celula(descricaoSemProduto(i))}</span></td>
+    <td><span data-editavel="marca" data-id="${i.id}">${celula(fornecedoresCelula(i))}</span></td>
+    <td>${origemDoItem(i)}</td>
+    <td><div class="selos">${seloConfianca(i.confianca)}${i.status === 'conflito' || i.status === 'revisar' ? seloStatus(i.status) : ''}</div></td>
+    <td style="white-space:nowrap;text-align:right"><button class="btn pequeno" data-acao="verEvidencia" data-id="${i.id}">Evidências</button></td>
+  </tr>`;
+  const linhas = grupos.map(c => {
+    const do_ = itens.filter(i => (i.categoria || '') === c);
+    return `<tr class="linha-grupo"><td colspan="7"><span class="rotulo-cat${c ? '' : ' apagado'}"><i style="background:var(--${corCat(c)})"></i>${c ? esc(c) : 'Sem categoria'}<b>${do_.length}</b></span></td></tr>`
+      + do_.map(linhaItem).join('');
+  });
+
   return `
     <div class="cabeca">
       <div>
-        <button class="btn discreto pequeno" data-rota="locais" style="margin-bottom:6px">← Locais</button>
+        <button class="btn discreto pequeno voltar" data-rota="locais">← Locais</button>
         <h1>${esc(a.nome)}</h1>
         <p class="desc">${[a.pavimento, a.tipologia, a.area].filter(Boolean).map(esc).join(' · ') || 'sem pavimento ou tipologia definidos'}</p>
       </div>
@@ -950,47 +1009,25 @@ function fichaAmbiente(e, id) {
 
     <div class="placar">
       <div><dt>Itens</dt><dd>${itens.length}</dd></div>
-      <div><dt>Categorias</dt><dd>${cats.length}</dd></div>
+      <div><dt>Categorias</dt><dd>${cats.length}<small>de ${CATEGORIAS.length}</small></dd></div>
       <div><dt>Esquadrias</dt><dd>${esq.length}</dd></div>
-      <div><dt>Pendentes</dt><dd>${pend.length}</dd></div>
-      <div><dt>Confirmados</dt><dd>${itens.length ? Math.round(itens.filter(x => x.status === 'confirmado' || x.status === 'corrigido').length / itens.length * 100) : 0}%</dd></div>
+      <div class="${pend.length ? 'aviso' : ''}"><dt>Pendentes</dt><dd>${pend.length}</dd></div>
+      <div><dt>Confirmados</dt><dd>${confirmados}<small>%</small></dd></div>
     </div>
 
-    <div class="cartao"><header><h2>Categorias de acabamento</h2>
-      <div class="acoes"><span class="selo neutro">${cats.length} de ${CATEGORIAS.length}</span></div></header>
-      <div class="corpo"><div class="chips-cat">
-        ${CATEGORIAS.map(c => { const n = itens.filter(i => i.categoria === c).length;
-          return `<span class="chip-cat${n ? '' : ' apagado'}"><i style="background:var(--${corCat(c)})"></i>${esc(c)}<b>${n}</b></span>`; }).join('')}
-      </div>
-      ${itens.some(i => !i.categoria) ? `<p style="font-size:12.5px;color:var(--atencao);margin-top:10px">${itens.filter(i => !i.categoria).length} item(ns) sem categoria neste local.</p>` : ''}
-      </div></div>
-
-    <div class="cartao"><header><h2>Produtos deste local</h2>
-      <div class="acoes"><span class="selo neutro">${itens.length} produto(s)</span>
-      <button class="btn pequeno primario" data-acao="copiarPlanilhaLocal" data-amb="${a.id}">Copiar planilha</button></div></header>
-      <div class="corpo"><div class="produtos-local">
-        ${CATEGORIAS.filter(c => itens.some(i => i.categoria === c)).map(c => `<section>
-          <div class="rotulo-cat"><i style="background:var(--${corCat(c)})"></i>${esc(c)}</div>
-          ${itens.filter(i => i.categoria === c).map(i => `<div class="produto-linha">
-            <div class="produto-nome">
-              <b>${esc(i.produto || i.codigoOrigem || i.descricao || 'sem descrição')}</b>
-              <div class="produto-desc">${esc(i.produto && i.descricao ? i.descricao : (i.sistema || ''))}</div>
-            </div>
-            <div class="produto-origem">${origemDoItem(i)}</div>
-            <div class="produto-acoes">${seloConfianca(i.confianca)}
-              <button class="btn pequeno" data-acao="verEvidencia" data-id="${i.id}">Ver evidência</button></div>
-          </div>`).join('')}
-        </section>`).join('')}
-        ${ESSENCIAIS_LOCAL.filter(c => !itens.some(i => i.categoria === c)).map(c => `<section>
-          <div class="rotulo-cat apagado"><i></i>${esc(c)}</div>
-          <div class="produto-linha faltando">
-            <div class="produto-nome"><b>Nada identificado</b>
-              <div class="produto-desc">Nenhuma tag, hachura, linha de legenda ou trecho de memorial deste projeto apontou ${esc(c.toLowerCase())} para este local.</div></div>
-            <div class="produto-origem"><span class="selo atencao">a revisar</span></div>
-            <div class="produto-acoes"><button class="btn pequeno" data-rota="pendencias">Revisar</button></div>
-          </div>
-        </section>`).join('')}
-      </div></div></div>
+    <div class="cartao"><header><h2>Acabamentos</h2>
+      <div class="acoes">
+        <button class="btn pequeno" data-acao="adicionarItem" data-amb="${a.id}">Adicionar item</button>
+        <button class="btn pequeno primario" data-acao="copiarPlanilhaLocal" data-amb="${a.id}">Copiar planilha</button></div></header>
+      ${itens.length ? tabela([{ nome: 'Produto' }, { nome: 'Sistema' }, { nome: 'Descrição' }, { nome: 'Marca / fornecedor' }, { nome: 'Origem' }, { nome: 'Confiança' }, { nome: '' }], linhas)
+        : `<div class="vazio"><h3>Nenhum acabamento vinculado</h3><p>Nenhuma tag, linha de tabela ou trecho de memorial deste projeto apontou para este local.</p></div>`}
+      ${faltando.length ? `<div class="faltando">
+        <span class="rotulo">Sem leitura para</span>
+        ${faltando.map(c => `<span class="chip-cat apagado"><i style="background:var(--${corCat(c)})"></i>${esc(c)}</span>`).join('')}
+        <span class="ajuda">Nenhuma tag, hachura, legenda ou trecho de memorial apontou ${faltando.length > 1 ? 'estas categorias' : 'esta categoria'} para este local.</span>
+        <button class="btn pequeno" data-rota="pendencias">Revisar</button>
+      </div>` : ''}
+    </div>${listaSistemas()}
 
     ${niveisDe(e).length ? `<div class="cartao"><header><h2>Onde este local fica</h2></header><div class="corpo">
       <div class="grade2">
@@ -1006,25 +1043,8 @@ function fichaAmbiente(e, id) {
                ${(e.estrutura[n.nivel] || []).map(x => `<option value="${x.id}" ${a[n.nivel + 'Id'] === x.id ? 'selected' : ''}>${esc(x.nome)}</option>`).join('')}
              </select></div>`).join('')}
       </div>
-      ${niveisDe(e).some(n => !(e.estrutura[n.nivel] || []).length) ? `<p style="font-size:12.5px;color:var(--ink-3);margin-top:10px">Cadastre os níveis no menu lateral para poder vincular.</p>` : ''}
+      ${niveisDe(e).some(n => !(e.estrutura[n.nivel] || []).length) ? `<p class="ajuda-campo" style="margin-top:10px">Os níveis vazios são cadastrados em <button class="btn discreto pequeno link" data-rota="config">Configurações › Estrutura</button>.</p>` : ''}
     </div></div>` : ''}
-
-    <div class="cartao"><header><h2>Quadro de acabamentos</h2>
-      <div class="acoes">
-      <button class="btn pequeno primario" data-acao="copiarPlanilhaLocal" data-amb="${a.id}">Copiar planilha</button>
-      <button class="btn pequeno" data-acao="adicionarItem" data-amb="${a.id}">Adicionar item</button></div></header>
-      ${tabela([{ nome: 'Local' }, { nome: 'Categoria' }, { nome: 'Produto' }, { nome: 'Sistema' }, { nome: 'Descrição' }, { nome: 'Fornecedores' }, { nome: 'Evidências' }],
-        itens.length ? [itens.map(i => `<tr>
-          <td>${esc(a.nome)}</td>
-          <td><span class="cat" style="color:var(--${corCat(i.categoria)})" data-editavel="categoria" data-id="${i.id}">${esc(i.categoria || '—')}</span></td>
-          <td><span data-editavel="produto" data-id="${i.id}">${celula(i.produto)}</span></td>
-          <td style="max-width:200px"><span data-editavel="sistema" data-id="${i.id}">${celula(i.sistema)}</span></td>
-          <td style="max-width:380px">${celula(descricaoSemProduto(i))}</td>
-          <td>${celula(fornecedoresCelula(i))}</td>
-          <td style="white-space:nowrap"><button class="btn pequeno" data-acao="verEvidencia" data-id="${i.id}">Evidências</button></td>
-        </tr>`).join('')] : [],
-        { tituloVazio: 'Nenhum acabamento vinculado', textoVazio: 'Nenhuma tag ou linha de tabela deste projeto apontou para este local.' })}
-    </div>${listaSistemas()}
 
     ${esq.length ? `<div class="cartao"><header><h2>Esquadrias deste local</h2>
       <div class="acoes"><span class="selo neutro">${esq.length}</span></div></header>
@@ -1034,7 +1054,7 @@ function fichaAmbiente(e, id) {
           <td>${celula(i.dimensao)}</td><td>${celula(i.peitoril)}</td><td class="num">${celula(i.quantidade)}</td>
           <td style="max-width:420px">${celula(i.descricao.replace(/^[^—]*—\s*[^—]*—\s*/, ''))}</td>
           <td>${seloStatus(i.status)}</td>
-          <td style="white-space:nowrap"><button class="btn pequeno" data-acao="verEvidencia" data-id="${i.id}">Evidências</button>
+          <td style="white-space:nowrap;text-align:right"><button class="btn pequeno" data-acao="verEvidencia" data-id="${i.id}">Evidências</button>
             <button class="btn pequeno discreto" data-acao="verNaPrancha" data-id="${i.id}">Ver na prancha</button></td></tr>`).join('')])}
     </div>` : ''}
 
@@ -1045,9 +1065,9 @@ function fichaAmbiente(e, id) {
         [pend.map(i => `<tr>
           <td>${esc(i.categoria || '—')}</td>
           <td style="max-width:380px">${celula(i.descricao)}</td>
-          <td>${(i.motivos || []).map(m => `<span class="selo atencao">${esc(MOTIVOS_PENDENCIA[m] || m)}</span>`).join(' ') || seloStatus(i.status)}</td>
+          <td><div class="selos">${(i.motivos || []).map(m => `<span class="selo atencao">${esc(MOTIVOS_PENDENCIA[m] || m)}</span>`).join('') || seloStatus(i.status)}</div></td>
           <td>${seloConfianca(i.confianca)}</td>
-          <td style="white-space:nowrap"><button class="btn pequeno" data-acao="verEvidencia" data-id="${i.id}">Evidências</button>
+          <td style="white-space:nowrap;text-align:right"><button class="btn pequeno" data-acao="verEvidencia" data-id="${i.id}">Evidências</button>
             <button class="btn pequeno" data-acao="confirmarAchado" data-id="${i.id}">Confirmar</button></td></tr>`).join('')])}
     </div>` : ''}
 
@@ -1060,7 +1080,7 @@ function fichaAmbiente(e, id) {
       }).join('')}</ul></div>
     </div>` : ''}
 
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px">
+    <div class="grade-dupla">
       <div class="cartao"><header><h2>Onde o local foi lido</h2></header>
         <div class="corpo">${ev && ev.coordenadas ? `<div class="recorte">
           <canvas data-mapa-ambiente='${esc(JSON.stringify({ documentoId: idDoc(ev), pagina: paginaDoc(ev), caixa: ev.regiao || janelaCentrada(ev.coordenadas, 400, 250), realces: [{ caixa: ev.coordenadas, cor: "#d13b2a" }] }))}'></canvas>
@@ -1069,8 +1089,8 @@ function fichaAmbiente(e, id) {
           : '<p style="color:var(--ink-3);font-size:13px">Local criado manualmente.</p>'}
         </div></div>
       <div class="cartao"><header><h2>Fontes documentais</h2></header><div class="corpo">
-        <ul class="lista-limpa">${(a.evidencias || []).map(x => `<li><span class="pilula">p.${esc(paginaDoc(x))}</span><div>${esc(nomeDoc(x))}<div style="color:var(--ink-3);font-size:12px">${esc(x.texto || '')}</div></div></li>`).join('') || '<li style="color:var(--ink-3)">Sem evidência documental.</li>'}</ul>
-        ${docs.length ? `<p style="font-size:12.5px;color:var(--ink-3);margin-top:10px">Documentos que alimentam este local: ${docs.map(d => esc(d)).join(' · ')}.</p>` : ''}
+        <ul class="lista-limpa">${(a.evidencias || []).map(x => `<li><span class="pilula">p.${esc(paginaDoc(x))}</span><div class="quebra">${esc(nomeDoc(x))}<div style="color:var(--ink-3);font-size:12px">${esc(x.texto || '')}</div></div></li>`).join('') || '<li style="color:var(--ink-3)">Sem evidência documental.</li>'}</ul>
+        ${docs.length ? `<p class="ajuda-campo quebra" style="margin-top:10px">Documentos que alimentam este local: ${docs.map(d => esc(d)).join(' · ')}.</p>` : ''}
       </div></div>
     </div>`;
 }
@@ -1342,7 +1362,8 @@ const produtos = {
       <td>${celula(p.marca)}</td><td>${celula(p.fornecedor)}</td>
       <td class="num">${p.nosLocais.size}</td>
       <td style="max-width:300px;color:var(--ink-2);font-size:12.5px">${esc([...p.nosLocais].slice(0, 6).join(', '))}${p.nosLocais.size > 6 ? '…' : ''}</td></tr>`).join('');
-    return `<div class="cabeca"><div><h1>Produtos</h1><p class="desc">Cada material distinto encontrado, com os locais em que aparece. Clique no nome ou na categoria para editar — a mudança vale para todos os locais que usam este produto. Marca e fornecedor são campos independentes — um não preenche o outro.</p></div></div>
+    return `<div class="cabeca"><div><h1>Produtos</h1><p class="desc">Cada material distinto encontrado, com os locais em que aparece. Clique no nome ou na categoria para editar — a mudança vale para todos os locais que usam este produto. Marca e fornecedor são campos independentes — um não preenche o outro.</p></div>
+      <div class="acoes"><button class="btn" data-rota="fornecedores">Marcas e fornecedores${e.marcas.length ? ` <span class="pilula">${e.marcas.length}</span>` : ''}</button></div></div>
       <div class="cartao">${tabela([{ nome: 'Categoria' }, { nome: 'Produto' }, { nome: 'Marca' }, { nome: 'Fornecedor' }, { nome: 'Locais', num: 1 }, { nome: 'Onde' }], linhas ? [linhas] : [],
         { tituloVazio: 'Nenhum produto identificado', textoVazio: 'Processe as pranchas para extrair os materiais.', acaoVazio: vazioDocs })}</div>`;
   },
@@ -1369,7 +1390,9 @@ const fornecedores = {
       <td>${celula(m.fornecedor)}</td>
       <td><button class="btn pequeno" data-acao="editarFornecedorMarca" data-id="${m.id}">Definir fornecedor</button>
         <button class="btn pequeno discreto" data-acao="removerMarca" data-id="${m.id}">Remover</button></td></tr>`).join('');
-    return `<div class="cabeca"><div><h1>Marcas e fornecedores</h1>
+    return `<div class="cabeca"><div>
+      <button class="btn discreto pequeno voltar" data-rota="produtos">← Produtos</button>
+      <h1>Marcas e fornecedores</h1>
       <p class="desc">Marca é quem fabrica; fornecedor é quem entrega. O sistema nunca deduz um a partir do outro — os dois só são preenchidos com evidência ou por você.</p></div>
       <div class="acoes"><button class="btn" data-acao="novaMarca">Adicionar marca</button></div></div>
 
@@ -1398,10 +1421,11 @@ const fornecedores = {
       render(); aviso(`${nome} aplicada a ${n} item(ns).`);
     },
     async novaMarca() {
-      const nome = prompt('Nome da marca');
-      if (!nome?.trim()) return;
-      emp().marcas.push({ id: novoId('mar'), nome: nome.trim(), fornecedor: '' });
-      await salvar({ texto: `Marca cadastrada: ${nome.trim()}`, tipo: 'marca' });
+      const r = await perguntar({ titulo: 'Adicionar marca', ok: 'Adicionar',
+        campos: [{ id: 'nome', rotulo: 'Marca', placeholder: 'Ex.: Portobello' }, { id: 'fornecedor', rotulo: 'Fornecedor (opcional)', placeholder: 'quem entrega' }] });
+      if (!r || !r.nome) return;
+      emp().marcas.push({ id: novoId('mar'), nome: r.nome, fornecedor: r.fornecedor || '' });
+      await salvar({ texto: `Marca cadastrada: ${r.nome}`, tipo: 'marca' });
       render();
     },
     async removerMarca({ id }) {
@@ -1410,9 +1434,9 @@ const fornecedores = {
     },
     async editarFornecedorMarca({ id }) {
       const e = emp(); const m = e.marcas.find(x => x.id === id); if (!m) return;
-      const v = prompt(`Fornecedor de ${m.nome}`, m.fornecedor || '');
-      if (v === null) return;
-      m.fornecedor = v.trim();
+      const r = await perguntar({ titulo: `Fornecedor de ${m.nome}`, texto: 'Vale para todos os itens desta marca.', campos: [{ id: 'fornecedor', rotulo: 'Fornecedor', valor: m.fornecedor || '' }] });
+      if (!r) return;
+      m.fornecedor = r.fornecedor;
       let n = 0;
       for (const a of itens(e)) if (a.marca === m.nome) { a.fornecedor = m.fornecedor; n++; }
       await salvar({ texto: `Fornecedor de ${m.nome}: ${m.fornecedor || '—'} (${n} itens)`, tipo: 'fornecedor' });
@@ -1573,7 +1597,7 @@ const ACOES_ORFAOS = {
   async loteExcluirOrfaos() {
     if (!orfaosSel.size) { aviso('Selecione ao menos um item.'); return; }
     const n = orfaosSel.size;
-    if (!confirm(`Excluir ${n} item(ns) da fila de triagem?`)) return;
+    if (!await confirmar({ titulo: `Excluir ${n} item(ns) da fila de triagem?`, texto: 'A exclusão fica registrada no histórico.', ok: 'Excluir', perigo: true })) return;
     for (const id of [...orfaosSel]) { const a = acharAchado(id); if (a) a.status = 'excluido'; }
     orfaosSel.clear();
     await salvar({ texto: `${n} item(ns) excluídos na triagem`, tipo: 'revisao' });
@@ -1598,27 +1622,44 @@ const locais = {
     }
 
     const vivos = locaisVivos(e);
-    const pavs = [...new Set(vivos.map(a => a.pavimento || ''))];
-    const grade = lista => `<div class="grade-cartoes">${lista.map(cartaoDoLocal(e)).join('')}</div>`;
+    const f = estado.filtros;
+    const pavsTodos = [...new Set(vivos.map(a => a.pavimento || ''))];
+    const temPend = a => itensDo(e, a.id).some(i => i.status === 'revisar' || i.status === 'conflito' || i.confianca === 'baixa');
+    const lista = vivos
+      .filter(a => !f.busca || normalizar(a.nome).includes(normalizar(f.busca)))
+      .filter(a => !f.pav || (a.pavimento || '') === f.pav)
+      .filter(a => !f.soPend || temPend(a) || a.confianca === 'baixa');
+    const pavs = [...new Set(lista.map(a => a.pavimento || ''))];
+    const grade = l => `<div class="grade-cartoes">${l.map(cartaoDoLocal(e)).join('')}</div>`;
+    const filtrando = !!(f.busca || f.pav || f.soPend);
 
     return `<div class="cabeca"><div><h1>Locais</h1>
-      <p class="desc">Selecione um local para abrir a ficha completa: categorias, quadro de acabamentos, esquadrias e evidências.</p></div>
+      <p class="desc">Selecione um local para abrir a ficha completa: acabamentos, esquadrias, pendências e evidências.</p></div>
       <div class="acoes">
         <button class="btn" data-acao="novoAmbiente">Adicionar local</button>
-        ${vivos.length ? `<button class="btn primario" data-acao="baixarTudo">Baixar tudo (XLSX)</button>` : ''}
+        ${vivos.length ? `<button class="btn primario" data-acao="baixarTudo"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" stroke-linecap="round" stroke-linejoin="round">${ICONES.baixar}</svg>Baixar XLSX</button>` : ''}
       </div></div>
 
       ${semLocal(e).length ? `<div class="aviso-faixa"><span>⚠</span><div><b>${semLocal(e).length} especificação(ões) sem local.</b> Nenhuma geometria, rótulo ou termo de legenda as amarrou a um local — a fila de triagem espera a sua decisão.
         <button class="btn pequeno" data-acao="abrirTriagem" style="margin-left:6px">Abrir fila de triagem</button></div></div>` : ''}
 
+      ${vivos.length > 1 ? `<div class="filtros">
+        <input type="search" id="buscaLoc" placeholder="Buscar local" value="${esc(f.busca || '')}">
+        ${pavsTodos.length > 1 ? `<select id="filtroPavLoc"><option value="">Todos os ${esc(rotuloNivel(e, 'pavimento', true).toLowerCase())}</option>${pavsTodos.map(p => `<option value="${esc(p)}" ${f.pav === p ? 'selected' : ''}>${esc(p || 'Sem pavimento')}</option>`).join('')}</select>` : ''}
+        <label class="marca-tudo"><input type="checkbox" id="soPendLoc" ${f.soPend ? 'checked' : ''}> Só com pendências</label>
+        <span class="contagem">${lista.length} de ${vivos.length}</span>
+        ${filtrando ? '<button class="btn pequeno discreto" data-acao="limparFiltrosLocais">Limpar</button>' : ''}
+      </div>` : ''}
+
       ${!vivos.length ? `<div class="cartao"><div class="vazio"><h3>Nenhum local identificado</h3>
           <p>Processe uma prancha de arquitetura para que os locais sejam lidos dos rótulos.</p>${vazioDocs}</div></div>`
+        : !lista.length ? `<div class="cartao"><div class="vazio"><h3>Nenhum local com esse filtro</h3><p>Ajuste a busca ou limpe os filtros.</p></div></div>`
         : pavs.length > 1
-          ? pavs.map(p => `<section style="margin-bottom:26px">
-              <h2 style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);margin-bottom:10px;font-weight:600">${esc(p || 'Sem pavimento')}</h2>
-              ${grade(vivos.filter(a => (a.pavimento || '') === p))}
+          ? pavs.map(p => `<section class="secao-pav">
+              <h2 class="titulo-secao">${esc(p || 'Sem pavimento')} <span>${lista.filter(a => (a.pavimento || '') === p).length}</span></h2>
+              ${grade(lista.filter(a => (a.pavimento || '') === p))}
             </section>`).join('')
-          : grade(vivos)}`;
+          : grade(lista)}`;
   },
   depois(e, alvo) {
     if (estado.param) { ambientes.depois?.(e, alvo); return; }
@@ -1627,6 +1668,13 @@ const locais = {
       for (const span of alvo.querySelectorAll('[data-editavel]')) span.addEventListener('click', () => editarCampo(span));
       return;
     }
+    const busca = alvo.querySelector('#buscaLoc');
+    if (busca) busca.addEventListener('input', ev => {
+      estado.filtros.busca = ev.target.value; clearTimeout(estado._t);
+      estado._t = setTimeout(() => { render(); const b = document.getElementById('buscaLoc'); if (b) { b.focus(); b.setSelectionRange(b.value.length, b.value.length); } }, 220);
+    });
+    alvo.querySelector('#filtroPavLoc')?.addEventListener('change', ev => { estado.filtros.pav = ev.target.value; render(); });
+    alvo.querySelector('#soPendLoc')?.addEventListener('change', ev => { estado.filtros.soPend = ev.target.checked; render(); });
     for (const card of alvo.querySelectorAll('.cartao-selecao[data-acao]')) {
       card.addEventListener('keydown', ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); card.click(); } });
     }
@@ -1635,6 +1683,7 @@ const locais = {
     ...ACOES_ORFAOS,
     abrirTriagem() { estado.filtros.mostrarTriagem = true; render(); },
     fecharTriagem() { estado.filtros.mostrarTriagem = false; render(); },
+    limparFiltrosLocais() { estado.filtros.busca = ''; estado.filtros.pav = ''; estado.filtros.soPend = false; render(); },
     async baixarTudo() {
       const e = emp();
       await store.baixar(arquivoSeguro(e.nome) + '-produtos-e-fornecedores.xlsx', exportarXlsx(e));
@@ -1644,21 +1693,27 @@ const locais = {
   },
 };
 
+/* O cartão do local diz em três linhas o que interessa antes de abrir: o
+   nome e a área, quanto já foi lido, e — o mais útil — se Piso, Paredes e
+   Teto já têm leitura. Os três pontos coloridos são a prévia da ficha. */
 const cartaoDoLocal = e => a => {
   const its = itensDo(e, a.id);
   const cats = CATEGORIAS.filter(c => its.some(i => i.categoria === c)).length;
   const pend = its.filter(i => i.status === 'revisar' || i.status === 'conflito' || i.confianca === 'baixa').length;
-  return `<article class="cartao-selecao" data-acao="abrirAmbiente" data-id="${a.id}" role="button" tabindex="0">
+  const essenciais = ESSENCIAIS_LOCAL.map(c => ({ c, tem: its.some(i => i.categoria === c) }));
+  const plural = (n, s, p) => `<b>${n}</b> ${n === 1 ? s : p}`;
+  return `<article class="cartao-selecao local${a.confianca === 'baixa' ? ' proposto' : ''}" data-acao="abrirAmbiente" data-id="${a.id}" role="button" tabindex="0">
     <div class="topo">
       <div style="min-width:0"><h3>${esc(a.nome)}</h3>
-        <div class="meta">${esc(a.area) || (its.length ? `${its.length} item(ns)` : 'sem itens ainda')}</div></div>
+        <div class="meta">${a.area ? esc(a.area) : (a.confianca === 'baixa' ? 'rótulo sem área cotada' : 'sem área cotada')}</div></div>
       ${seloStatus(a.status)}
     </div>
-    <dl class="emp-numeros">
-      <div><dt>Itens</dt><dd>${its.length}</dd></div>
-      <div><dt>Categorias</dt><dd>${cats}</dd></div>
-      <div><dt>Pendências</dt><dd class="${pend ? 'tom-aviso' : ''}">${pend}</dd></div>
-    </dl>
+    <div class="local-resumo">
+      <span>${plural(its.length, 'item', 'itens')}</span>
+      <span>${plural(cats, 'categoria', 'categorias')}</span>
+      ${pend ? `<span class="tom-atencao">${plural(pend, 'pendência', 'pendências')}</span>` : ''}
+    </div>
+    <div class="essenciais" aria-label="Piso, paredes e teto">${essenciais.map(x => `<span class="ess${x.tem ? ' tem' : ''}" style="--cor:var(--${corCat(x.c)})" title="${esc(x.c)}: ${x.tem ? 'com leitura' : 'sem leitura'}"><i></i>${esc(x.c)}</span>`).join('')}</div>
   </article>`;
 };
 
@@ -1771,8 +1826,8 @@ const pendenciasView = {
     const aberto = grupos.find(g => g.regra === abertoId);
 
     const auto = (e.historico || []).find(h => h.tipo === 'auditoria');
-    return `<div class="cabeca"><div><h1>Evidências</h1>
-      <p class="desc">Painel de auditoria: de onde a leitura tirou cada informação, e o que ficou pendente de revisão. O que é objetivo e comprovado pelo documento a análise já corrige sozinha; o que depende de interpretação chega aqui, agrupado por problema, com as fontes à vista. Nada é preenchido por suposição.</p></div>
+    return `<div class="cabeca"><div><h1>Revisão</h1>
+      <p class="desc">O que a leitura não conseguiu decidir sozinha, agrupado por problema e com as fontes à vista. O que é objetivo e comprovado pelo documento a análise já corrigiu; o que depende de interpretação espera aqui. Nada é preenchido por suposição.</p></div>
       <div class="acoes">
         <button class="btn" data-acao="reanalisar">Reanalisar</button>
         <button class="btn ${verResolvidas ? 'primario' : ''}" data-acao="alternarResolvidas">${verResolvidas ? 'Ocultar resolvidas' : 'Mostrar resolvidas'}</button>
@@ -1934,8 +1989,8 @@ function cartaoArquivos(e) {
       ${ult ? `<button class="btn pequeno" data-acao="baixarRelatorio" data-id="${ult.id}">Baixar relatório</button>` : ''}</div></header>
     <div class="corpo">
       <div class="grade2">
-        <div class="campo"><label>Manual (PDF)</label><input type="file" id="audManual" accept="application/pdf"></div>
-        <div class="campo"><label>Planilha entregue (XLSX ou CSV)</label><input type="file" id="audPlan" accept=".xlsx,.csv,.txt"></div>
+        <div class="campo"><label for="audManual">Manual (PDF)</label><input type="file" id="audManual" accept="application/pdf"></div>
+        <div class="campo"><label for="audPlan">Planilha entregue (XLSX ou CSV)</label><input type="file" id="audPlan" accept=".xlsx,.csv,.txt"></div>
       </div>
       <div style="margin-top:14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <button class="btn primario" data-acao="rodarAuditoria">Conferir arquivos</button>
@@ -1972,7 +2027,7 @@ async function emLote(regra, acao, valor = '', apenas = null, opcoes = {}) {
   const alvos = grupo.itens.filter(i => escolhidos.has(i.id) && !i.resolvida);
   if (!alvos.length) { aviso('Selecione ao menos uma ocorrência.'); return; }
   if (acao === 'aplicado' && !valor && !alvos.every(o => o.sugerido)) { aviso('Informe o valor a aplicar.'); return; }
-  if (acao === 'excluido' && !confirm(`Excluir ${alvos.length} item(ns)? A exclusão fica registrada no histórico.`)) return;
+  if (acao === 'excluido' && !await confirmar({ titulo: `Excluir ${alvos.length} item(ns)?`, texto: 'A exclusão fica registrada no histórico.', ok: 'Excluir', perigo: true })) return;
 
   let n = 0;
   for (const o of alvos) {
@@ -2061,14 +2116,14 @@ const planilhas = {
     const abas = pastaDeAbas(e);
     const aba = abas.find(a => a.nome === (estado.filtros.aba || abas[0]?.nome)) || abas[0];
     const pend = pendencias(e);
-    return `<div class="cabeca"><div><h1>Planilha de produtos e fornecedores</h1>
-      <p class="desc">Mesmo layout da Planilha de Produtos e Fornecedores: linha 1 com os códigos de importação, linha 5 com os títulos, dados a partir da linha 6. Célula sem evidência sai vazia, nunca com “N/A”.</p></div>
+    return `<div class="cabeca"><div><h1>Exportar</h1>
+      <p class="desc">A Planilha de Produtos e Fornecedores no layout de importação (linha 1 com os códigos, linha 5 com os títulos, dados a partir da linha 6), mais o cofre do Obsidian e o JSON do projeto. Célula sem evidência sai vazia, nunca com “N/A”.</p></div>
       <div class="acoes">
         <button class="btn" data-acao="copiarAba">Copiar aba</button>
-        <button class="btn primario" data-acao="baixarXlsx">Baixar XLSX</button>
-        <button class="btn" data-acao="baixarCsvAba">Baixar aba em CSV</button>
-        <button class="btn" data-acao="baixarJson">Exportar JSON</button>
+        <button class="btn" data-acao="baixarCsvAba">CSV da aba</button>
+        <button class="btn" data-acao="baixarJson">JSON</button>
         <button class="btn" data-acao="abrirObsidian" title="Gera um cofre de notas Markdown com o levantamento inteiro, ligado por [[links]]">Obsidian</button>
+        <button class="btn primario" data-acao="baixarXlsx"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" stroke-linecap="round" stroke-linejoin="round">${ICONES.baixar}</svg>Baixar XLSX</button>
       </div></div>
       ${pend.length ? `<div class="aviso-faixa"><span>⚠</span><div><b>${pend.length} item(ns) pendente(s).</b> Eles entram na exportação com o status e a confiança que têm hoje — a aba Pendências lista cada um. <button class="btn pequeno" data-rota="pendencias" style="margin-left:6px">Revisar agora</button></div></div>` : ''}
       <div class="filtros">${abas.map(a => `<button class="btn pequeno ${aba.nome === a.nome ? 'primario' : ''}" data-acao="trocarAba" data-nome="${esc(a.nome)}">${esc(a.nome)} <span class="pilula" style="background:transparent">${a.linhas.length - 1}</span></button>`).join('')}</div>
@@ -2329,16 +2384,24 @@ const config = {
     /* De propósito, só duas coisas moram aqui: a estrutura do tipo (não tem
        outro lugar para viver — cadastro geral é editado no cartão do
        empreendimento, na tela de Empreendimentos) e o motor de leitura. */
-    return `<div class="cabeca"><div><h1>Configurações</h1><p class="desc">Estrutura do tipo de empreendimento e motor de leitura.</p></div></div>
+    return `<div class="cabeca"><div><h1>Configurações</h1><p class="desc">Estrutura do tipo de empreendimento, motor de leitura e onde os dados moram.</p></div>
+      <div class="acoes"><button class="btn" data-acao="editarEmp" data-id="${e.id}">Editar cadastro</button></div></div>
 
       <div class="cartao"><header><h2>Estrutura do empreendimento</h2>
         <div class="acoes"><span class="selo neutro">${esc(t.nome)}</span></div></header>
         <div class="corpo">
-          <p style="font-size:13px;color:var(--ink-2);max-width:70ch">${esc(t.resumo)} Os níveis abaixo vêm do tipo escolhido — ligue ou desligue conforme este projeto específico.</p>
+          <p style="font-size:13px;color:var(--ink-2);max-width:70ch">${esc(t.resumo)} Os níveis abaixo vêm do tipo escolhido — ligue ou desligue conforme este projeto específico, e cadastre os itens de cada um.</p>
           <div class="cadeia-tipo" style="margin:12px 0 16px">${cadeiaDe(e).map((x, i) => `${i ? '<i>›</i>' : ''}<span>${esc(x)}</span>`).join('')}</div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
-            ${todosNiveis.map(n => `<button class="btn pequeno ${ativos.has(n) ? 'primario' : ''}" data-acao="alternarNivel" data-nivel="${n}">
-              ${esc(rotuloNivel(e, n, true))}${ativos.has(n) ? ` <span class="pilula" style="background:transparent">${(e.estrutura[n] || []).length}</span>` : ''}</button>`).join('')}
+          <div class="lista-niveis">
+            ${todosNiveis.map(n => {
+              const ativo = ativos.has(n); const qtd = (e.estrutura[n] || []).length;
+              return `<div class="nivel-linha${ativo ? '' : ' apagado'}">
+                <div><b>${esc(rotuloNivel(e, n, true))}</b><div class="meta">${ativo ? (qtd ? `${qtd} cadastrado(s)` : 'nenhum cadastrado ainda') : 'desligado neste projeto'}</div></div>
+                <div class="acoes">
+                  ${ativo ? `<button class="btn pequeno" data-rota="estrutura" data-param="${n}">Gerenciar</button>` : ''}
+                  <button class="btn pequeno discreto" data-acao="alternarNivel" data-nivel="${n}">${ativo ? 'Desligar' : 'Ligar'}</button>
+                </div></div>`;
+            }).join('')}
           </div>
           <div style="margin-top:16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <button class="btn pequeno ${temAreasComuns(e) ? 'primario' : ''}" data-acao="alternarAreasComuns">Áreas comuns (aba MC)</button>
@@ -2346,7 +2409,9 @@ const config = {
           </div>
         </div></div>
 
-      ${cartaoMotor()}`;
+      ${cartaoMotor()}
+
+      ${cartaoDados()}`;
   },
   depois(e, alvo) {
     // endereço e tempo limite do motor valem no `blur`, sem precisar de botão
@@ -2371,7 +2436,7 @@ const config = {
       const e = emp();
       const ativo = temNivel(e, nivel);
       if (ativo) {
-        if ((e.estrutura[nivel] || []).length && !confirm(`Desligar ${rotuloNivel(e, nivel, true).toLowerCase()}? Os itens cadastrados ficam guardados, mas somem do menu.`)) return;
+        if ((e.estrutura[nivel] || []).length && !await confirmar({ titulo: `Desligar ${rotuloNivel(e, nivel, true).toLowerCase()}?`, texto: 'Os itens cadastrados ficam guardados, mas o nível some das fichas e da planilha.', ok: 'Desligar' })) return;
         e.niveisDesligados = [...new Set([...(e.niveisDesligados || []), nivel])];
         e.niveisExtras = (e.niveisExtras || []).filter(x => x !== nivel);
       } else {
@@ -2388,8 +2453,46 @@ const config = {
       await salvar({ texto: `Áreas comuns ${e.areasComunsForcado ? 'ligadas' : 'desligadas'}`, tipo: 'config' });
       render();
     },
+    editarEmp({ id }) { formEmpreendimento(estado.emps.find(x => x.id === id)); },
+    async salvarEmpEdicao(d, el) { await empreendimentos.acoes.salvarEmpEdicao(d, el); },
+    fecharModal() { fecharModal(); },
+    async religarNuvem() { await empreendimentos.acoes.religarNuvem(); },
+    async baixarBackup() {
+      aviso('Gerando o backup no servidor…');
+      try {
+        const r = await fetch(store.NUVEM.base + '/api/backup');
+        if (!r.ok) throw new Error(`servidor respondeu ${r.status}`);
+        const texto = await r.text();
+        const data = new Date().toISOString().slice(0, 10);
+        await store.baixar(`prancharia-backup-${data}.json`, texto, 'application/json');
+        aviso('Backup baixado. Guarde o arquivo: ele traz todos os empreendimentos, o glossário e as empresas.');
+      } catch (err) { aviso('Não consegui gerar o backup: ' + err.message); }
+    },
   },
 };
+
+/* Onde os dados moram. É a resposta à pergunta que mais confunde quem abre o
+   Prancharia em outro navegador: "cadê meus empreendimentos?" */
+function cartaoDados() {
+  const nuvem = store.naNuvem();
+  const efemero = nuvem && store.NUVEM.persistente === false;
+  const s = store.NUVEM.saude || {};
+  return `<div class="cartao"><header><h2>Dados</h2>
+    <div class="acoes"><span class="selo ${nuvem ? (efemero ? 'atencao' : 'bom') : 'neutro'}">${nuvem ? (efemero ? 'servidor sem banco persistente' : 'servidor compartilhado') : 'só neste navegador'}</span></div></header>
+    <div class="corpo">
+      ${nuvem
+        ? `<p style="font-size:13px;color:var(--ink-2);max-width:74ch">Os empreendimentos e as pranchas estão gravados em <code>${esc(store.NUVEM.base)}</code>${s.banco ? ` (${esc(s.banco.motor || 'banco')}, ${s.banco.projetos ?? '?'} projeto(s))` : ''}. Quem abrir o Prancharia em outro navegador vê a mesma lista.${efemero ? ' <b>Atenção:</b> o disco desse servidor é efêmero — configure o Turso (ver LEIA-ME) antes de confiar nele.' : ''}</p>
+           <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+             <button class="btn" data-acao="baixarBackup"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" stroke-linecap="round" stroke-linejoin="round">${ICONES.baixar}</svg>Baixar backup do servidor</button>
+             <span style="font-size:12.5px;color:var(--ink-3)">Um JSON com todos os empreendimentos, empresas e o glossário — sem os PDFs.</span>
+           </div>`
+        : `<p style="font-size:13px;color:var(--ink-2);max-width:74ch">Este navegador é o único lugar onde os dados estão. Para compartilhar com a equipe, suba o servidor de <code>/server</code> (ou aponte para o hospedado em Motor de leitura › Endereço do servidor): o Prancharia detecta sozinho e envia o que está aqui.</p>
+           <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+             <button class="btn" data-acao="religarNuvem">Tentar conectar agora</button>
+             <button class="btn" data-rota="planilhas">Exportar JSON deste empreendimento</button>
+           </div>`}
+    </div></div>`;
+}
 
 /* ================= MOTOR DE LEITURA ================= */
 /* A leitura vetorial não precisa de nada. A multimodal precisa do BFF no ar —
@@ -2507,12 +2610,33 @@ const ACOES_COMUNS = {
   },
   async editarAchado({ id }) {
     const a = acharAchado(id); if (!a) return;
-    const d = prompt('Descrição/Modelo/Linha', a.descricao || '');
-    if (d === null) return;
-    const antes = a.descricao; a.descricao = d.trim();
+    const r = await perguntar({ titulo: 'Editar item', texto: `${a.localNome || 'sem local'}${a.categoria ? ' · ' + a.categoria : ''}. Toda alteração fica no histórico; categoria, produto e sistema viram regra do glossário.`,
+      extra: listaSistemas(),
+      campos: [
+        { id: 'categoria', rotulo: 'Categoria', tipo: 'select', opcoes: CATEGORIAS, valor: a.categoria || '' },
+        { id: 'produto', rotulo: 'Nome do produto/serviço', valor: a.produto || '' },
+        { id: 'sistema', rotulo: 'Sistema construtivo', valor: a.sistema || '', lista: 'listaSistemas' },
+        { id: 'descricao', rotulo: 'Descrição / modelo / linha', tipo: 'textarea', valor: a.descricao || '', linhas: 2 },
+        { id: 'marca', rotulo: 'Marca', valor: a.marca || '' },
+        { id: 'fornecedor', rotulo: 'Fornecedor', valor: a.fornecedor || '' },
+      ] });
+    if (!r) return;
+    const mudados = ['categoria', 'produto', 'sistema', 'descricao', 'marca', 'fornecedor'].filter(k => (r[k] || '') !== (a[k] || ''));
+    if (!mudados.length) { abrirGaveta(a); return; }
+    const antes = mudados.map(k => `${ROTULO_CAMPO[k] || k}: ${a[k] || '—'}`).join(' · ');
+    for (const k of mudados) a[k] = r[k];
     a.status = 'corrigido';
-    await salvar({ texto: 'Descrição editada', tipo: 'edicao', antes, depois: a.descricao, alvo: a.id });
-    abrirGaveta(a); render();
+    if (a.confianca === 'baixa') a.confianca = 'media';
+    if (r.sistema) a.motivos = (a.motivos || []).filter(m => m !== 'sem_sistema');
+    let extra = '';
+    if (mudados.some(k => ['categoria', 'produto', 'sistema'].includes(k)) && a.descricao) {
+      aprenderRegra(a.descricao, { categoria: a.categoria, produto: a.produto, sistema: a.sistema });
+      await gravarGlossario();
+      extra = ' · regra gravada no glossário';
+    }
+    await salvar({ texto: `Item editado (${mudados.map(k => ROTULO_CAMPO[k] || k).join(', ')})${extra}`, tipo: 'edicao', antes, depois: mudados.map(k => `${ROTULO_CAMPO[k] || k}: ${a[k] || '—'}`).join(' · '), alvo: a.id });
+    render(); abrirGaveta(a);
+    aviso('Alteração registrada' + (extra ? ' e aprendida para os próximos empreendimentos.' : '.'));
   },
   async resolverConflito({ id, i }) {
     const a = acharAchado(id); if (!a) return;
@@ -2526,20 +2650,30 @@ const ACOES_COMUNS = {
   },
   async adicionarItem({ amb }) {
     const e = emp(); const a = acharAmbiente(amb); if (!a) return;
-    const cat = prompt('Categoria (' + CATEGORIAS.join(', ') + ')');
-    if (!cat || !CATEGORIAS.includes(cat)) { if (cat) aviso('Categoria fora do vocabulário permitido.'); return; }
-    const desc = prompt('Descrição/Modelo/Linha');
-    if (!desc?.trim()) return;
+    const r = await perguntar({ titulo: `Adicionar item em ${a.nome}`, texto: 'Entrada manual: o item nasce confirmado, com a evidência “entrada manual”.', ok: 'Adicionar',
+      extra: listaSistemas(),
+      campos: [
+        { id: 'categoria', rotulo: 'Categoria', tipo: 'select', opcoes: CATEGORIAS, vazio: false, valor: 'Piso' },
+        { id: 'produto', rotulo: 'Nome do produto/serviço', placeholder: 'Ex.: Porcelanato' },
+        { id: 'descricao', rotulo: 'Descrição / modelo / linha', tipo: 'textarea', linhas: 2, placeholder: 'Ex.: Porcelanato Flakes SBE NAT 120x120' },
+        { id: 'sistema', rotulo: 'Sistema construtivo (opcional)', lista: 'listaSistemas' },
+        { id: 'marca', rotulo: 'Marca (opcional)' },
+      ] });
+    if (!r) return;
+    const cat = r.categoria;
+    const desc = r.descricao || r.produto;
+    if (!CATEGORIAS.includes(cat)) { aviso('Categoria fora do vocabulário permitido.'); return; }
+    if (!desc) { aviso('Descreva o item.'); return; }
     const esp = criarEspecificacao({
-      categoria: cat, descricao: desc.trim(), produto: desc.trim(),
+      categoria: cat, descricao: desc, produto: r.produto || desc, sistema: r.sistema || '', marca: r.marca || '',
       localId: a.id, localNome: a.nome, pavimento: a.pavimento, tipologia: a.tipologia || '',
       origemLeitura: 'manual', confianca: 'alta', status: 'confirmado',
     });
     esp.evidencias.push(criarEvidencia({
       tipo: 'manual',
       documentoOrigem: { docId: 'manual', nomeDoc: 'entrada manual', pagina: '' },
-      texto: desc.trim(),
-      cadeia: [a.nome, 'entrada manual', desc.trim(), cat],
+      texto: desc,
+      cadeia: [a.nome, 'entrada manual', desc, cat],
       proveniencia: { motor_ia: 'manual', metodo: 'entrada_manual', confianca: 'alta' },
     }));
     a.especificacoes = a.especificacoes || [];
