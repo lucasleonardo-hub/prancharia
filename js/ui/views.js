@@ -4,6 +4,7 @@ import {
   abrirModal, fecharModal, empreendimentoVazio, hidratar, sincronizarComNuvem, migrar,
 } from '../app.js';
 import { importarDoDrive, driveConfigurado } from '../core/drive.js';
+import { OBSIDIAN, configurarObsidian, testarObsidian, enviarParaObsidian, zipDoCofre, notasDoEmpreendimento } from '../core/obsidian.js';
 import { TIPOS, TIPO_POR_ID, ORDEM_NIVEIS, tipoDe, niveisDe, temNivel, rotuloNivel, temAreasComuns, cadeiaDe } from '../core/tipos.js';
 import { SISTEMAS, NOMES_SISTEMAS, SISTEMA_POR_NOME } from '../core/vocab.js';
 import { REGRAS_BASE } from '../core/glossario.js';
@@ -2067,6 +2068,7 @@ const planilhas = {
         <button class="btn primario" data-acao="baixarXlsx">Baixar XLSX</button>
         <button class="btn" data-acao="baixarCsvAba">Baixar aba em CSV</button>
         <button class="btn" data-acao="baixarJson">Exportar JSON</button>
+        <button class="btn" data-acao="abrirObsidian" title="Gera um cofre de notas Markdown com o levantamento inteiro, ligado por [[links]]">Obsidian</button>
       </div></div>
       ${pend.length ? `<div class="aviso-faixa"><span>⚠</span><div><b>${pend.length} item(ns) pendente(s).</b> Eles entram na exportação com o status e a confiança que têm hoje — a aba Pendências lista cada um. <button class="btn pequeno" data-rota="pendencias" style="margin-left:6px">Revisar agora</button></div></div>` : ''}
       <div class="filtros">${abas.map(a => `<button class="btn pequeno ${aba.nome === a.nome ? 'primario' : ''}" data-acao="trocarAba" data-nome="${esc(a.nome)}">${esc(a.nome)} <span class="pilula" style="background:transparent">${a.linhas.length - 1}</span></button>`).join('')}</div>
@@ -2104,9 +2106,83 @@ const planilhas = {
       await store.baixar(arquivoSeguro(e.nome) + '.json', exportarJson(e), 'application/json');
       aviso('JSON gerado.');
     },
+    abrirObsidian() { modalObsidian(); },
+    fecharModal() { fecharModal(); },
+    async baixarCofre() {
+      const e = emp();
+      const notas = notasDoEmpreendimento(e);
+      await store.baixar(arquivoSeguro(e.nome) + '-obsidian.zip', zipDoCofre(e), 'application/zip');
+      await salvar({ texto: `Cofre Obsidian exportado (${notas.length} notas)`, tipo: 'exportacao' });
+      aviso(`${notas.length} nota(s) no .zip. Descompacte dentro da pasta do seu cofre.`);
+    },
+    async testarObsidian(_d, el) {
+      lerCfgObsidian();
+      const s = el.closest('.modal-caixa')?.querySelector('#obsStatus');
+      if (s) s.textContent = 'testando…';
+      const r = await testarObsidian();
+      if (s) s.innerHTML = r.ok
+        ? `<span class="selo bom">conectado${r.versao ? ' · Obsidian ' + esc(r.versao) : ''}</span>`
+        : `<span class="selo atencao">falhou</span> <span style="color:var(--ink-3)">${esc(r.erro)}</span>`;
+    },
+    async enviarObsidian(_d, el) {
+      lerCfgObsidian();
+      const e = emp();
+      const s = el.closest('.modal-caixa')?.querySelector('#obsStatus');
+      if (!OBSIDIAN.chave) { if (s) s.innerHTML = '<span class="selo atencao">cole a chave da API do plugin</span>'; return; }
+      const r = await enviarParaObsidian(e, (texto) => { if (s) s.textContent = texto; });
+      if (s) s.innerHTML = r.falhas.length
+        ? `<span class="selo atencao">${r.enviadas} de ${r.total} gravadas</span> <span style="color:var(--ink-3)">${esc(r.falhas[0])}</span>`
+        : `<span class="selo bom">${r.enviadas} nota(s) gravadas em ${esc(r.pasta)}</span>`;
+      if (r.enviadas) await salvar({ texto: `Cofre Obsidian atualizado (${r.enviadas} notas)`, tipo: 'exportacao' });
+      if (r.falhas.length) console.warn('[obsidian] falhas:', r.falhas);
+      else aviso(`${r.enviadas} nota(s) gravadas no Obsidian.`);
+    },
   },
 };
 const arquivoSeguro = s => normalizar(s).replace(/\s+/g, '-').slice(0, 48) || 'empreendimento';
+
+/* ================= OBSIDIAN ================= */
+/* Dois caminhos: o .zip (funciona sempre) e a gravação direta pelo plugin
+   Local REST API, quando o Obsidian está aberto nesta máquina. */
+function lerCfgObsidian() {
+  const m = document.getElementById('modal');
+  if (!m) return;
+  configurarObsidian({
+    base: m.querySelector('#obsBase')?.value || OBSIDIAN.base,
+    chave: (m.querySelector('#obsChave')?.value || '').trim(),
+    pasta: m.querySelector('#obsPasta')?.value || OBSIDIAN.pasta,
+  });
+}
+
+function modalObsidian() {
+  const e = emp(); if (!e) return;
+  const notas = notasDoEmpreendimento(e);
+  abrirModal(`
+    <header><h2>Obsidian</h2>
+      <p>O levantamento vira um cofre de notas Markdown: uma nota por local, uma por documento, o índice do empreendimento, as pendências como tarefas — tudo ligado por [[links]]. Célula sem evidência continua vazia.</p></header>
+    <div class="corpo">
+      <p style="font-size:13px;color:var(--ink-2)">${notas.length} nota(s) serão geradas em <code>${esc(OBSIDIAN.pasta)}/${esc(e.nome)}/</code>.</p>
+      <h3 style="margin:14px 0 6px;font-size:14px">1. Baixar como .zip</h3>
+      <p style="font-size:13px;color:var(--ink-2)">Funciona sempre. Descompacte dentro da pasta do seu cofre; o Obsidian reconhece na hora.</p>
+      <div style="margin-top:8px"><button class="btn primario" data-acao="baixarCofre">Baixar cofre (.zip)</button></div>
+      <h3 style="margin:18px 0 6px;font-size:14px">2. Gravar direto no Obsidian</h3>
+      <p style="font-size:13px;color:var(--ink-2)">Com o Obsidian aberto nesta máquina e o plugin <b>Local REST API</b> instalado (Configurações → Plugins da comunidade → “Local REST API”; ligue <b>Enable HTTP server</b> e copie a API key).</p>
+      <div class="grade2" style="margin-top:10px">
+        <div class="campo"><label for="obsBase">Endereço do plugin</label>
+          <input id="obsBase" value="${esc(OBSIDIAN.base)}" placeholder="http://127.0.0.1:27123" style="font-family:var(--mono);font-size:12.5px"></div>
+        <div class="campo"><label for="obsPasta">Pasta no cofre</label>
+          <input id="obsPasta" value="${esc(OBSIDIAN.pasta)}" placeholder="Prancharia"></div>
+      </div>
+      <div class="campo" style="margin-top:10px"><label for="obsChave">API key do plugin</label>
+        <input id="obsChave" type="password" value="${esc(OBSIDIAN.chave)}" placeholder="cole aqui a chave mostrada nas configurações do plugin" autocomplete="off"></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px">
+        <button class="btn" data-acao="testarObsidian">Testar conexão</button>
+        <button class="btn primario" data-acao="enviarObsidian">Gravar ${notas.length} nota(s)</button>
+        <span id="obsStatus" style="font-size:12.5px"></span>
+      </div>
+    </div>
+    <footer><button class="btn discreto" data-acao="fecharModal">Fechar</button></footer>`);
+}
 
 /* A auditoria roda por dentro, durante o processamento dos documentos. O que
    sobra para decisão humana aparece em Pendências de revisão; o relatório

@@ -482,6 +482,46 @@ node nuvtest.mjs      # sobe o próprio servidor, processa duas pranchas A0 reai
                       # e confere que o levantamento atravessa para outra máquina
 ```
 
+## Exportar para o Obsidian
+
+Em **Planilhas → Obsidian** o levantamento vira um cofre de notas Markdown
+(`js/core/obsidian.js`), tudo ligado por `[[links]]`:
+
+```
+Prancharia/<Empreendimento>/
+  <Empreendimento>.md      índice: resumo, documentos, locais por pavimento, histórico
+  Locais/<Local>.md        tabela de especificações; evidências apontam para a nota do documento
+  Documentos/<Doc>.md      páginas, locais lidos, tabelas reconhecidas
+  Pendências.md            uma tarefa (- [ ]) por item pendente, agrupadas por motivo
+  Sem local.md             itens ainda não triados
+```
+
+Dois caminhos:
+
+1. **Baixar cofre (.zip)** — funciona sempre. Descompacte dentro da pasta do
+   cofre; o Obsidian reconhece na hora.
+2. **Gravar direto** — com o Obsidian aberto na mesma máquina e o plugin
+   **Local REST API** (Configurações → Plugins da comunidade). No plugin, ligue
+   *Enable HTTP server* (porta 27123) e copie a *API key* para o modal. A
+   página, mesmo em `https`, fala com `127.0.0.1` sem bloqueio de conteúdo
+   misto; a chave fica no `localStorage` deste navegador. A exportação
+   sobrescreve as notas do empreendimento e não toca em nada fora da pasta dele.
+
+Regra mantida: célula sem evidência sai vazia, nunca "N/A". `notasDoEmpreendimento`
+é pura (sem rede nem DOM), então dá para testar em Node.
+
+### Por que NÃO usamos AnyDoc / MarkItDown para ler as pranchas
+
+AnyDoc (Firecrawl, Rust) e MarkItDown (Microsoft, Python) convertem PDF com
+camada de texto em Markdown. Para prancha isso **destrói a informação que o
+motor usa**: a leitura depende das coordenadas de cada texto e traço (tag
+dentro de qual ambiente, bloco de legenda, tabela pela grade desenhada) — em
+Markdown tudo isso vira uma sequência de palavras sem posição. E não é onde
+o tempo vai: a extração vetorial de uma A0 leva ~1 s; o custo está nos
+recortes e nas chamadas à IA. Onde um conversor faria sentido é o **memorial
+descritivo em .docx/.xlsx** (hoje só PDF): converter no BFF e entrar no fluxo
+de fusão semântica. Fica como próximo passo se houver memoriais nesse formato.
+
 ## Pontos que valem saber antes de mexer
 
 - **Nada de dado sem evidência.** Célula sem respaldo no documento sai vazia,

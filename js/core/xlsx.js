@@ -47,6 +47,13 @@ function zip(entradas) {
   return saida;
 }
 
+/** ZIP genérico (sem compressão), para quem precisa de uma pasta de arquivos
+    de texto num download só — a exportação para o Obsidian usa isto.
+    `entradas`: [{ nome: 'pasta/arquivo.md', dados: string | Uint8Array }]. */
+export function gerarZip(entradas) {
+  return new Blob([zip(entradas)], { type: 'application/zip' });
+}
+
 const CTRL = new RegExp('[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F]', 'g');
 const esc = s => String(s === null || s === undefined ? '' : s)
   .replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
