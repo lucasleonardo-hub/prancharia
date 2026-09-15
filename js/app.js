@@ -226,17 +226,78 @@ window.addEventListener('hashchange', () => { lerRota(); fecharGaveta(); render(
  * Troca o esqueleto vindo da listagem pelo projeto inteiro. Sem efeito fora da
  * nuvem (lá a listagem já traz tudo) e sem efeito no que já foi hidratado.
  */
-export async function hidratar(id) {
+export async function hidratar(id, { silencioso = false } = {}) {
   const i = estado.emps.findIndex(e => e.id === id);
   if (i < 0 || !estado.emps[i].resumo) return estado.emps[i] || null;
   try {
     const corpo = await store.carregarEmpreendimento(id);
-    if (corpo) { delete corpo.resumo; estado.emps[i] = migrar(corpo); }
+    /* enquanto a viagem estava em curso alguém pode já ter trocado o esqueleto
+       (a hidratação de fundo e o clique em "Abrir" disputam o mesmo projeto);
+       o que já está inteiro em memória não é substituído */
+    const j = estado.emps.findIndex(e => e.id === id);
+    if (corpo && j >= 0 && estado.emps[j].resumo) { delete corpo.resumo; estado.emps[j] = migrar(corpo); }
+    return j >= 0 ? estado.emps[j] : null;
   } catch (e) {
     console.warn('[nuvem] não consegui abrir o projeto', id, '-', e.message);
-    aviso(`Não consegui abrir este projeto: ${e.message}`);
+    if (!silencioso) aviso(`Não consegui abrir este projeto: ${e.message}`);
   }
-  return estado.emps[i];
+  return estado.emps.find(e => e.id === id) || null;
+}
+
+/**
+ * A tela de Empreendimentos mostra documentos, locais, itens e pendências de
+ * cada projeto — e na nuvem a listagem chega só com o cabeçalho, então os
+ * cartões abriam zerados até a pessoa entrar no projeto e voltar. Isto baixa
+ * o corpo dos esqueletos em segundo plano, poucos por vez, e redesenha a
+ * lista quando termina. Quem falhar fica de fora até a próxima listagem.
+ */
+let hidratacaoDeFundo = null;
+const hidratacaoFalhou = new Set();
+export function hidratarTodos() {
+  if (hidratacaoDeFundo) return hidratacaoDeFundo;
+  const pendentes = () => estado.emps.filter(e => e.resumo && !hidratacaoFalhou.has(e.id)).map(e => e.id);
+  if (!pendentes().length) return Promise.resolve();
+  hidratacaoDeFundo = (async () => {
+    try {
+      let fila = pendentes();
+      while (fila.length) {
+        let mudou = false;
+        const operario = async () => {
+          while (fila.length) {
+            const id = fila.shift();
+            const e = await hidratar(id, { silencioso: true });
+            if (e && !e.resumo) mudou = true; else hidratacaoFalhou.add(id);
+          }
+        };
+        await Promise.all([operario(), operario(), operario()]);
+        if (mudou && estado.rota === 'empreendimentos') {
+          /* redesenha sem puxar a lista de volta para o topo */
+          const alvo = document.getElementById('conteudo');
+          const rolagem = alvo ? alvo.scrollTop : 0;
+          render();
+          if (alvo) alvo.scrollTop = rolagem;
+        }
+        fila = pendentes();   // a lista pode ter sido trocada no meio do caminho
+      }
+    } finally { hidratacaoDeFundo = null; }
+  })();
+  return hidratacaoDeFundo;
+}
+
+/**
+ * Busca a listagem de novo sem jogar fora o que já está inteiro em memória:
+ * o projeto aberto fica sempre, e os demais ficam quando o servidor não tem
+ * versão mais nova. O resto vira esqueleto e volta pela hidratação de fundo.
+ */
+export async function recarregarLista() {
+  const antes = new Map(estado.emps.map(e => [e.id, e]));
+  estado.emps = (await store.listarEmpreendimentos()).map(p => {
+    const a = antes.get(p.id);
+    if (p.resumo && a && !a.resumo && (a.id === estado.empId || a.atualizadoEm === p.atualizadoEm)) return a;
+    return migrar(p);
+  });
+  hidratacaoFalhou.clear();
+  hidratarTodos();
 }
 
 export async function iniciarApp() {
@@ -250,6 +311,7 @@ export async function iniciarApp() {
   if (estado.empId) await hidratar(estado.empId);
   if (!estado.empId && estado.rota !== 'empreendimentos') estado.rota = 'empreendimentos';
   render();
+  hidratarTodos();
   /* o que está só neste navegador sobe para o servidor, sem perguntar, quando
      o servidor não tem nada com aquele id — não há o que sobrescrever */
   if (store.naNuvem()) sincronizarComNuvem();
@@ -264,7 +326,7 @@ export async function sincronizarComNuvem() {
   try {
     const feito = await store.enviarLocaisParaNuvem({ soNovos: true });
     if (feito.projetos) {
-      estado.emps = (await store.listarEmpreendimentos()).map(migrar);
+      await recarregarLista();
       aviso(`${feito.projetos} empreendimento(s) que estavam só neste navegador foram enviados ao servidor`
         + (feito.arquivos ? ` com ${feito.arquivos} PDF(s)` : '') + '.');
     }
@@ -281,7 +343,7 @@ export async function sincronizarComNuvem() {
 window.addEventListener('prancharia:nuvem', async () => {
   aviso('Servidor compartilhado no ar — carregando os empreendimentos de lá.');
   try {
-    estado.emps = (await store.listarEmpreendimentos()).map(migrar);
+    await recarregarLista();
     if (estado.empId) await hidratar(estado.empId);
   } catch (e) { console.warn('[nuvem] não consegui recarregar a lista:', e.message); }
   render();

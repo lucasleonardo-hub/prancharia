@@ -1,7 +1,7 @@
 import {
   estado, emp, esc, celula, seloConfianca, seloStatus, marcaForma, aviso, salvar, irPara,
   ROTULO_FORMA, render, store, novoId, gravarGlossario, aprenderRegra, esquecerRegra, regrasAprendidas,
-  abrirModal, fecharModal, empreendimentoVazio, hidratar, sincronizarComNuvem, migrar,
+  abrirModal, fecharModal, empreendimentoVazio, hidratar, recarregarLista, sincronizarComNuvem,
   perguntar, confirmar, ICONES,
 } from '../app.js';
 import { importarDoDrive, driveConfigurado } from '../core/drive.js';
@@ -130,6 +130,7 @@ function avisoNuvemLigada() {
 }
 
 function statusProcessamento(e) {
+  if (e.resumo) return { rotulo: 'Carregando…', tom: 'neutro' };
   if (!e.documentos.length) return { rotulo: 'Sem documentos', tom: 'neutro' };
   const faltam = e.documentos.filter(d => !d.processadoEm).length;
   if (faltam) return { rotulo: `${faltam} aguardando`, tom: 'atencao' };
@@ -238,6 +239,8 @@ const empreendimentos = {
       const st = statusProcessamento(e);
       const niveis = niveisDe(e);
       const pend = pendencias(e).length;
+      /* esqueleto da nuvem: o corpo ainda está a caminho — reticências, não zero */
+      const n = v => e.resumo ? '…' : v;
       return `<article class="cartao-selecao emp ${e.id === estado.empId ? 'atual' : ''}">
         <div class="topo">
           <div style="min-width:0">
@@ -247,10 +250,10 @@ const empreendimentos = {
           <span class="selo ${st.tom}" style="margin-left:auto;flex:none">${esc(st.rotulo)}</span>
         </div>
         <dl class="emp-numeros">
-          <div><dt>Docs</dt><dd>${e.documentos.length}</dd></div>
-          <div><dt>Locais</dt><dd>${locaisVivos(e).length}</dd></div>
-          <div><dt>Itens</dt><dd>${itens(e).length}</dd></div>
-          <div><dt>Pend.</dt><dd class="${pend ? 'tom-aviso' : ''}">${pend}</dd></div>
+          <div><dt>Docs</dt><dd>${n(e.documentos.length)}</dd></div>
+          <div><dt>Locais</dt><dd>${n(locaisVivos(e).length)}</dd></div>
+          <div><dt>Itens</dt><dd>${n(itens(e).length)}</dd></div>
+          <div><dt>Pend.</dt><dd class="${pend ? 'tom-aviso' : ''}">${n(pend)}</dd></div>
         </dl>
         <div class="meta">${niveis.length ? niveis.map(n => esc(n.plural)).join(' · ') + ' · ' : ''}atualizado ${e.atualizadoEm ? new Date(e.atualizadoEm).toLocaleDateString('pt-BR') : '—'}</div>
         <div class="acoes">
@@ -293,7 +296,7 @@ const empreendimentos = {
       if (!await confirmar({ titulo: `Enviar ${n} empreendimento(s) ao servidor?`, texto: 'A versão que está no servidor será substituída pela deste navegador.', ok: 'Enviar' })) return;
       aviso('Enviando…');
       const feito = await store.enviarLocaisParaNuvem({ soNovos: false });
-      estado.emps = (await store.listarEmpreendimentos()).map(migrar);
+      await recarregarLista();
       estado.nuvemPendentes = await store.projetosSoLocais();
       render();
       aviso(`${feito.projetos} empreendimento(s) e ${feito.arquivos} PDF(s) enviados` + (feito.falhas.length ? ` — ${feito.falhas.length} falha(s), veja o console.` : '.'));
