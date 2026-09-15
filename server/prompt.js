@@ -456,6 +456,8 @@ Q9. NÃO DEVOLVA o que não é produto de acabamento: cotas, níveis, nomes de p
 Q10. JUSTIFICATIVA OBRIGATÓRIA: diga de onde tirou, citando o quadro e a linha ("quadro MEMORIAL DE ACABAMENTOS PISO, linha BANHO MASTER, coluna Especificação Piso"). É o texto que o engenheiro vai ler como prova.
 Q11. NADA SEM EVIDÊNCIA. Item novo sem "fonte" e sem "justificativa" é descartado pelo sistema. Célula que o documento não sustenta sai vazia (""), nunca "N/A". "acao" declara o que o item é em relação aos dados já extraídos: "confirmar", "completar" ou "novo".
 Q12. AMBIENTES DA PLANTA. Quando a imagem é uma planta baixa e a lista de AMBIENTES RECONHECIDOS está vazia, devolva UM item por rótulo de ambiente legível no desenho, com "origemLeitura": "planta", "local" = o rótulo exatamente como está escrito ("DORM.01", "BANHO", "SALA", "CIRCULAÇÃO", "ELEVADOR 01"), "tipologia" = o rótulo da unidade em que o ambiente está ("TIPO 1", "TIPO PNE 4", "APTO TIPO A") quando a planta marca as unidades — e "" quando o ambiente está fora das unidades (hall, circulação do andar, escada, elevador, salão de festas) ou a planta não marca tipologias. "produto" e "descricao" ficam "" quando a planta não escreve material naquele ambiente; "justificativa" = "rótulo de ambiente na planta" e "fonte" = "planta baixa". O mesmo nome em unidades diferentes são itens diferentes: DORM.01 do TIPO 1 e DORM.01 do TIPO 2. Não invente ambiente: só o que está escrito e legível.
+     TIPOLOGIA É SÓ O QUE ESTÁ ESCRITO COMO TIPO. "TIPO 1", "TIPO PNE 4", "APTO TIPO A" são tipologias; "101", "APTO 102", "FINAL 03", o número da unidade ou o número do pavimento NÃO são. Uma planta tem poucas tipologias (em geral de 2 a 12) e a mesma tipologia se repete em vários apartamentos — não numere as unidades como se cada uma fosse um tipo. Se a planta não escreve "TIPO", "tipologia" fica "".
+     POSIÇÃO DO RÓTULO: em cada item de ambiente, preencha "imagem" (o número da imagem em que o rótulo está: 1, 2…) e "caixa" = [x0, y0, x1, y1], a caixa do texto do rótulo dentro daquela imagem, em milésimos da largura e da altura da imagem (0 a 1000, origem no canto superior esquerdo). É com isso que o sistema abre a prancha no lugar certo.
 
 === CONFIANÇA ===
 "alta"  — linha de tabela legível, com o ambiente declarado na própria linha.
@@ -484,6 +486,8 @@ export const SCHEMA_QUADRO = {
       peitoril: texto('Só esquadria, se escrito. Senão "".'),
       quantidade: texto('Só se escrita. Senão "".'),
       tipologia: texto('Rótulo da unidade em que o ambiente está ("TIPO 1", "TIPO PNE 4"), quando a planta marca tipologias. Senão "".'),
+      imagem: { type: 'integer', description: 'Número da imagem (1, 2…) em que o item foi lido.' },
+      caixa: { type: 'array', items: { type: 'number' }, description: 'Caixa do texto lido dentro da imagem: [x0, y0, x1, y1] em milésimos (0 a 1000) da largura e da altura da imagem.' },
       origemLeitura: { type: 'string', enum: [...ORIGENS, 'quadro', 'nota', 'detalhe', 'planta'] },
       fonte: texto('O nome do quadro, tabela ou nota de onde saiu ("MEMORIAL DE ACABAMENTOS PISO", "QUADRO DE ESQUADRIAS").'),
       acao: { type: 'string', enum: ACOES_REVISAO, description: 'confirmar = já estava nos dados vetoriais; completar = preenche/corrige um item já extraído; novo = só a imagem mostra.' },
@@ -557,6 +561,16 @@ export function contextoQuadro({ documento = '', pagina = null, locais = [], jaL
   return l.join('\n');
 }
 
+/** [x0, y0, x1, y1] em milésimos da imagem, ou null quando não presta. */
+function caixaMil(c) {
+  if (!Array.isArray(c) || c.length !== 4) return null;
+  const n = c.map(v => Math.max(0, Math.min(1000, Number(v))));
+  if (n.some(v => !Number.isFinite(v))) return null;
+  const x0 = Math.min(n[0], n[2]), x1 = Math.max(n[0], n[2]), y0 = Math.min(n[1], n[3]), y1 = Math.max(n[1], n[3]);
+  if (x1 - x0 < 1 || y1 - y0 < 1) return null;
+  return [x0, y0, x1, y1];
+}
+
 /** Aplica Q6, Q7 e Q9 no que voltou, e descarta linha sem substância. */
 export function sanearQuadro(bruto) {
   const lista = Array.isArray(bruto) ? bruto : (bruto && Array.isArray(bruto.itens) ? bruto.itens : []);
@@ -572,6 +586,8 @@ export function sanearQuadro(bruto) {
     const item = {
       local: limpar(r.local),
       tipologia: limpar(r.tipologia),
+      imagem: Number.isInteger(Number(r.imagem)) && Number(r.imagem) >= 1 ? Number(r.imagem) : 1,
+      caixa: caixaMil(r.caixa),
       categoria: CATEGORIAS.includes(limpar(r.categoria)) ? limpar(r.categoria) : '',
       produto: limpar(r.produto), sistema: limpar(r.sistema),
       descricao: semNumeroSolto(limpar(r.descricao)),

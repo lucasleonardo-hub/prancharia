@@ -6,7 +6,7 @@ import { openPdf, walkPaths, readText, isRed, naFilaDeRender } from './pdfdoc.js
 import { coletorDeFormas, montarTags, FORMAS } from './shapes.js';
 import { lerAmbientes, lerPavimentos, lerTipologias, atribuirTipologias, criarMascara, vincularTags, janelasDePlanta } from './rooms.js';
 import { classificarArea, lerTipologia, partesDoNome, familiaDoNome, mesmoCerne } from './areas.js';
-import { temAreasComuns } from './tipos.js';
+import { temAreasComuns, temNivel } from './tipos.js';
 import { coletorDeFios, lerTabela } from './tables.js';
 import { lerLegendas, categoriaDe } from './legend.js';
 import { lerQuadros, caixasDeQuadros } from './quadros.js';
@@ -796,9 +796,29 @@ function indiceDeChaves(emp) {
   return m;
 }
 
-/** Identidade de um local na árvore: nome + pavimento + tipologia. "DORM.01"
-    do TIPO 1 e "DORM.01" do TIPO 2 são dois locais. */
-function chaveLocal(nome, pav, tip) { return chaveAmb(nome, pav) + '|' + normalizar(tip || ''); }
+/**
+ * Identidade de um local na árvore.
+ *   - área comum: nome + pavimento — o HALL do térreo e o HALL do 1º são dois lugares;
+ *   - cômodo de unidade: nome + tipologia — o DORM.01 do TIPO 1 é UM local, esteja
+ *     a unidade no térreo ou no 12º (o pavimento vira uma lista, `pavimentos`);
+ *   - cômodo de unidade sem tipologia lida: só o nome — as plantas dos andares
+ *     repetidas não podem virar um DORM.01 por andar.
+ */
+function chaveLocal(nome, pav, tip, comum) {
+  if (comum === false || tip) return normalizar(nome) + '|' + (tip ? 't:' + normalizar(tip) : '');
+  return chaveAmb(nome, pav) + '|';
+}
+const chaveDoLocal = l => chaveLocal(l.nome, l.pavimento, l.tipologia, !!l.areaComum);
+
+/** O lado do condomínio que um rótulo de prancha revela: true, false ou undefined. */
+function ladoDoRotulo(emp, a, folha) {
+  if (a.tipologia) return false;
+  const vocab = classificarArea(a.nome);
+  if (vocab === 'comum') return true;
+  if (vocab === 'privativa') return false;
+  if (folha && (folha.tipologias || []).length) return true;   // folha com unidades marcadas: fora delas é comum
+  return temAreasComuns(emp) ? undefined : false;
+}
 
 /** Um item da estrutura (torre, tipologia…) pelo nome — criado se não existir. */
 function garantirNivel(emp, nivel, nome) {
@@ -861,18 +881,19 @@ function propagarDoMemorial(de, para) {
  */
 function obterOuCriarLocal(emp, a, docMeta, folha, porChave = null) {
   emp.locais = emp.locais || [];
-  const mapa = porChave || new Map(emp.locais.map(l => [chaveLocal(l.nome, l.pavimento, l.tipologia), l]));
+  const mapa = porChave || new Map(emp.locais.map(l => [chaveDoLocal(l), l]));
   const tip = a.tipologia || '';
-  const k = chaveLocal(a.nome, a.pavimento, tip);
+  const comum = ladoDoRotulo(emp, a, folha);
+  const k = chaveLocal(a.nome, a.pavimento, tip, comum);
   let local = mapa.get(k);
   let criado = false, propagadas = 0;
+  if (local && a.pavimento && normalizar(local.pavimento || '') !== normalizar(a.pavimento)) {
+    /* o mesmo cômodo da mesma tipologia em outro andar: um local, vários pavimentos */
+    local.pavimentos = local.pavimentos || (local.pavimento ? [local.pavimento] : []);
+    if (!local.pavimentos.some(p => normalizar(p) === normalizar(a.pavimento))) local.pavimentos.push(a.pavimento);
+    if (!local.pavimento) local.pavimento = a.pavimento;
+  }
   if (!local) {
-    const vocab = classificarArea(a.nome);
-    const comum = tip ? false
-      : vocab === 'comum' ? true
-      : vocab === 'privativa' ? false
-      : (folha && (folha.tipologias || []).length) ? true      // folha com unidades marcadas: o que está fora delas é comum
-      : temAreasComuns(emp) ? undefined : false;
     const doMemorial = localDoMemorialPara(emp, a, comum);
     if (doMemorial && !tip && !doMemorial.adotadoEm) {
       local = doMemorial;
@@ -897,6 +918,10 @@ function obterOuCriarLocal(emp, a, docMeta, folha, porChave = null) {
     if (tip) {
       const niv = garantirNivel(emp, 'tipologia', tip);
       local.tipologia = tip; local.tipologiaId = niv.id;
+      /* a planta marcou unidades: o empreendimento tem tipologias e tem áreas
+         comuns, seja qual for o tipo escolhido no cadastro */
+      if (!temNivel(emp, 'tipologia')) emp.niveisExtras = [...new Set([...(emp.niveisExtras || []), 'tipologia'])];
+      if (!temAreasComuns(emp)) emp.areasComunsForcado = true;
     } else if (!local.areaComum && !local.tipologia) {
       /* sem tipologia lida: a tipologia cadastrada à mão vale para todos,
          mas uma tipologia que veio de prancha só vale para quem está nela */
@@ -931,7 +956,7 @@ function obterOuCriarLocal(emp, a, docMeta, folha, porChave = null) {
 
 /** Cria ou reencontra o Local de cada rótulo lido na folha. */
 function casarLocais(emp, folha, docMeta) {
-  const porChave = new Map(emp.locais.map(l => [chaveLocal(l.nome, l.pavimento, l.tipologia), l]));
+  const porChave = new Map(emp.locais.map(l => [chaveDoLocal(l), l]));
   const criados = [];
   for (const a of folha.ambientes) {
     const { local, criado } = obterOuCriarLocal(emp, a, docMeta, folha, porChave);
@@ -1197,13 +1222,14 @@ async function leituraAmpla(emp, folha, docMeta) {
 
   const vivo = x => x && x.status !== 'excluido';
   const nomes = (emp.locais || []).filter(vivo).map(l => l.nome);
+  const regioesEnviadas = [];        // na ordem das imagens: IMAGEM 1 é regioesEnviadas[0]
 
   let corpo;
   try {
     const imagens = [];
     for (const r of regioes.slice(0, IA.maxRegioesPorFolha)) {
       const b64 = await recorteBase64(folha.page, r.caixa, { largura: r.largura });
-      if (b64) imagens.push({ rotulo: r.rotulo, base64: b64 });
+      if (b64) { imagens.push({ rotulo: r.rotulo, base64: b64 }); regioesEnviadas.push(r); }
     }
     if (!imagens.length) return [];
     corpo = await chamarBff(IA.rotaFolha, {
@@ -1224,6 +1250,27 @@ async function leituraAmpla(emp, folha, docMeta) {
   const itens = Array.isArray(corpo.itens) ? corpo.itens : [];
   if (!itens.length) return [];
 
+  /* A caixa que a IA devolve é relativa à imagem (0–1000 em cada eixo); aqui
+     ela volta para as coordenadas da página, para o rótulo ter "Ver na
+     prancha" mesmo numa planta que é só imagem. */
+  const caixaNaPagina = (it) => {
+    const c = Array.isArray(it.caixa) && it.caixa.length === 4 ? it.caixa.map(Number) : null;
+    const r = regioesEnviadas[Math.max(0, (Number(it.imagem) || 1) - 1)] || regioesEnviadas[0];
+    if (!c || c.some(v => !Number.isFinite(v)) || !r || !r.caixa) return null;
+    const [rx0, ry0, rx1, ry1] = r.caixa;
+    const sx = (rx1 - rx0) / 1000, sy = (ry1 - ry0) / 1000;
+    const x0 = rx0 + Math.min(c[0], c[2]) * sx, x1 = rx0 + Math.max(c[0], c[2]) * sx;
+    const y0 = ry0 + Math.min(c[1], c[3]) * sy, y1 = ry0 + Math.max(c[1], c[3]) * sy;
+    if (x1 - x0 < 2 || y1 - y0 < 2) return null;
+    return [x0, y0, x1, y1];
+  };
+  /* Uma planta tem poucas tipologias. Dezenas delas numa folha só é a IA
+     lendo número de apartamento como tipo — e aí nenhuma vale: os cômodos
+     entram sem tipologia, um por nome, em vez de um por apartamento. */
+  const tipsDaFolha = new Set(itens.filter(i => i.origemLeitura === 'planta').map(i => lerTipologia(i.tipologia || '')).filter(Boolean));
+  const tipologiasSuspeitas = tipsDaFolha.size > 16;
+  if (tipologiasSuspeitas) console.warn(`[IA] ${tipsDaFolha.size} tipologias numa folha só — descartadas (parecem números de apartamento).`);
+
   const pavs = [...new Set((emp.locais || []).filter(vivo).map(l => l.pavimento).filter(Boolean))];
   const vivos = (emp.locais || []).filter(vivo);
   const regiaoDe = (fonte) => {
@@ -1241,10 +1288,10 @@ async function leituraAmpla(emp, folha, docMeta) {
       const pavsFolha = folha.pavimentos || [];
       const unica = pavsFolha.length === 1 ? pavsFolha[0] : null;
       const amb = {
-        nome: it.local, area: '', bboxTexto: null, origem: 'rotulo_ia',
+        nome: it.local, area: '', bboxTexto: caixaNaPagina(it), origem: 'rotulo_ia',
         pavimento: it.pavimento || (unica ? unica.nome : ''),
         grupo: unica ? (unica.grupo || '') : '',
-        tipologia: lerTipologia(it.tipologia || '') || '',
+        tipologia: tipologiasSuspeitas ? '' : (lerTipologia(it.tipologia || '') || ''),
         confianca: ['alta', 'media'].includes(it.confianca) ? it.confianca : 'baixa',
       };
       const { local } = obterOuCriarLocal(emp, amb, docMeta, folha);

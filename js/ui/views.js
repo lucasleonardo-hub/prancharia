@@ -689,7 +689,10 @@ async function processarDocumento(meta, lote = null) {
       /* 1) o que o próprio memorial diz, frase por frase — entra como itens
             de origem 'memorial', com a página e o trecho guardados */
       const r = await analisarMemorial(doc, meta, locaisVivos(e),
-        (texto, pct) => atualizarProgresso(texto, pct * 0.7), { areasComuns: temAreasComuns(e) });
+        (texto, pct) => atualizarProgresso(texto, pct * 0.7), { areasComuns: temAreasComuns(e) ? true : 'auto' });
+      /* o memorial dividiu "ÁREAS COMUNS" / "ÁREAS PRIVATIVAS": então é um
+         condomínio, seja qual for o tipo do cadastro — liga as áreas comuns */
+      if (r.areasComunsAtivadas && !temAreasComuns(e)) e.areasComunsForcado = true;
       /* os títulos do memorial que não existiam nas pranchas viram locais —
          com o lado certo do condomínio (área comum ou unidade privativa) */
       e.locais = e.locais || [];
@@ -1103,6 +1106,11 @@ function fichaAmbiente(e, id) {
           <canvas data-mapa-ambiente='${esc(JSON.stringify({ documentoId: idDoc(ev), pagina: paginaDoc(ev), caixa: ev.regiao || janelaCentrada(ev.coordenadas, 400, 250), realces: [{ caixa: ev.coordenadas, cor: "#d13b2a" }] }))}'></canvas>
           <div class="legenda-recorte">${esc(refDoc(ev))}${ev.regiao ? ' · região do local (Nível 2)' : ''}</div></div>
           <button class="btn pequeno" data-acao="verNaPranchaLocal" data-id="${a.id}" style="margin-top:10px">Ver na prancha</button>`
+          : ev && ev.documentoOrigem && ev.documentoOrigem.docId && !/memorial/i.test(ev.tituloLegenda || '')
+            ? `<p style="color:var(--ink-3);font-size:13px">Rótulo lido por imagem em ${esc(refDoc(ev))}, sem a posição gravada — a prancha abre inteira.</p>
+               <button class="btn pequeno" data-acao="verNaPranchaLocal" data-id="${a.id}" style="margin-top:10px">Ver na prancha</button>`
+          : ev && ev.documentoOrigem && ev.documentoOrigem.docId
+            ? `<p style="color:var(--ink-3);font-size:13px">Local nomeado pelo memorial (${esc(refDoc(ev))}). Quando uma planta com este ambiente for lida, o rótulo passa a apontar para ela.</p>`
           : '<p style="color:var(--ink-3);font-size:13px">Local criado manualmente.</p>'}
         </div></div>
       <div class="cartao"><header><h2>Fontes documentais</h2></header><div class="corpo">
@@ -1747,7 +1755,7 @@ const cartaoDoLocal = e => a => {
   return `<article class="cartao-selecao local${a.confianca === 'baixa' ? ' proposto' : ''}" data-acao="abrirAmbiente" data-id="${a.id}" role="button" tabindex="0">
     <div class="topo">
       <div style="min-width:0"><h3>${esc(a.nome)}</h3>
-        <div class="meta">${[a.pavimento, a.area || (a.origem === 'memorial' ? 'lido do memorial' : a.confianca === 'baixa' ? 'rótulo sem área cotada' : 'sem área cotada')].filter(Boolean).map(esc).join(' · ')}</div></div>
+        <div class="meta">${[(a.pavimentos && a.pavimentos.length > 1) ? a.pavimentos.join(', ') : a.pavimento, a.area || (a.origem === 'memorial' ? 'lido do memorial' : a.confianca === 'baixa' ? 'rótulo sem área cotada' : 'sem área cotada')].filter(Boolean).map(esc).join(' · ')}</div></div>
       ${seloStatus(a.status)}
     </div>
     <div class="local-resumo">

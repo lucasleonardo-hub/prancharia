@@ -152,7 +152,10 @@ export async function analisarMemorial(doc, docMeta, ambientesConhecidos, aoProg
     for (const l of daPagina) if (l.texto.length >= 3 && !colunaLateral(l)) linhas.push({ ...l, pagina: p, corpo });
   }
   classificarLinhas(linhas);
-  return montarSecoes(linhas, docMeta, ambientesConhecidos || [], { areasComuns: opcoes.areasComuns !== false });
+  /* areasComuns: true, false, ou 'auto' — no automático o memorial só divide
+     comum × privativa se ele mesmo tiver os marcadores de seção */
+  const modo = opcoes.areasComuns === undefined ? true : opcoes.areasComuns;
+  return montarSecoes(linhas, docMeta, ambientesConhecidos || [], { areasComuns: modo });
 }
 
 /* Código de norma ou de produto em caixa alta ("NBR 9050", "RVI30790") não é
@@ -266,6 +269,8 @@ function montarSecoes(linhas, docMeta, conhecidos, { areasComuns }) {
   const arvore = [...conhecidos];                   // cresce com o que é criado aqui
   const marcadores = linhas.filter(l => l.tipo === 'marcador').map(l => l.grupo);
   const temC = marcadores.includes('comum'), temP = marcadores.includes('privativa');
+  const automatico = areasComuns === 'auto';
+  if (automatico) areasComuns = temC || temP;
   /* antes do primeiro marcador: um memorial que só marca onde começam as
      privativas está dizendo que tudo antes é comum — e vice-versa */
   let grupo = !areasComuns ? 'privativa' : (temP && !temC) ? 'comum' : (temC && !temP) ? 'privativa' : '';
@@ -278,7 +283,7 @@ function montarSecoes(linhas, docMeta, conhecidos, { areasComuns }) {
     if (l.tipo === 'local') {
       const titulo = (l.tituloLocal || l.texto).replace(/[:–—-]\s*$/, '').trim();
       const { nome, pavimento } = pavimentoNoNome(titulo);
-      const g = areasComuns ? (grupo || classificarArea(nome)) : 'privativa';
+      const g = areasComuns ? (grupo || classificarArea(nome)) : '';
       alvos = casarTitulo(nome, pavimento, g, arvore);
       if (alvos.length) casados += alvos.length;
       else {
@@ -356,7 +361,7 @@ function montarSecoes(linhas, docMeta, conhecidos, { areasComuns }) {
     if (!destinos.length) especificacoes.push(montar(null));
     else for (const alvo of destinos) especificacoes.push(montar(alvo));
   }
-  return { especificacoes, secoes, locaisNovos, casados };
+  return { especificacoes, secoes, locaisNovos, casados, marcadores, areasComunsAtivadas: automatico && areasComuns };
 }
 
 function limpar(s) {

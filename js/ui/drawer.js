@@ -262,7 +262,12 @@ export function irVerNaPrancha(esp, iProva) {
 /* O Local também pode ser aberto na prancha por si só: o visor abre na região
    do Nível 2 gravada na evidência do rótulo, com o rótulo destacado. */
 export function irVerNaPranchaLocal(local) {
-  const ev = (local.evidencias || []).find(x => x.coordenadas) || (local.evidencias || [])[0];
+  /* a evidência com posição ganha; senão, a de prancha (abre a folha inteira);
+     o memorial só quando não há mais nada */
+  const evs = local.evidencias || [];
+  const ev = evs.find(x => x.coordenadas)
+    || evs.find(x => x.documentoOrigem && x.documentoOrigem.docId && !/memorial/i.test(x.tituloLegenda || ''))
+    || evs[0];
   if (!ev || !ev.documentoOrigem || !ev.documentoOrigem.docId) return;
   estado.filtros.foco = {
     documentoId: ev.documentoOrigem.docId, pagina: ev.documentoOrigem.pagina,
