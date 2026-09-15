@@ -580,6 +580,7 @@ export function sincronizar(emp) {
     if (destino) {
       esp.localNome = destino.nome;
       esp.pavimento = destino.pavimento || esp.pavimento || '';
+      esp.tipologia = destino.tipologia || esp.tipologia || '';
       destino.especificacoes.push(esp);
     } else {
       esp.localId = null;

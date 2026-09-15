@@ -178,6 +178,40 @@ prompt. Quando a IA está desligada ou o servidor cai, o memorial passa pelo
 cruzamento heurístico de sempre (`cruzarComPranchas`): a leitura do memorial
 nunca é abortada, e a tela de Documentos mostra qual dos dois trabalhou.
 
+### Locais do memorial, áreas comuns e tipologias
+
+O memorial não traz só produtos: ele é organizado por títulos — `HALL DE
+ENTRADA`, `SALÃO DE FESTAS`, `DORMITÓRIOS`, `COZINHA` — e cada título abre
+uma seção de `Piso: … / Parede: … / Teto: …`. A leitura (`analisarMemorial`)
+trata o título como o nome do local:
+
+| o título… | vira |
+|---|---|
+| já existe na árvore (lido das pranchas) | os itens da seção entram nele. O casamento é por nome, por parte de título composto (`SALA ESTAR / JANTAR` alcança `SALA`) e por família (`DORMITÓRIOS` alcança `DORM.01` e `DORM.02` de **todas** as tipologias; `BANHEIRO` alcança `BANHO`) |
+| não existe | um local novo, `origem: 'memorial'`, com a evidência apontando o título na página |
+| `ÁREAS COMUNS` / `ÁREAS PRIVATIVAS` / `UNIDADES AUTÔNOMAS` | um marcador: tudo o que vem depois é daquele lado do condomínio (`areaComum`). Sem marcador, o vocabulário de `areas.js` decide (portaria, salão, casa de máquinas são comuns; dormitório, suíte, área de serviço são privativos) |
+
+Quando a prancha chega **depois** do memorial, o caminho inverso vale
+(`obterOuCriarLocal` no engine): um rótulo de área comum adota o local que o
+memorial criou (ganha o nome da prancha, o pavimento e a área; o nome do
+memorial fica em `nomeMemorial`), e um cômodo de unidade nasce **uma vez por
+tipologia** com as especificações do memorial copiadas para dentro
+(`propagadoDe`).
+
+As tipologias vêm da própria planta: o rótulo `TIPO 1`, `TIPO PNE 4`, `APTO
+TIPO A` mais próximo pelo espaço livre — a parede entre dois apartamentos é o
+que separa o `DORM.01` do TIPO 1 do `DORM.01` do TIPO 2 (`atribuirTipologias`,
+mesma medida geodésica das tags). Cada rótulo vira um item em
+`estrutura.tipologia` com `origem: 'prancha'`; a legenda `PLANTA TÉRREO -
+TORRE 1` dá o pavimento **e** a torre. Numa planta desenhada como imagem (sem
+texto vetorial), a leitura ampla pede à IA um item por rótulo de ambiente
+(`origemLeitura: 'planta'`, regra Q12) com a tipologia, e o local nasce do
+mesmo jeito.
+
+A tela de Locais mostra o resultado dividido: *Áreas comuns · Manual do
+Condomínio*, depois *Unidades privativas · TIPO 1*, *TIPO 2*…, e por fim o
+que o memorial descreveu para todas as unidades sem dizer de qual tipo.
+
 ### Primeira vez
 
 ```bash

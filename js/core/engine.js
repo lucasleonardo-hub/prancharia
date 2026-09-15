@@ -4,7 +4,9 @@
 
 import { openPdf, walkPaths, readText, isRed, naFilaDeRender } from './pdfdoc.js';
 import { coletorDeFormas, montarTags, FORMAS } from './shapes.js';
-import { lerAmbientes, lerPavimentos, criarMascara, vincularTags, janelasDePlanta } from './rooms.js';
+import { lerAmbientes, lerPavimentos, lerTipologias, atribuirTipologias, criarMascara, vincularTags, janelasDePlanta } from './rooms.js';
+import { classificarArea, lerTipologia, partesDoNome, familiaDoNome, mesmoCerne } from './areas.js';
+import { temAreasComuns } from './tipos.js';
 import { coletorDeFios, lerTabela } from './tables.js';
 import { lerLegendas, categoriaDe } from './legend.js';
 import { lerQuadros, caixasDeQuadros } from './quadros.js';
@@ -91,6 +93,7 @@ export async function analisarFolha(doc, numero, docMeta, aoProgredir = () => {}
   const quadros = lerQuadros(textos);
   const ambientes = lerAmbientes(textos, caixasDeQuadros(quadros));
   const pavimentos = lerPavimentos(textos);
+  const tipologias = lerTipologias(textos);
   const janelas = janelasDePlanta(ambientes.filter(a => a.confianca === 'alta'));
 
   await aoProgredir('vinculando tags aos ambientes', 0.7);
@@ -116,12 +119,16 @@ export async function analisarFolha(doc, numero, docMeta, aoProgredir = () => {}
     v.porProximidade = true;
   }
 
-  // pavimento de cada ambiente: a legenda de planta mais próxima em x
+  // pavimento (e torre) de cada ambiente: a legenda de planta mais próxima em x
   for (const a of ambientes) {
     let melhor = null, d = Infinity;
     for (const p of pavimentos) { const dd = Math.abs(p.x - a.x); if (dd < d) { d = dd; melhor = p; } }
     a.pavimento = melhor && d < 500 ? melhor.nome : '';
+    a.grupo = melhor && d < 500 ? (melhor.grupo || '') : '';
   }
+  /* tipologia de cada ambiente: o rótulo "TIPO 1" da unidade em que ele está,
+     medido pelo espaço livre — a parede entre dois apartamentos separa os dois */
+  atribuirTipologias(mask, ambientes, tipologias, [0, 0, vp.width, vp.height]);
 
   await aoProgredir('lendo tabelas', 0.85);
   const titulos = [];
@@ -150,7 +157,7 @@ export async function analisarFolha(doc, numero, docMeta, aoProgredir = () => {}
     id: novoId('fl'), documentoId: docMeta.id, pagina: numero,
     largura: vp.width, altura: vp.height,
     page,                       // usada pelo motor de recortes; não é persistida
-    ambientes, pavimentos, janelas, tags, vinculos, legendas, tabelas, quadros: quadrosNovos,
+    ambientes, pavimentos, tipologias, janelas, tags, vinculos, legendas, tabelas, quadros: quadrosNovos,
     contagem: { tracos: 0, tags: tags.length, ambientes: ambientes.length },
   };
 }
@@ -789,26 +796,122 @@ function indiceDeChaves(emp) {
   return m;
 }
 
-/** Cria ou reencontra o Local de cada rótulo lido na folha. */
-function casarLocais(emp, folha, docMeta) {
-  const porChave = new Map(emp.locais.map(l => [chaveAmb(l.nome, l.pavimento), l]));
-  const criados = [];
-  for (const a of folha.ambientes) {
-    const k = chaveAmb(a.nome, a.pavimento);
-    let local = porChave.get(k);
-    if (!local) {
+/** Identidade de um local na árvore: nome + pavimento + tipologia. "DORM.01"
+    do TIPO 1 e "DORM.01" do TIPO 2 são dois locais. */
+function chaveLocal(nome, pav, tip) { return chaveAmb(nome, pav) + '|' + normalizar(tip || ''); }
+
+/** Um item da estrutura (torre, tipologia…) pelo nome — criado se não existir. */
+function garantirNivel(emp, nivel, nome) {
+  emp.estrutura = emp.estrutura || { grupo: [], tipologia: [], unidade: [], pavimento: [] };
+  emp.estrutura[nivel] = emp.estrutura[nivel] || [];
+  let it = emp.estrutura[nivel].find(x => normalizar(x.nome) === normalizar(nome));
+  if (!it) { it = { id: novoId('niv'), nome, descricao: '', origem: 'prancha' }; emp.estrutura[nivel].push(it); }
+  return it;
+}
+
+/**
+ * O local que o memorial criou e que este rótulo da prancha alcança: mesmo
+ * nome (ou parte do título composto), mesma família (BANHEIRO ↔ BANHO) e o
+ * mesmo lado do condomínio — área comum com área comum, unidade com unidade.
+ * `comum` é o que a prancha sabe do rótulo: true, false ou undefined.
+ */
+function localDoMemorialPara(emp, a, comum) {
+  const pavOk = l => !l.pavimento || !a.pavimento || normalizar(l.pavimento) === normalizar(a.pavimento);
+  const ladoOk = l => comum === undefined || !!l.areaComum === comum;
+  const fam = familiaDoNome(a.nome);
+  for (const l of emp.locais) {
+    if (l.status === 'excluido' || l.origem !== 'memorial' || !pavOk(l) || !ladoOk(l)) continue;
+    if (partesDoNome(l.nomeMemorial || l.nome).some(p => mesmoCerne(p, a.nome) || (fam && familiaDoNome(p) === fam))) return l;
+  }
+  return null;
+}
+
+/**
+ * As especificações que o memorial deu a um local genérico ("DORMITÓRIOS")
+ * são copiadas para o cômodo concreto da prancha ("DORM.01" do TIPO 2),
+ * com a evidência do memorial junto. É a leitura cruzada: a prancha diz que
+ * o cômodo existe e onde; o memorial diz do que ele é feito.
+ */
+function propagarDoMemorial(de, para) {
+  let n = 0;
+  for (const esp of (de.especificacoes || [])) {
+    if (esp.status === 'excluido' || esp.origemLeitura !== 'memorial') continue;
+    const c = JSON.parse(JSON.stringify(esp));
+    c.id = novoId('esp'); c.localId = para.id; c.localNome = para.nome;
+    c.pavimento = para.pavimento || ''; c.tipologia = para.tipologia || '';
+    c.propagadoDe = de.id;
+    for (const ev of (c.evidencias || [])) {
+      ev.id = novoId('evd');
+      if (Array.isArray(ev.cadeia) && ev.cadeia.length) ev.cadeia[0] = para.nome;
+    }
+    c.chave = chaveDaEspec(c);
+    para.especificacoes.push(c); n++;
+  }
+  return n;
+}
+
+/**
+ * Cria ou reencontra o Local de um rótulo lido na folha (pelo texto ou pela
+ * IA). Regras:
+ *   - área comum é um lugar só: o local que o memorial criou vira este
+ *     local — ganha o nome da prancha, o pavimento, a área e o rótulo;
+ *   - cômodo de unidade existe uma vez por tipologia: nasce um local por
+ *     tipologia, e as especificações do memorial entram copiadas nele;
+ *   - "TIPO 1" vira uma tipologia na estrutura; "TORRE 1" vira uma torre.
+ */
+function obterOuCriarLocal(emp, a, docMeta, folha, porChave = null) {
+  emp.locais = emp.locais || [];
+  const mapa = porChave || new Map(emp.locais.map(l => [chaveLocal(l.nome, l.pavimento, l.tipologia), l]));
+  const tip = a.tipologia || '';
+  const k = chaveLocal(a.nome, a.pavimento, tip);
+  let local = mapa.get(k);
+  let criado = false, propagadas = 0;
+  if (!local) {
+    const vocab = classificarArea(a.nome);
+    const comum = tip ? false
+      : vocab === 'comum' ? true
+      : vocab === 'privativa' ? false
+      : (folha && (folha.tipologias || []).length) ? true      // folha com unidades marcadas: o que está fora delas é comum
+      : temAreasComuns(emp) ? undefined : false;
+    const doMemorial = localDoMemorialPara(emp, a, comum);
+    if (doMemorial && !tip && !doMemorial.adotadoEm) {
+      local = doMemorial;
+      local.nomeMemorial = local.nome;
+      local.nome = a.nome;
+      local.pavimento = a.pavimento || local.pavimento || '';
+      local.area = a.area || local.area || '';
+      local.adotadoEm = docMeta.id;
+      local.origem = a.origem || local.origem;
+      if (comum !== undefined) local.areaComum = comum;
+      for (const esp of local.especificacoes || []) { esp.localNome = local.nome; esp.pavimento = local.pavimento; }
+      mapa.set(k, local);
+    } else {
       local = criarLocal(a.nome, a.area, a.pavimento || '', a.bboxTexto || null);
-      local.tipologia = (emp.estrutura?.tipologia?.[0]?.nome) || '';
       local.origem = a.origem || '';
       local.confianca = a.confianca || 'alta';
       local.status = a.confianca === 'alta' ? 'identificado' : 'revisar';
       local.statusAuditoria = 'pendente';
-      emp.locais.push(local); porChave.set(k, local); criados.push(local);
+      local.areaComum = !!comum;
+      emp.locais.push(local); mapa.set(k, local); criado = true;
     }
-    if (!local.poligonoOriginal && a.bboxTexto) local.poligonoOriginal = a.bboxTexto;
-    const outrasCaixasRotulo = folha.ambientes
+    if (tip) {
+      const niv = garantirNivel(emp, 'tipologia', tip);
+      local.tipologia = tip; local.tipologiaId = niv.id;
+    } else if (!local.areaComum && !local.tipologia) {
+      /* sem tipologia lida: a tipologia cadastrada à mão vale para todos,
+         mas uma tipologia que veio de prancha só vale para quem está nela */
+      const tips = emp.estrutura?.tipologia || [];
+      if (tips.length && !tips.some(t => t.origem === 'prancha')) local.tipologia = tips[0].nome;
+    }
+    if (a.grupo) local.grupoId = garantirNivel(emp, 'grupo', a.grupo).id;
+    if (criado && doMemorial) propagadas = propagarDoMemorial(doMemorial, local);
+  }
+  if (!local.poligonoOriginal && a.bboxTexto) local.poligonoOriginal = a.bboxTexto;
+  if (folha) {
+    const outrasCaixasRotulo = (folha.ambientes || [])
       .filter(o => o !== a && o.bboxTexto)
       .map(o => o.bboxTexto);
+    const porIA = a.origem === 'rotulo_ia';
     const rotulo = criarEvidencia({
       documentoOrigem: { docId: docMeta.id, pagina: folha.pagina, nomeDoc: docMeta.nome },
       tipo: 'rotulo',
@@ -816,10 +919,23 @@ function casarLocais(emp, folha, docMeta) {
       regiao: a.bboxTexto
         ? janelaDoLocal(a.bboxTexto, { width: folha.largura, height: folha.altura }, { outrasCaixas: outrasCaixasRotulo })
         : null,
-      texto: a.nome + (a.area ? '  ' + a.area : ''),
-      proveniencia: { motor_ia: 'fallback_vetorial', metodo: 'leitura_rotulo', confianca: a.confianca || 'alta' },
+      texto: a.nome + (a.area ? '  ' + a.area : '') + (tip ? '  (' + tip + ')' : ''),
+      proveniencia: porIA
+        ? { motor_ia: 'multimodal_gemini', metodo: 'leitura_planta', confianca: a.confianca || 'media' }
+        : { motor_ia: 'fallback_vetorial', metodo: 'leitura_rotulo', confianca: a.confianca || 'alta' },
     });
     if (!local.evidencias.some(e => mesmaEvidencia(e, rotulo))) local.evidencias.push(rotulo);
+  }
+  return { local, criado, propagadas };
+}
+
+/** Cria ou reencontra o Local de cada rótulo lido na folha. */
+function casarLocais(emp, folha, docMeta) {
+  const porChave = new Map(emp.locais.map(l => [chaveLocal(l.nome, l.pavimento, l.tipologia), l]));
+  const criados = [];
+  for (const a of folha.ambientes) {
+    const { local, criado } = obterOuCriarLocal(emp, a, docMeta, folha, porChave);
+    if (criado) criados.push(local);
     a.__id = local.id;
     a.__local = local;
   }
@@ -903,7 +1019,8 @@ export async function consolidar(emp, folha, docMeta, aoProgredir = () => {}) {
       ? () => recorteBase64(folha.page, janelaDoLocal(local.poligonoOriginal, base, { outrasCaixas }), { largura: OPCOES_RECORTE.larguraLocal })
       : null;
     return processarComIAHibrida(imgLocal, imgLegenda, {
-      itens, legendas: folha.legendas, local, docMeta, pagina: folha.pagina, tipologia, base,
+      itens, legendas: folha.legendas, local, docMeta, pagina: folha.pagina,
+      tipologia: local ? (local.tipologia || '') : tipologia, base,
       codigos: codigosDaFolha, ambientesDaFolha,
       recorteDetalhe: (caixa) => recorteBase64(folha.page, janelaDoDetalhe(caixa, base), { largura: OPCOES_RECORTE.larguraDetalhe }),
     });
@@ -1116,6 +1233,24 @@ async function leituraAmpla(emp, folha, docMeta) {
 
   const out = [];
   for (const it of itens) {
+    /* planta lida por imagem: a IA devolve um item por rótulo de ambiente,
+       com a tipologia da unidade ("TIPO 1") quando a planta marca as
+       unidades. O local nasce aqui mesmo, com ou sem produto junto. */
+    if (it.origemLeitura === 'planta') {
+      if (!it.local) continue;
+      const pavsFolha = folha.pavimentos || [];
+      const unica = pavsFolha.length === 1 ? pavsFolha[0] : null;
+      const amb = {
+        nome: it.local, area: '', bboxTexto: null, origem: 'rotulo_ia',
+        pavimento: it.pavimento || (unica ? unica.nome : ''),
+        grupo: unica ? (unica.grupo || '') : '',
+        tipologia: lerTipologia(it.tipologia || '') || '',
+        confianca: ['alta', 'media'].includes(it.confianca) ? it.confianca : 'baixa',
+      };
+      const { local } = obterOuCriarLocal(emp, amb, docMeta, folha);
+      if (!(it.descricao || it.produto || it.codigoOrigem)) continue;
+      it.__local = local;
+    }
     const descricao = it.descricao || it.produto || '';
     if (!descricao && !it.codigoOrigem) continue;
     const classe = classificar([it.produto, descricao].filter(Boolean).join(' '), it.categoria);
@@ -1149,9 +1284,9 @@ async function leituraAmpla(emp, folha, docMeta) {
       base.categoria || 'categoria não mapeada',
     ];
 
-    /* o vínculo pelo nome escrito na tabela */
-    const casos = it.local ? casarAmbientes(it.local, vivos, pavs) : [];
-    const alvos = casos.filter(c => c.forca !== 'geral').map(c => c.ambiente);
+    /* o vínculo pelo nome escrito na tabela (ou o local que a planta acabou de dar) */
+    const casos = it.__local ? [] : (it.local ? casarAmbientes(it.local, (emp.locais || []).filter(vivo), pavs) : []);
+    const alvos = it.__local ? [it.__local] : casos.filter(c => c.forca !== 'geral').map(c => c.ambiente);
 
     if (!alvos.length) {
       out.push(espDeLinhaIA(base, null, {

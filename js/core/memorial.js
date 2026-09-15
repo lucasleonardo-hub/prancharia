@@ -8,9 +8,10 @@
 import { readText } from './pdfdoc.js';
 import { IA, iaLigada, chamarBff, anotarFalha, anotarSucesso } from './ia.js';
 import {
-  novoId, normalizar, mesmoAmbienteFlex as mesmoAmbiente,
-  criarEspecificacao, criarEvidencia,
+  novoId, normalizar, casarAmbientes,
+  criarEspecificacao, criarEvidencia, criarLocal,
 } from './model.js';
+import { classificarArea, marcadorDeGrupo, partesDoNome, pavimentoNoNome, familiaDoNome, mesmoCerne } from './areas.js';
 import { especificacoesDe } from './exporter.js';
 import { classificar } from './glossario.js';
 
@@ -23,7 +24,9 @@ const ROTULOS = [
   { p: /^(bancadas?|tampos?)\b/i, cat: 'Bancadas' },
   { p: /^(soleiras?|peitoris?|pingadeiras?|pedras?\s+naturais?)\b/i, cat: 'Revestimentos em Pedras Naturais' },
   { p: /^(esquadrias?|portas?|janelas?|portais?|marcos?)\b/i, cat: 'Esquadrias' },
-  { p: /^(lou[çc]as?|bacia|cuba)\b/i, cat: 'Louças' },
+  { p: /^(lou[çc]as?|bacia|cuba|lavat[óo]rio|tanque|mict[óo]rio|chuveiro|ducha)\b/i, cat: 'Louças' },
+  { p: /^(baguetes?|tentos?|baguete e tento|filetes?)\b/i, cat: 'Revestimentos em Pedras Naturais' },
+  { p: /^(acess[óo]rios?|barras? de apoio)\b/i, cat: 'Acessórios' },
   { p: /^(metais|metal|torneiras?|registros?|sif[õo]es?)\b/i, cat: 'Metais' },
   { p: /^(lumin[áa]rias?|ilumina[çc][ãa]o)\b/i, cat: 'Luminárias' },
   { p: /^(marcenaria|mobili[áa]rio|armários?)\b/i, cat: 'Mobiliário' },
@@ -42,8 +45,11 @@ const PRODUTO_POR_ROTULO = {
   bancada: 'Bancada', bancadas: 'Bancada', tampo: 'Bancada',
   soleira: 'Soleira', soleiras: 'Soleira', peitoril: 'Peitoril', peitoris: 'Peitoril',
   pingadeira: 'Pingadeira', rodape: 'Rodapé', rodapes: 'Rodapé',
-  cuba: 'Cuba', bacia: 'Bacia sanitária', forro: 'Forro de gesso', forros: 'Forro de gesso',
+  cuba: 'Cuba', bacia: 'Bacia sanitária', 'bacia sanitaria': 'Bacia sanitária', lavatorio: 'Lavatório',
+  tanque: 'Tanque', baguete: 'Baguete', 'baguete e tento': 'Baguete e tento', tento: 'Tento',
+  forro: 'Forro de gesso', forros: 'Forro de gesso',
   pintura: 'Pintura', textura: 'Textura', rejunte: 'Rejunte',
+  porta: 'Porta', portas: 'Porta', janela: 'Janela', janelas: 'Janela', portais: 'Portal', marcos: 'Marco',
 };
 
 /** Um PDF sem desenho e com muito texto é um memorial, não uma prancha. */
@@ -68,66 +74,250 @@ export async function precisaDeOcr(doc, amostraPaginas = 3) {
   return caracteres < 40 * n;
 }
 
-/** Reconstrói linhas e parágrafos de uma página de texto corrido. */
+/**
+ * Reconstrói linhas e parágrafos de uma página de texto corrido.
+ *
+ * Mesma altura não é mesma linha: o cabeçalho lateral do escritório
+ * (endereço, telefone, em corpo miúdo) divide o y com o texto do memorial,
+ * e colado ao título vira "WCs PNE DO TÉRREO capote valente 830". Um vão
+ * horizontal largo, ou uma troca de corpo de letra com vão, abre outra coluna
+ * — e cada coluna é uma linha por si.
+ */
 export async function lerPagina(page) {
+  const largura = page.getViewport({ scale: 1 }).width;
   const itens = (await readText(page)).filter(t => t.horizontal);
   itens.sort((a, b) => (a.y - b.y) || (a.x - b.x));
-  const linhas = [];
+  const faixas = [];
   for (const it of itens) {
-    const ult = linhas[linhas.length - 1];
-    if (ult && Math.abs(it.y - ult.y) < 3.2) {
-      ult.partes.push(it);
-      ult.x1 = Math.max(ult.x1, it.x + it.w);
-      ult.x0 = Math.min(ult.x0, it.x);
-    } else {
-      linhas.push({ y: it.y, x0: it.x, x1: it.x + it.w, h: it.h, partes: [it] });
+    const ult = faixas[faixas.length - 1];
+    if (ult && Math.abs(it.y - ult.y) < 3.2) ult.partes.push(it);
+    else faixas.push({ y: it.y, partes: [it] });
+  }
+  const linhas = [];
+  for (const f of faixas) {
+    const partes = f.partes.sort((a, b) => a.x - b.x);
+    let seg = null;
+    for (const p of partes) {
+      const vao = seg ? p.x - seg.x1 : 0;
+      const corpoDiferente = seg && Math.abs(p.h - seg.h) > 2 && vao > 4;
+      if (!seg || vao > Math.max(14, seg.h * 2.4) || corpoDiferente) {
+        seg = { y: f.y, x0: p.x, x1: p.x + p.w, h: p.h, partes: [p] };
+        linhas.push(seg);
+      } else {
+        seg.partes.push(p);
+        seg.x1 = Math.max(seg.x1, p.x + p.w);
+        seg.h = Math.max(seg.h, p.h);
+      }
     }
   }
   return linhas.map(l => ({
-    texto: l.partes.sort((a, b) => a.x - b.x).map(p => p.str).join(' ').replace(/\s+/g, ' ').trim(),
+    texto: l.partes.map(p => p.str).join(' ').replace(/\s+/g, ' ').trim(),
     caixa: [l.x0, l.y - l.h - 1, l.x1, l.y + 3],
-    y: l.y, altura: l.h,
+    y: l.y, altura: l.h, largura,
   })).filter(l => l.texto);
 }
 
+/* O cabeçalho lateral do escritório — nome, endereço, telefone numa coluna
+   estreita à direita — não é memorial. Uma linha curta que começa no quarto
+   final da página é isso, e sai antes da leitura. */
+const colunaLateral = l => l.largura && l.caixa[0] > l.largura * 0.72 && (l.caixa[2] - l.caixa[0]) < l.largura * 0.25;
+
 /**
- * Extrai itens de um memorial.
- * ambientesConhecidos: os ambientes já lidos das pranchas — servem de âncora
- * para saber a que local cada trecho se refere.
+ * Extrai locais e itens de um memorial.
+ *
+ * O memorial é organizado por títulos — "HALL DE ENTRADA", "DORMITÓRIOS",
+ * "COZINHA" — e cada título abre uma seção de "Piso: … / Parede: … / Teto: …".
+ * O título é o nome do local; a seção é o que mora dentro dele. Quem já
+ * existe na árvore (lido das pranchas) recebe os itens; quem não existe é
+ * criado aqui, com a evidência apontando o título na página do memorial. Os
+ * marcadores "ÁREAS COMUNS" / "ÁREAS PRIVATIVAS" dizem de que manual cada
+ * seção é; sem marcador, o vocabulário do nome decide.
+ *
+ * ambientesConhecidos: os locais já lidos das pranchas. Cada título é casado
+ * com eles por nome e por família — "DORMITÓRIOS" alcança DORM.01 e DORM.02
+ * de todas as tipologias, "BANHEIRO" alcança BANHO e BANHO MASTER — e só
+ * vira local novo quando nenhum serve.
+ *
+ * Devolve { especificacoes, secoes, locaisNovos, casados }. Os locais novos
+ * NÃO entram na árvore aqui: o chamador os guarda antes de incorporar os
+ * itens, que já apontam para eles pelo id.
  */
-export async function analisarMemorial(doc, docMeta, ambientesConhecidos, aoProgredir = () => {}) {
-  const especificacoes = [];
-  const secoes = [];
+export async function analisarMemorial(doc, docMeta, ambientesConhecidos, aoProgredir = () => {}, opcoes = {}) {
+  const linhas = [];
   for (let p = 1; p <= doc.numPages; p++) {
     aoProgredir(`memorial — página ${p} de ${doc.numPages}`, (p - 1) / doc.numPages);
-    const page = await doc.getPage(p);
-    const linhas = await lerPagina(page);
-    const corpos = linhas.map(l => l.altura).sort((a, b) => a - b);
+    const daPagina = await lerPagina(await doc.getPage(p));
+    const corpos = daPagina.map(l => l.altura).sort((a, b) => a - b);
     const corpo = corpos[Math.floor(corpos.length / 2)] || 10;
-    let ambienteAtual = null;
+    for (const l of daPagina) if (l.texto.length >= 3 && !colunaLateral(l)) linhas.push({ ...l, pagina: p, corpo });
+  }
+  classificarLinhas(linhas);
+  return montarSecoes(linhas, docMeta, ambientesConhecidos || [], { areasComuns: opcoes.areasComuns !== false });
+}
 
-    for (let i = 0; i < linhas.length; i++) {
-      const l = linhas[i];
-      const t = l.texto;
-      if (t.length < 3) continue;
+/* Código de norma ou de produto em caixa alta ("NBR 9050", "RVI30790") não é
+   título, por mais destacado que esteja. */
+const CODIGO_SOLTO = /^[A-Z]{2,5}\s?-?\s?\d{3,}/;
 
-      // 1) o trecho nomeia um ambiente conhecido?
-      const amb = acharAmbiente(t, ambientesConhecidos, l.altura, corpo);
-      if (amb) { ambienteAtual = amb; secoes.push({ pagina: p, ambiente: amb.nome, y: l.y }); }
+/** Título de seção: caixa alta (ou corpo maior), curto, sem dois-pontos. */
+function ehTitulo(l) {
+  const t = l.texto.replace(/[:–—-]\s*$/, '').trim();
+  if (t.length < 3 || t.length > 72 || t.includes(':')) return false;
+  if (l.largura && l.caixa[0] > l.largura * 0.72) return false;
+  if (/^[-•–●]/.test(t) || CODIGO_SOLTO.test(t)) return false;
+  const letras = t.replace(/[^A-Za-zÀ-ÿ]/g, '');
+  if (letras.length < 3) return false;
+  const caixaAlta = letras.replace(/[^A-ZÀ-Ý]/g, '').length / letras.length >= 0.8;
+  const palavras = t.split(/\s+/).length;
+  if (caixaAlta) return palavras <= 12;
+  /* corpo maior sem caixa alta: só quando começa em maiúscula e é curto —
+     "As especificações dos revestimentos são referenciais…" é frase */
+  return l.altura > l.corpo * 1.06 && /^[A-ZÀ-Ý]/.test(t) && palavras <= 6;
+}
 
-      // 2) o trecho descreve um acabamento?
-      const item = lerItem(t);
-      if (!item) continue;
+/**
+ * Cada linha vira item ("Piso: …"), título, parágrafo rotulado ("FACHADAS: …",
+ * que é texto corrido com rótulo, não acabamento) ou texto. Texto logo abaixo
+ * de um item é a continuação da frase e é absorvido por ele. Depois, o título
+ * é classificado pelo que o segue: marcador de grupo, local (título seguido
+ * de itens) ou seção (título sem itens, que só reinicia o contexto).
+ */
+function classificarLinhas(linhas) {
+  for (const l of linhas) {
+    l.item = lerItem(l.texto);
+    l.tipo = l.item ? 'item'
+      : /^[^:]{2,48}:\s*\S/.test(l.texto) ? 'rotulado'
+      : ehTitulo(l) ? 'titulo' : 'texto';
+    /* "CALÇADAS: Piso intertravado de concreto…" — o local e o seu único
+       item na mesma linha. Só quando o rótulo é nome de área: "ESQUADRIAS DE
+       ALUMÍNIO: Serão executadas…" tem a mesma forma e não é local. */
+    if (l.tipo === 'rotulado') {
+      const m = /^([^:]{2,48}):\s*(.+)$/.exec(l.texto);
+      const item = m && classificarArea(m[1]) ? lerItem(m[2]) : null;
+      if (item) { l.tipo = 'local'; l.tituloLocal = m[1].trim(); l.item = item; }
+    }
+  }
+  for (let i = 1; i < linhas.length; i++) {
+    const l = linhas[i];
+    if (l.tipo !== 'texto') continue;
+    const ant = linhas[i - 1].dono || linhas[i - 1];
+    if (!ant.item || ant.tipo !== 'item' || ant.pagina !== l.pagina || ant.item.descricao.length > 600) continue;
+    /* mesmo corpo de letra e mesma margem: é a frase que continuou. Texto
+       miúdo à direita é o cabeçalho da folha; texto recuado é outra coisa. */
+    if (Math.abs(l.altura - ant.altura) > 1.5 || l.caixa[0] > ant.caixa[0] + 30) continue;
+    ant.item.descricao = (ant.item.descricao + ' ' + l.texto).replace(/\s+/g, ' ').trim();
+    ant.caixa = [Math.min(ant.caixa[0], l.caixa[0]), ant.caixa[1], Math.max(ant.caixa[2], l.caixa[2]), l.caixa[3]];
+    l.tipo = 'absorvida'; l.dono = ant;
+  }
+  for (let i = 0; i < linhas.length; i++) {
+    const l = linhas[i];
+    if (l.tipo !== 'titulo') continue;
+    const marcador = marcadorDeGrupo(l.texto);
+    if (marcador) { l.tipo = 'marcador'; l.grupo = marcador; continue; }
+    const seguintes = linhas.slice(i + 1, i + 6).filter(x => x.tipo !== 'absorvida');
+    const iItem = seguintes.findIndex(x => x.tipo === 'item');
+    const iTitulo = seguintes.findIndex(x => x.tipo === 'titulo' || x.tipo === 'marcador');
+    l.tipo = iItem >= 0 && iItem <= 1 && (iTitulo < 0 || iItem < iTitulo) ? 'local' : 'secao';
+  }
+}
 
-      const alvo = ambienteAtual || acharAmbienteNaFrase(t, ambientesConhecidos);
-      const trecho = [linhas[i - 1]?.texto, t, linhas[i + 1]?.texto].filter(Boolean).join(' ');
-      const campos = {};
-      for (const c of CAMPOS) { const m = c.p.exec(t); if (m) campos[c.chave] = limpar(m[1]); }
-      const descricaoLimpa = item.descricao
-        .replace(/\b(?:marca|fabricante|fornecedor)\s*[:\-–]\s*[^;.]*\.?$/i, '')
-        .replace(/[;,\s.]+$/, '').trim();
-      const classe = classificar(descricaoLimpa, item.categoria);
+/**
+ * Os locais da árvore que um título do memorial alcança. Cada parte do título
+ * ("SALA ESTAR / JANTAR E CIRCULAÇÃO" são três) é casada por nome, por
+ * plural/abreviação (casarAmbientes) e por família (BANHEIRO ↔ BANHO). O grupo
+ * filtra: uma seção de áreas comuns nunca cai num cômodo de apartamento, e uma
+ * seção privativa nunca cai numa área comum — a palavra "SALA" está nos dois
+ * mundos, e é o grupo que separa.
+ */
+function casarTitulo(nome, pavimento, grupo, arvore) {
+  const vivos = arvore.filter(a => a && a.status !== 'excluido');
+  const vocab = a => classificarArea(a.nome);
+  const deUnidade = a => !!(a.tipologiaId || a.tipologia);
+  /* quando as pranchas marcaram as unidades (TIPO 1, TIPO 2…), cômodo de
+     unidade é o que tem tipologia — o WC do subsolo não é o BANHEIRO do
+     apartamento, mesmo sem a palavra dizer de quem ele é */
+  const temTipologias = vivos.some(deUnidade);
+  const compativel = a => {
+    if (pavimento && a.pavimento && normalizar(a.pavimento) !== normalizar(pavimento)) return false;
+    if (grupo === 'comum') return !deUnidade(a) && vocab(a) !== 'privativa'
+      && (a.areaComum || a.origem !== 'memorial');
+    if (grupo === 'privativa') return !a.areaComum && vocab(a) !== 'comum'
+      && (!temTipologias || deUnidade(a) || a.origem === 'memorial');
+    return true;
+  };
+  const candidatos = vivos.filter(compativel);
+  const pavs = [...new Set(vivos.map(a => a.pavimento).filter(Boolean))];
+  const achados = new Map();
+  for (const parte of partesDoNome(nome)) {
+    for (const c of casarAmbientes(parte, candidatos, pavs)) {
+      if (c.forca !== 'exata') continue;
+      achados.set(c.ambiente.id, c.ambiente);
+    }
+    const fam = familiaDoNome(parte);
+    for (const a of candidatos) {
+      if ((fam && familiaDoNome(a.nome) === fam) || mesmoCerne(parte, a.nome)) achados.set(a.id, a);
+    }
+  }
+  return [...achados.values()];
+}
 
+function montarSecoes(linhas, docMeta, conhecidos, { areasComuns }) {
+  const especificacoes = [], secoes = [], locaisNovos = [];
+  const arvore = [...conhecidos];                   // cresce com o que é criado aqui
+  const marcadores = linhas.filter(l => l.tipo === 'marcador').map(l => l.grupo);
+  const temC = marcadores.includes('comum'), temP = marcadores.includes('privativa');
+  /* antes do primeiro marcador: um memorial que só marca onde começam as
+     privativas está dizendo que tudo antes é comum — e vice-versa */
+  let grupo = !areasComuns ? 'privativa' : (temP && !temC) ? 'comum' : (temC && !temP) ? 'privativa' : '';
+  let alvos = [];
+  let casados = 0;
+
+  for (const l of linhas) {
+    if (l.tipo === 'marcador') { grupo = areasComuns ? l.grupo : 'privativa'; alvos = []; continue; }
+    if (l.tipo === 'secao') { alvos = []; continue; }
+    if (l.tipo === 'local') {
+      const titulo = (l.tituloLocal || l.texto).replace(/[:–—-]\s*$/, '').trim();
+      const { nome, pavimento } = pavimentoNoNome(titulo);
+      const g = areasComuns ? (grupo || classificarArea(nome)) : 'privativa';
+      alvos = casarTitulo(nome, pavimento, g, arvore);
+      if (alvos.length) casados += alvos.length;
+      else {
+        const novo = criarLocal(nome, '', pavimento);
+        novo.origem = 'memorial'; novo.confianca = 'alta'; novo.status = 'identificado';
+        novo.areaComum = g === 'comum';
+        novo.evidencias.push(criarEvidencia({
+          documentoOrigem: { docId: docMeta.id, pagina: l.pagina, nomeDoc: docMeta.nome },
+          tipo: 'rotulo',
+          coordenadas: l.caixa,
+          regiao: [l.caixa[0] - 8, l.caixa[1] - 26, l.caixa[2] + 8, l.caixa[3] + 60],
+          tituloLegenda: 'Memorial descritivo',
+          texto: titulo,
+          cadeia: [nome, 'Memorial descritivo — página ' + l.pagina, 'título de seção',
+            g === 'comum' ? 'área comum' : g === 'privativa' ? 'unidade privativa' : 'grupo não informado'],
+          proveniencia: { motor_ia: 'fallback_vetorial', metodo: 'titulo_memorial', confianca: 'alta' },
+        }));
+        locaisNovos.push(novo); arvore.push(novo); alvos = [novo];
+      }
+      /* o memorial disse de que manual o local é: quem veio da prancha sem
+         tipologia (e sem a palavra decidir) herda a resposta */
+      if (g) for (const a of alvos) if (!a.tipologiaId && !a.tipologia && !classificarArea(a.nome)) a.areaComum = g === 'comum';
+      secoes.push({ pagina: l.pagina, ambiente: nome, pavimento, grupo: g, y: l.y, alvos: alvos.map(a => a.nome) });
+      if (!l.item) continue;
+    } else if (l.tipo !== 'item') continue;
+
+    const item = l.item;
+    const t = l.texto;
+    const campos = {};
+    for (const c of CAMPOS) { const m = c.p.exec(item.descricao); if (m) campos[c.chave] = limpar(m[1]); }
+    const descricaoLimpa = item.descricao
+      .replace(/\b(?:marca|fabricante|fornecedor)\s*[:\-–]\s*[^;.]*\.?$/i, '')
+      .replace(/[;,\s.]+$/, '').trim();
+    const classe = classificar(descricaoLimpa, item.categoria);
+    const trecho = `${item.rotulo}: ${descricaoLimpa || item.descricao}`.slice(0, 400);
+    const destinos = alvos.length ? alvos : [acharAmbienteNaFrase(t, arvore)].filter(Boolean);
+    const confianca = destinos.length ? (campos.marca ? 'alta' : 'media') : 'baixa';
+
+    const montar = (alvo) => {
       const esp = criarEspecificacao({
         categoria: classe?.categoria || item.categoria || '',
         produto: PRODUTO_POR_ROTULO[normalizar(item.rotulo)] || classe?.produto || '',
@@ -137,7 +327,7 @@ export async function analisarMemorial(doc, docMeta, ambientesConhecidos, aoProg
         marca: campos.marca || '',
         fornecedor: campos.fornecedor || '',
         origemLeitura: 'memorial',
-        confianca: alvo ? (campos.marca ? 'alta' : 'media') : 'baixa',
+        confianca,
         status: alvo ? 'identificado' : 'revisar',
         motivos: alvo ? [] : ['incompleto'],
         localId: alvo ? alvo.id : null,
@@ -146,25 +336,27 @@ export async function analisarMemorial(doc, docMeta, ambientesConhecidos, aoProg
         tipologia: alvo ? (alvo.tipologia || '') : '',
       });
       esp.evidencias.push(criarEvidencia({
-        documentoOrigem: { docId: docMeta.id, pagina: p, nomeDoc: docMeta.nome },
+        documentoOrigem: { docId: docMeta.id, pagina: l.pagina, nomeDoc: docMeta.nome },
         tipo: 'texto_memorial',
         coordenadas: l.caixa,
         regiao: [l.caixa[0] - 8, l.caixa[1] - 26, l.caixa[2] + 8, l.caixa[3] + 26],
         tituloLegenda: 'Memorial descritivo',
-        texto: trecho.slice(0, 400),
+        texto: trecho,
         cadeia: [
           alvo ? alvo.nome : 'local não identificado',
-          'Memorial descritivo — página ' + p,
+          'Memorial descritivo — página ' + l.pagina,
           item.rotulo || 'trecho descritivo',
           descricaoLimpa || item.descricao,
           classe?.categoria || item.categoria || 'categoria não mapeada',
         ],
-        proveniencia: { motor_ia: 'fallback_vetorial', metodo: 'memorial_texto', confianca: alvo ? (campos.marca ? 'alta' : 'media') : 'baixa' },
+        proveniencia: { motor_ia: 'fallback_vetorial', metodo: 'memorial_texto', confianca },
       }));
-      especificacoes.push(esp);
-    }
+      return esp;
+    };
+    if (!destinos.length) especificacoes.push(montar(null));
+    else for (const alvo of destinos) especificacoes.push(montar(alvo));
   }
-  return { especificacoes, secoes };
+  return { especificacoes, secoes, locaisNovos, casados };
 }
 
 function limpar(s) {
@@ -172,15 +364,6 @@ function limpar(s) {
   return (s || '')
     .split(/\s+[A-ZÀ-Ý][A-Za-zà-ÿ]{2,}\s*:/)[0]
     .replace(/["“”']/g, '').replace(/\s+/g, ' ').replace(/[,;.]+$/, '').trim();
-}
-
-function acharAmbiente(texto, ambientes, altura, corpo) {
-  const t = texto.replace(/[:–—-]\s*$/, '').trim();
-  if (t.length > 46) return null;
-  const destaque = altura > corpo * 1.06 || t === t.toUpperCase() || /[:–—-]\s*$/.test(texto);
-  if (!destaque) return null;
-  for (const a of ambientes) if (mesmoAmbiente(a.nome, t)) return a;
-  return null;
 }
 
 function acharAmbienteNaFrase(texto, ambientes) {

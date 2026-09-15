@@ -5,6 +5,7 @@ import {
   perguntar, confirmar, ICONES,
 } from '../app.js';
 import { importarDoDrive, driveConfigurado } from '../core/drive.js';
+import { classificarArea } from '../core/areas.js';
 import { OBSIDIAN, configurarObsidian, testarObsidian, enviarParaObsidian, zipDoCofre, notasDoEmpreendimento } from '../core/obsidian.js';
 import { TIPOS, TIPO_POR_ID, ORDEM_NIVEIS, tipoDe, niveisDe, temNivel, rotuloNivel, temAreasComuns, cadeiaDe } from '../core/tipos.js';
 import { SISTEMAS, NOMES_SISTEMAS, SISTEMA_POR_NOME } from '../core/vocab.js';
@@ -688,7 +689,11 @@ async function processarDocumento(meta, lote = null) {
       /* 1) o que o próprio memorial diz, frase por frase — entra como itens
             de origem 'memorial', com a página e o trecho guardados */
       const r = await analisarMemorial(doc, meta, locaisVivos(e),
-        (texto, pct) => atualizarProgresso(texto, pct * 0.7));
+        (texto, pct) => atualizarProgresso(texto, pct * 0.7), { areasComuns: temAreasComuns(e) });
+      /* os títulos do memorial que não existiam nas pranchas viram locais —
+         com o lado certo do condomínio (área comum ou unidade privativa) */
+      e.locais = e.locais || [];
+      for (const l of r.locaisNovos) e.locais.push(l);
       for (const a of r.especificacoes) incorporarEspecificacaoSolta(e, a);
       /* 2) a fusão com as pranchas: casamento semântico pela IA quando ela
             está ligada, heurística de texto quando não */
@@ -702,11 +707,18 @@ async function processarDocumento(meta, lote = null) {
         ? `${f.atualizacoes} casamento(s) semântico(s): ${f.enriquecidas} especificação(ões) enriquecida(s) em ${f.campos} campo(s), ${f.conflitos} conflito(s)`
         : `cruzamento por texto: ${f.marcas} marca(s), ${f.conflitos} conflito(s)`
           + (f.erro ? ` — a fusão semântica falhou (${f.erro})` : '');
-      registrarHistorico(e, { texto: `${meta.nome} (memorial) lido: ${r.especificacoes.length} trechos · ${comoFoi}`, tipo: 'processamento' });
+      const novos = r.locaisNovos.length;
+      const comuns = r.locaisNovos.filter(l => l.areaComum).length;
+      const dosLocais = `${r.secoes.length} seção(ões) de local: ${novos} local(is) novo(s)`
+        + (temAreasComuns(e) && novos ? ` (${comuns} de área comum, ${novos - comuns} de unidade)` : '')
+        + (r.casados ? `, ${r.casados} local(is) das pranchas receberam itens` : '');
+      registrarHistorico(e, { texto: `${meta.nome} (memorial) lido: ${r.especificacoes.length} trechos · ${dosLocais} · ${comoFoi}`, tipo: 'processamento' });
       estado.processando = null; await salvar(); render();
       if (f.motor === 'multimodal_gemini') {
-        aviso(`Memorial fundido pela IA: ${f.enriquecidas} especificação(ões) enriquecida(s)`
+        aviso(`Memorial lido: ${dosLocais}. Fusão pela IA: ${f.enriquecidas} especificação(ões) enriquecida(s)`
           + `${f.conflitos ? `, ${f.conflitos} conflito(s) para revisar` : ''}.`);
+      } else {
+        aviso(`Memorial lido: ${dosLocais}.`);
       }
       return;
     }
@@ -896,8 +908,10 @@ const ambientes = {
       if (!r || !r.nome) return;
       e.locais = e.locais || [];
       const novo = criarLocal(r.nome, '', r.pavimento || '');
+      const tips = e.estrutura.tipologia || [];
       Object.assign(novo, {
-        tipologia: (e.estrutura.tipologia[0] || {}).nome || '',
+        tipologia: tips.length && !tips.some(t => t.origem === 'prancha') ? tips[0].nome : '',
+        areaComum: classificarArea(r.nome) === 'comum',
         origem: 'manual', confianca: 'alta', status: 'confirmado',
       });
       const nome = r.nome;
@@ -999,7 +1013,7 @@ function fichaAmbiente(e, id) {
       <div>
         <button class="btn discreto pequeno voltar" data-rota="locais">← Locais</button>
         <h1>${esc(a.nome)}</h1>
-        <p class="desc">${[a.pavimento, a.tipologia, a.area].filter(Boolean).map(esc).join(' · ') || 'sem pavimento ou tipologia definidos'}</p>
+        <p class="desc">${[temAreasComuns(e) ? (a.areaComum ? 'Área comum (Manual do Condomínio)' : 'Unidade privativa (Manual do Proprietário)') : '', a.pavimento, a.tipologia, a.area, a.nomeMemorial && a.nomeMemorial !== a.nome ? `no memorial: ${a.nomeMemorial}` : ''].filter(Boolean).map(esc).join(' · ') || 'sem pavimento ou tipologia definidos'}</p>
       </div>
       <div class="acoes">
         ${temAreasComuns(e) ? `<button class="btn" data-acao="alternarAreaComum" data-id="${a.id}">${a.areaComum ? 'É área comum (MC)' : 'É unidade privativa (MP)'}</button>` : ''}
@@ -1632,9 +1646,9 @@ const locais = {
       .filter(a => !f.busca || normalizar(a.nome).includes(normalizar(f.busca)))
       .filter(a => !f.pav || (a.pavimento || '') === f.pav)
       .filter(a => !f.soPend || temPend(a) || a.confianca === 'baixa');
-    const pavs = [...new Set(lista.map(a => a.pavimento || ''))];
     const grade = l => `<div class="grade-cartoes">${l.map(cartaoDoLocal(e)).join('')}</div>`;
     const filtrando = !!(f.busca || f.pav || f.soPend);
+    const secoes = secoesDeLocais(e, lista);
 
     return `<div class="cabeca"><div><h1>Locais</h1>
       <p class="desc">Selecione um local para abrir a ficha completa: acabamentos, esquadrias, pendências e evidências.</p></div>
@@ -1657,10 +1671,10 @@ const locais = {
       ${!vivos.length ? `<div class="cartao"><div class="vazio"><h3>Nenhum local identificado</h3>
           <p>Processe uma prancha de arquitetura para que os locais sejam lidos dos rótulos.</p>${vazioDocs}</div></div>`
         : !lista.length ? `<div class="cartao"><div class="vazio"><h3>Nenhum local com esse filtro</h3><p>Ajuste a busca ou limpe os filtros.</p></div></div>`
-        : pavs.length > 1
-          ? pavs.map(p => `<section class="secao-pav">
-              <h2 class="titulo-secao">${esc(p || 'Sem pavimento')} <span>${lista.filter(a => (a.pavimento || '') === p).length}</span></h2>
-              ${grade(lista.filter(a => (a.pavimento || '') === p))}
+        : secoes.length > 1
+          ? secoes.map(s => `<section class="secao-pav">
+              <h2 class="titulo-secao">${esc(s.titulo)} <span>${s.itens.length}</span></h2>
+              ${grade(s.itens)}
             </section>`).join('')
           : grade(lista)}`;
   },
@@ -1696,6 +1710,31 @@ const locais = {
   },
 };
 
+/* Como a lista de locais se divide. Num condomínio, primeiro o que é de
+   todos (Manual do Condomínio), depois cada tipologia de unidade (Manual do
+   Proprietário) — TIPO 1, TIPO 2, TIPO PNE 4 — e por fim o que o memorial
+   descreveu para todas as unidades sem dizer de qual tipo. Sem áreas comuns
+   (uma casa, um apartamento), a divisão de sempre: por pavimento. */
+const ordemNatural = (a, b) => String(a).localeCompare(String(b), 'pt-BR', { numeric: true, sensitivity: 'base' });
+function secoesDeLocais(e, lista) {
+  const porPav = () => {
+    const pavs = [...new Set(lista.map(a => a.pavimento || ''))];
+    return pavs.map(p => ({ titulo: p || 'Sem pavimento', itens: lista.filter(a => (a.pavimento || '') === p) }));
+  };
+  if (!temAreasComuns(e)) return porPav();
+  const comuns = lista.filter(a => a.areaComum);
+  const privativas = lista.filter(a => !a.areaComum);
+  const tips = [...new Set(privativas.map(a => a.tipologia || ''))].filter(Boolean).sort(ordemNatural);
+  if (!comuns.length && !tips.length) return porPav();
+  const porPavDentro = l => [...l].sort((a, b) => ordemNatural(a.pavimento || '', b.pavimento || '') || ordemNatural(a.nome, b.nome));
+  const out = [];
+  if (comuns.length) out.push({ titulo: 'Áreas comuns · Manual do Condomínio', itens: porPavDentro(comuns) });
+  for (const t of tips) out.push({ titulo: `Unidades privativas · ${t}`, itens: porPavDentro(privativas.filter(a => (a.tipologia || '') === t)) });
+  const semTip = privativas.filter(a => !a.tipologia);
+  if (semTip.length) out.push({ titulo: tips.length ? 'Unidades privativas · todas as tipologias (memorial)' : 'Unidades privativas · Manual do Proprietário', itens: porPavDentro(semTip) });
+  return out;
+}
+
 /* O cartão do local diz em três linhas o que interessa antes de abrir: o
    nome e a área, quanto já foi lido, e — o mais útil — se Piso, Paredes e
    Teto já têm leitura. Os três pontos coloridos são a prévia da ficha. */
@@ -1708,7 +1747,7 @@ const cartaoDoLocal = e => a => {
   return `<article class="cartao-selecao local${a.confianca === 'baixa' ? ' proposto' : ''}" data-acao="abrirAmbiente" data-id="${a.id}" role="button" tabindex="0">
     <div class="topo">
       <div style="min-width:0"><h3>${esc(a.nome)}</h3>
-        <div class="meta">${a.area ? esc(a.area) : (a.confianca === 'baixa' ? 'rótulo sem área cotada' : 'sem área cotada')}</div></div>
+        <div class="meta">${[a.pavimento, a.area || (a.origem === 'memorial' ? 'lido do memorial' : a.confianca === 'baixa' ? 'rótulo sem área cotada' : 'sem área cotada')].filter(Boolean).map(esc).join(' · ')}</div></div>
       ${seloStatus(a.status)}
     </div>
     <div class="local-resumo">

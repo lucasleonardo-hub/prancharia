@@ -28,6 +28,7 @@
    fechamento" + "em vidro" é uma frase só, e frase não é nome de ambiente. */
 
 import { isDark } from './pdfdoc.js';
+import { lerTipologia, classificarArea } from './areas.js';
 
 /* ================================================================== */
 /* VOCABULÁRIOS                                                        */
@@ -434,19 +435,74 @@ export function janelasDePlanta(ambientes, folga = 130) {
   });
 }
 
-/** Legendas "PLANTA ... - PAVIMENTO" abaixo de cada planta da folha. */
+/* O que é nome de pavimento ("TÉRREO", "1º SUBSOLO", "PAVIMENTO TIPO",
+   "COBERTURA") e o que é nome de torre ou bloco ("TORRE 1", "BLOCO B"). */
+const PAV_NOME = /^(?:(?:\d{1,2}\s*[ºo°]?\s*)?(?:SUBSOLO|T[ÉE]RREO|PAVIMENTO|PAV\.?|ANDAR|COBERTURA|[ÁA]TICO|MEZANINO|SOBRELOJA|PILOTIS|GARAGEM|TIPO)\b[A-ZÀ-Ýa-zà-ÿ0-9 .ºª]{0,24}|(?:PAVIMENTO|PAV\.?|ANDAR)\s+[A-ZÀ-Ý0-9][A-ZÀ-Ýa-zà-ÿ0-9 .ºª]{0,24})$/i;
+const GRUPO_NOME = /^(?:TORRE|BLOCO|EDIF[ÍI]CIO|ED\.?|QUADRA|M[ÓO]DULO|SETOR)\s*[A-Z0-9]{1,4}$/i;
+
+/**
+ * Legendas de planta da folha: "PLANTA BAIXA - TÉRREO", "PLANTA 1º SUBSOLO",
+ * "PLANTA TÉRREO - TORRE 1". Devolve o pavimento e, quando a legenda o
+ * nomeia, o grupo (torre, bloco). Sem traço também vale: o carimbo escreve
+ * "PLANTA 1º SUBSOLO" e isso é o pavimento.
+ */
 export function lerPavimentos(textos) {
   const out = [];
   for (const t of textos) {
     const s = limpo(t);
-    const m = s.match(/^(.*?)[-–]\s*([A-ZÀ-Ý][A-ZÀ-Ýa-zà-ÿ .ºª0-9]{2,28})$/);
-    if (!m) continue;
-    if (!/^(PLANTA|ALEXANDRE|PAVIMENTO)/i.test(s) && !/PLANTA/i.test(s)) continue;
-    const nome = m[2].trim();
-    if (nome.length < 3) continue;
-    out.push({ nome, x: centro(t), y: t.y });
+    if (s.length > 90 || (!/PLANTA/i.test(s) && !/^PAVIMENTO\b/i.test(s))) continue;
+    const segmentos = s.split(/\s*[-–|]\s*/)
+      .map(x => x.replace(/^(?:PLANTA(?:\s+BAIXA)?|BAIXA)\s*(?:D[OAE]S?\s+)?/i, '').trim()).filter(Boolean);
+    let nome = '', grupo = '';
+    for (const seg of segmentos) {
+      if (!grupo && GRUPO_NOME.test(seg)) { grupo = seg; continue; }
+      if (!nome && seg.length >= 3 && seg.length <= 40 && PAV_NOME.test(seg)) nome = seg;
+    }
+    if (!nome) {
+      /* a regra antiga: o que vem depois do traço é o pavimento */
+      const m = s.match(/^(.*?)[-–]\s*([A-ZÀ-Ý][A-ZÀ-Ýa-zà-ÿ .ºª0-9]{2,28})$/);
+      if (m) nome = m[2].trim();
+    }
+    if (!nome || nome.length < 3) continue;
+    out.push({ nome, grupo, x: centro(t), y: t.y });
   }
   return out;
+}
+
+/** Rótulos de tipologia de unidade na folha: "TIPO 1", "TIPO PNE 4", "APTO TIPO A". */
+export function lerTipologias(textos) {
+  const out = [];
+  for (const t of textos || []) {
+    if (!t || t.horizontal === false) continue;
+    const nome = lerTipologia(limpo(t));
+    if (!nome) continue;
+    out.push({ nome, x: centro(t), y: t.y, bbox: [t.x, t.y - t.h, t.x + t.w, t.y + 2] });
+  }
+  return out;
+}
+
+/**
+ * Dá a cada ambiente a tipologia da unidade em que ele está. A medida é a
+ * mesma do vínculo das tags — distância pelo espaço livre, contornando as
+ * paredes — porque a parede entre dois apartamentos é exatamente o que
+ * separa "DORM.01 do TIPO 1" de "DORM.01 do TIPO 2". Ambiente com dois
+ * rótulos quase à mesma distância está entre unidades (circulação, hall) e
+ * fica sem tipologia; nome de área comum nunca recebe uma.
+ */
+export function atribuirTipologias(mask, ambientes, tipologias, janela) {
+  for (const a of ambientes) a.tipologia = a.tipologia || '';
+  if (!tipologias.length || !ambientes.length || !mask) return;
+  const alvos = ambientes.map(a => ({ x: a.x, y: a.y }));
+  const vinculos = vincularTags(mask, tipologias, alvos, janela);
+  const limite = (janela[2] - janela[0]) * 0.3;
+  vinculos.forEach((v, i) => {
+    const a = ambientes[i];
+    const vocab = classificarArea(a.nome);
+    if (!v.ambiente || v.distancia === null || v.distancia > limite || vocab === 'comum') return;
+    if (v.segundo && v.folga < 1.3 && vocab !== 'privativa') return;
+    a.tipologia = v.ambiente.nome;
+    a.tipologiaFolga = v.folga;
+  });
 }
 
 /* ---------- máscara de paredes ---------- */

@@ -441,6 +441,7 @@ O que já está certo nos dados extraídos, você confirma em uma linha curta ("
 5. NOTAS TÉCNICAS E OBSERVAÇÕES escritas na folha, quando especificam material.
 6. DETALHES E CORTES: a especificação escrita dentro do detalhe vale como especificação.
 7. CHAMADAS ESCRITAS NO DESENHO: "PISO TIJOLO CERÂMICA", "BANCADA - DEKTON MOONE", "PAINEL RIPADO".
+8. A PLANTA BAIXA EM SI, quando a folha é uma planta (paredes, portas e rótulos de ambiente) e os dados vetoriais NÃO reconheceram ambientes — a planta foi desenhada como imagem, sem texto. Aí os rótulos dos ambientes são o que mais importa: é deles que o sistema monta a lista de locais (ver Q12).
 
 === REGRAS ABSOLUTAS ===
 Q1. UMA LINHA DA TABELA = UM ITEM. Não agrupe, não resuma, não devolva "e demais ambientes". Se o quadro tem 19 ambientes × 3 categorias, são 57 itens.
@@ -454,6 +455,7 @@ Q8. FORMA + NÚMERO É A CHAVE das legendas geométricas. Números iguais em for
 Q9. NÃO DEVOLVA o que não é produto de acabamento: cotas, níveis, nomes de prancha, selo, escala, responsável técnico, área em m², numeração de degrau, eixo de pilar, texto de carimbo.
 Q10. JUSTIFICATIVA OBRIGATÓRIA: diga de onde tirou, citando o quadro e a linha ("quadro MEMORIAL DE ACABAMENTOS PISO, linha BANHO MASTER, coluna Especificação Piso"). É o texto que o engenheiro vai ler como prova.
 Q11. NADA SEM EVIDÊNCIA. Item novo sem "fonte" e sem "justificativa" é descartado pelo sistema. Célula que o documento não sustenta sai vazia (""), nunca "N/A". "acao" declara o que o item é em relação aos dados já extraídos: "confirmar", "completar" ou "novo".
+Q12. AMBIENTES DA PLANTA. Quando a imagem é uma planta baixa e a lista de AMBIENTES RECONHECIDOS está vazia, devolva UM item por rótulo de ambiente legível no desenho, com "origemLeitura": "planta", "local" = o rótulo exatamente como está escrito ("DORM.01", "BANHO", "SALA", "CIRCULAÇÃO", "ELEVADOR 01"), "tipologia" = o rótulo da unidade em que o ambiente está ("TIPO 1", "TIPO PNE 4", "APTO TIPO A") quando a planta marca as unidades — e "" quando o ambiente está fora das unidades (hall, circulação do andar, escada, elevador, salão de festas) ou a planta não marca tipologias. "produto" e "descricao" ficam "" quando a planta não escreve material naquele ambiente; "justificativa" = "rótulo de ambiente na planta" e "fonte" = "planta baixa". O mesmo nome em unidades diferentes são itens diferentes: DORM.01 do TIPO 1 e DORM.01 do TIPO 2. Não invente ambiente: só o que está escrito e legível.
 
 === CONFIANÇA ===
 "alta"  — linha de tabela legível, com o ambiente declarado na própria linha.
@@ -481,7 +483,8 @@ export const SCHEMA_QUADRO = {
       dimensao: texto('Dimensão escrita ("120X120", "70×210", "90x90"). Senão "".'),
       peitoril: texto('Só esquadria, se escrito. Senão "".'),
       quantidade: texto('Só se escrita. Senão "".'),
-      origemLeitura: { type: 'string', enum: [...ORIGENS, 'quadro', 'nota', 'detalhe'] },
+      tipologia: texto('Rótulo da unidade em que o ambiente está ("TIPO 1", "TIPO PNE 4"), quando a planta marca tipologias. Senão "".'),
+      origemLeitura: { type: 'string', enum: [...ORIGENS, 'quadro', 'nota', 'detalhe', 'planta'] },
       fonte: texto('O nome do quadro, tabela ou nota de onde saiu ("MEMORIAL DE ACABAMENTOS PISO", "QUADRO DE ESQUADRIAS").'),
       acao: { type: 'string', enum: ACOES_REVISAO, description: 'confirmar = já estava nos dados vetoriais; completar = preenche/corrige um item já extraído; novo = só a imagem mostra.' },
       confianca: { type: 'string', enum: ['alta', 'media', 'baixa'] },
@@ -541,6 +544,9 @@ export function contextoQuadro({ documento = '', pagina = null, locais = [], jaL
   } else if (!v || !(v.tabelas || []).length) {
     l.push('', 'A LEITURA VETORIAL NÃO EXTRAIU NADA desta folha. Tudo o que houver de produto nas imagens é novidade.');
   }
+  if (!v || !Array.isArray(v.ambientes) || !v.ambientes.length) {
+    l.push('', 'NENHUM AMBIENTE FOI RECONHECIDO PELO TEXTO desta folha. Se as imagens mostram uma PLANTA BAIXA (paredes, portas e rótulos de ambiente), devolva também um item por rótulo de ambiente, com origemLeitura "planta" e a tipologia da unidade ("TIPO 1", "TIPO PNE 4") quando a planta marca as unidades — regra Q12.');
+  }
 
   if (lacunas.length) {
     l.push('', 'LACUNAS CONHECIDAS — locais sem alguma categoria essencial. Procure especialmente por estes:');
@@ -554,7 +560,7 @@ export function contextoQuadro({ documento = '', pagina = null, locais = [], jaL
 /** Aplica Q6, Q7 e Q9 no que voltou, e descarta linha sem substância. */
 export function sanearQuadro(bruto) {
   const lista = Array.isArray(bruto) ? bruto : (bruto && Array.isArray(bruto.itens) ? bruto.itens : []);
-  const ORIGENS_OK = new Set([...ORIGENS, 'quadro', 'nota', 'detalhe']);
+  const ORIGENS_OK = new Set([...ORIGENS, 'quadro', 'nota', 'detalhe', 'planta']);
   const out = [];
   const vistos = new Set();
   const recusadas = { vazia: 0, repetida: 0, lixo: 0, semJustificativa: 0, confirmar: 0, completar: 0, novo: 0 };
@@ -565,6 +571,7 @@ export function sanearQuadro(bruto) {
     if (!r || typeof r !== 'object') continue;
     const item = {
       local: limpar(r.local),
+      tipologia: limpar(r.tipologia),
       categoria: CATEGORIAS.includes(limpar(r.categoria)) ? limpar(r.categoria) : '',
       produto: limpar(r.produto), sistema: limpar(r.sistema),
       descricao: semNumeroSolto(limpar(r.descricao)),
@@ -579,7 +586,9 @@ export function sanearQuadro(bruto) {
       confianca: ['alta', 'media', 'baixa'].includes(limpar(r.confianca)) ? limpar(r.confianca) : 'baixa',
       justificativa: limpar(r.justificativa),
     };
-    if (!item.descricao && !item.produto && !item.codigoOrigem) { recusadas.vazia++; continue; }
+    /* ambiente lido da planta (Q12) vale sem produto: é o local que importa */
+    const soAmbiente = item.origemLeitura === 'planta' && item.local;
+    if (!item.descricao && !item.produto && !item.codigoOrigem && !soAmbiente) { recusadas.vazia++; continue; }
     if (LIXO.test(item.descricao) && !item.produto) { recusadas.lixo++; continue; }
     /* Q11: item novo sem prova de onde saiu não entra (a confirmação de algo
        que o vetor já leu herda a evidência do vetor e passa) */
@@ -588,7 +597,7 @@ export function sanearQuadro(bruto) {
     if (item.origemLeitura === 'quadro' || item.origemLeitura === 'detalhe') item.origemLeitura = 'tabela';
     if (item.origemLeitura === 'nota') item.origemLeitura = 'texto_prancha';
 
-    const k = [item.local, item.categoria, item.codigoOrigem, item.descricao].join('|').toLowerCase();
+    const k = [item.local, item.tipologia, item.categoria, item.codigoOrigem, item.descricao].join('|').toLowerCase();
     if (vistos.has(k)) { recusadas.repetida++; continue; }
     vistos.add(k);
     recusadas[item.acao]++;
