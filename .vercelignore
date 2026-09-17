@@ -10,3 +10,12 @@ LEIA-ME.md
 # index.html é a versão sem <head> para publicar como artifact; o site usa o
 # documento completo (local.html), servido na raiz pelo rewrite do vercel.json.
 index.html
+
+# Configuracao do Claude Code e do Impeccable, e documentos internos do produto:
+# nao fazem parte do site publicado.
+.claude/
+.impeccable/
+.mcp.json
+CLAUDE.md
+PRODUCT.md
+DESIGN.md
