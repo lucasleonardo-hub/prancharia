@@ -81,7 +81,6 @@
 
   /* ---------- tipografia ---------- */
   --sans: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --cond: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 
   /* os controles nativos (select, checkbox, date) seguem o tema */
@@ -93,7 +92,7 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --ground: #0a0b0e; --surface: #14161b; --surface-2: #191b21; --surface-3: #21242b;
-    --ink: #f3f4f7; --ink-2: #a4aab8; --ink-3: #737a8a;
+    --ink: #f3f4f7; --ink-2: #a4aab8; --ink-3: #7c8393;
     --line: rgba(255, 255, 255, .07); --line-strong: rgba(255, 255, 255, .12);
     --borda: rgba(255, 255, 255, .12);
     --accent: #8b8ef8; --accent-forte: #a5a7fb; --accent-ink: #101119;
@@ -112,7 +111,7 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
   --ground: #0a0b0e; --surface: #14161b; --surface-2: #191b21; --surface-3: #21242b;
-  --ink: #f3f4f7; --ink-2: #a4aab8; --ink-3: #737a8a;
+  --ink: #f3f4f7; --ink-2: #a4aab8; --ink-3: #7c8393;
   --line: rgba(255, 255, 255, .07); --line-strong: rgba(255, 255, 255, .12);
   --borda: rgba(255, 255, 255, .12);
   --accent: #8b8ef8; --accent-forte: #a5a7fb; --accent-ink: #101119;
@@ -144,6 +143,13 @@ a { color: var(--accent); text-decoration-color: color-mix(in srgb, var(--accent
 a:hover { text-decoration-color: var(--accent); }
 :focus-visible { outline: none; box-shadow: var(--anel); border-radius: var(--raio-xs); }
 
+/* As partes que o navegador desenha sozinho também carregam a paleta: a
+   seleção de texto e o cursor são índigo (seleção é do índigo, como o foco) e
+   a barra de rolagem usa a linha forte, igual às barras já desenhadas. */
+::selection { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+input, textarea, [contenteditable] { caret-color: var(--accent); }
+html { scrollbar-color: var(--line-strong) transparent; scrollbar-width: thin; }
+
 /* ---------- animações de entrada ---------- */
 @keyframes surgir { from { opacity: 0; } to { opacity: 1; } }
 @keyframes subir { from { opacity: 0; transform: translateY(10px) scale(.985); } to { opacity: 1; transform: none; } }
@@ -161,7 +167,7 @@ a:hover { text-decoration-color: var(--accent); }
 .marca {
   display: flex; align-items: center; gap: 11px; padding: 6px 8px 22px;
   width: 100%; border: none; background: none; text-align: left; cursor: pointer;
-  font: inherit; color: inherit; border-radius: 12px;
+  font: inherit; color: inherit; border-radius: var(--raio-s);
 }
 .marca:hover .marca-nome { color: var(--accent); }
 .marca-glifo {
@@ -328,7 +334,7 @@ table select, table input:not([type="checkbox"]) {
 }
 input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; }
 .vazio-celula::after { content: "–"; color: var(--ink-3); }
-[data-editavel] { cursor: text; border-radius: 6px; padding: 2px 5px; margin: -2px -5px; transition: background var(--rapido) var(--mola), box-shadow var(--rapido) var(--mola); }
+[data-editavel] { cursor: text; border-radius: var(--raio-xs); padding: 2px 5px; margin: -2px -5px; transition: background var(--rapido) var(--mola), box-shadow var(--rapido) var(--mola); }
 [data-editavel]:hover { background: var(--accent-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent); }
 
 .selo {
@@ -477,7 +483,7 @@ details > summary:hover { color: var(--ink); }
 .cartao-selecao:hover { box-shadow: var(--sombra-2), inset 0 0 0 1px var(--line); transform: translateY(-2px); }
 .cartao-selecao.atual { border-color: var(--accent); }
 article.cartao-selecao[role="button"] { cursor: pointer; }
-article.cartao-selecao[role="button"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+article.cartao-selecao[role="button"]:focus-visible { outline: none; box-shadow: var(--anel), var(--sombra-1), inset 0 0 0 1px var(--line); }
 .cartao-selecao .topo { display: flex; align-items: flex-start; gap: 11px; }
 .cartao-selecao .topo .selo { flex: none; margin-left: auto; }
 .cartao-selecao h3 { font-size: 16px; letter-spacing: -.022em; font-weight: 700; overflow-wrap: anywhere; }
@@ -487,7 +493,7 @@ article.cartao-selecao[role="button"]:focus-visible { outline: 2px solid var(--a
 .grade-cartoes:has(.emp) { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 18px; }
 .emp-numeros { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 0; }
 .emp-numeros div { background: var(--surface-2); border-radius: var(--raio-s); padding: 10px 11px; min-width: 0; }
-.emp-numeros dt { font-size: 9.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.emp-numeros dt { font-size: 9.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .emp-numeros dd { margin: 3px 0 0; font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -.03em; }
 .emp-numeros dd.tom-aviso { color: var(--atencao); }
 .cartao-selecao .acoes { display: flex; gap: 7px; flex-wrap: wrap; margin-top: auto; }
@@ -556,7 +562,7 @@ article.cartao-selecao[role="button"]:focus-visible { outline: 2px solid var(--a
      chega ao documento, que é quem fecha a gaveta (js/app.js). */
   #lateral.aberta::after {
     content: ""; position: fixed; inset: 0 0 0 268px; z-index: -1; pointer-events: none;
-    background: rgba(8, 10, 18, .44); animation: surgir var(--normal) var(--mola);
+    background: rgba(8, 10, 18, .44); animation: surgir var(--normal) ease;
   }
   #lateral .marca-nome, #lateral .marca-sub, #lateral nav button span, #lateral nav .grupo { display: revert; }
   #lateral nav button { justify-content: flex-start; padding: 9px 12px; }
@@ -671,8 +677,8 @@ article.cartao-selecao[role="button"]:focus-visible { outline: 2px solid var(--a
 
 /* ---------- categorias: rótulo com a cor da forma ---------- */
 .rotulo-cat {
-  display: flex; align-items: center; gap: 9px; font-family: var(--cond); font-size: 10px;
-  letter-spacing: .12em; text-transform: uppercase; color: var(--ink-2); font-weight: 600; margin-bottom: 8px;
+  display: flex; align-items: center; gap: 9px; font-size: 10px;
+  letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; margin-bottom: 8px;
 }
 .rotulo-cat i { width: 8px; height: 8px; border-radius: 3px; display: inline-block; }
 .rotulo-cat.apagado { color: var(--ink-3); }

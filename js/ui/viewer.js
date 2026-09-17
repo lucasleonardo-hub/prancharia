@@ -261,7 +261,7 @@ export function montarVisualizador(caixa, { documentoId, pagina = 1, foco = null
     const caixaMarcada = (c, cor, rotulo) => {
       const [ax, ay] = px(c[0], c[1]); const [bx, by] = px(c[2], c[3]);
       let t = `<rect x="${ax - 4}" y="${ay - 4}" width="${Math.max(6, bx - ax + 8)}" height="${Math.max(6, by - ay + 8)}" fill="none" stroke="${cor}" stroke-width="2.5" stroke-dasharray="7 5"/>`;
-      if (rotulo && st.escala > 0.2) t += `<text x="${ax - 4}" y="${ay - 10}" font-family="IBM Plex Sans, system-ui" font-size="13" fill="${cor}" stroke="#fff" stroke-width="3.5" paint-order="stroke">${rotulo}</text>`;
+      if (rotulo && st.escala > 0.2) t += `<text x="${ax - 4}" y="${ay - 10}" font-family="Plus Jakarta Sans, system-ui, sans-serif" font-size="13" fill="${cor}" stroke="#fff" stroke-width="3.5" paint-order="stroke">${rotulo}</text>`;
       return t;
     };
     if (leg) s += caixaMarcada(leg.bloco || leg.caixa, '#2f6baf', 'legenda');
