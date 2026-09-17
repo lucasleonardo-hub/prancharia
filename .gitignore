@@ -5,3 +5,8 @@ server/dados/
 
 .vercel
 .env*
+
+# Claude Code: preferências pessoais do projeto
+.claude/settings.local.json
+# Impeccable: diário de injeção do modo live (gerado)
+.impeccable/live/inject-journal.json

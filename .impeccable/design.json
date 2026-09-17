@@ -1,0 +1,187 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-17T15:40:00.000Z",
+  "title": "Design System: Prancharia",
+  "extensions": {
+    "colorMeta": {
+      "papel-frio": { "role": "neutral", "displayName": "Papel frio", "canonical": "#fafafc", "cssVar": "--ground", "dark": "#0a0b0e", "tonalRamp": ["oklch(15% 0.004 280)", "oklch(27% 0.004 280)", "oklch(39% 0.004 280)", "oklch(51% 0.004 280)", "oklch(63% 0.004 280)", "oklch(75% 0.004 280)", "oklch(87% 0.004 280)", "oklch(98.5% 0.004 280)"] },
+      "branco-prancha": { "role": "neutral", "displayName": "Branco da prancha", "canonical": "#ffffff", "cssVar": "--surface", "dark": "#14161b", "tonalRamp": ["oklch(15% 0 0)", "oklch(27% 0 0)", "oklch(39% 0 0)", "oklch(51% 0 0)", "oklch(63% 0 0)", "oklch(75% 0 0)", "oklch(87% 0 0)", "oklch(100% 0 0)"] },
+      "papel-sombreado": { "role": "neutral", "displayName": "Papel sombreado", "canonical": "#f7f7fa", "cssVar": "--surface-2", "dark": "#191b21", "tonalRamp": ["oklch(15% 0.005 280)", "oklch(27% 0.005 280)", "oklch(39% 0.005 280)", "oklch(51% 0.005 280)", "oklch(63% 0.005 280)", "oklch(75% 0.005 280)", "oklch(87% 0.005 280)", "oklch(97.5% 0.005 280)"] },
+      "papel-fundo": { "role": "neutral", "displayName": "Papel de fundo", "canonical": "#f0f0f5", "cssVar": "--surface-3", "dark": "#21242b", "tonalRamp": ["oklch(15% 0.008 280)", "oklch(27% 0.008 280)", "oklch(39% 0.008 280)", "oklch(51% 0.008 280)", "oklch(63% 0.008 280)", "oklch(75% 0.008 280)", "oklch(87% 0.008 280)", "oklch(95.5% 0.008 280)"] },
+      "grafite": { "role": "neutral", "displayName": "Grafite", "canonical": "#15161a", "cssVar": "--ink", "dark": "#f3f4f7", "tonalRamp": ["oklch(18% 0.008 270)", "oklch(28% 0.008 270)", "oklch(38% 0.008 270)", "oklch(48% 0.008 270)", "oklch(58% 0.008 270)", "oklch(70% 0.008 270)", "oklch(84% 0.008 270)", "oklch(96% 0.008 270)"] },
+      "grafite-medio": { "role": "neutral", "displayName": "Grafite médio", "canonical": "#5a5f6b", "cssVar": "--ink-2", "dark": "#a4aab8", "tonalRamp": ["oklch(15% 0.015 265)", "oklch(27% 0.015 265)", "oklch(39% 0.015 265)", "oklch(48% 0.015 265)", "oklch(60% 0.015 265)", "oklch(72% 0.015 265)", "oklch(84% 0.015 265)", "oklch(95% 0.015 265)"] },
+      "grafite-claro": { "role": "neutral", "displayName": "Grafite claro", "canonical": "#8b91a0", "cssVar": "--ink-3", "dark": "#737a8a", "tonalRamp": ["oklch(15% 0.02 265)", "oklch(27% 0.02 265)", "oklch(39% 0.02 265)", "oklch(51% 0.02 265)", "oklch(64% 0.02 265)", "oklch(75% 0.02 265)", "oklch(86% 0.02 265)", "oklch(95% 0.02 265)"] },
+      "linha-luz": { "role": "neutral", "displayName": "Linha de luz", "canonical": "rgba(15, 18, 30, .06)", "cssVar": "--line", "dark": "rgba(255, 255, 255, .07)", "note": "Sempre translúcida; a mesma tinta a 6% pousa sobre qualquer superfície." },
+      "linha-luz-forte": { "role": "neutral", "displayName": "Linha de luz forte", "canonical": "rgba(15, 18, 30, .11)", "cssVar": "--line-strong / --borda", "dark": "rgba(255, 255, 255, .12)", "note": "--borda tem o mesmo valor; é a borda de botão secundário e de campo." },
+      "indigo-esquadria": { "role": "primary", "displayName": "Índigo de Esquadria", "canonical": "#4f46e5", "cssVar": "--accent", "dark": "#8b8ef8", "tonalRamp": ["oklch(20% 0.12 277)", "oklch(31% 0.18 277)", "oklch(42% 0.22 277)", "oklch(51% 0.23 277)", "oklch(62% 0.19 277)", "oklch(73% 0.14 277)", "oklch(85% 0.08 277)", "oklch(95% 0.03 277)"] },
+      "indigo-esquadria-forte": { "role": "primary", "displayName": "Índigo de Esquadria forte", "canonical": "#4338ca", "cssVar": "--accent-forte", "dark": "#a5a7fb", "tonalRamp": ["oklch(18% 0.11 277)", "oklch(28% 0.17 277)", "oklch(38% 0.21 277)", "oklch(46% 0.22 277)", "oklch(58% 0.19 277)", "oklch(70% 0.14 277)", "oklch(83% 0.08 277)", "oklch(94% 0.03 277)"] },
+      "indigo-esquadria-veu": { "role": "primary", "displayName": "Véu de índigo", "canonical": "rgba(79, 70, 229, .075)", "cssVar": "--accent-soft", "dark": "rgba(139, 142, 248, .13)", "note": "Fundo do menu ativo, do tipo selecionado e da linha de legenda usada." },
+      "tinta-sobre-indigo": { "role": "primary", "displayName": "Tinta sobre índigo", "canonical": "#ffffff", "cssVar": "--accent-ink", "dark": "#101119", "note": "Texto do botão primário; no escuro vira grafite porque o índigo clareia." },
+      "verde-conforme": { "role": "semantic", "displayName": "Verde conforme", "canonical": "#047857", "cssVar": "--bom", "dark": "#34d399", "tonalRamp": ["oklch(18% 0.05 165)", "oklch(28% 0.08 165)", "oklch(38% 0.1 165)", "oklch(50% 0.12 165)", "oklch(62% 0.13 165)", "oklch(74% 0.12 165)", "oklch(86% 0.08 165)", "oklch(95% 0.03 165)"] },
+      "verde-conforme-veu": { "role": "semantic", "displayName": "Véu de verde", "canonical": "rgba(4, 120, 87, .085)", "cssVar": "--bom-soft", "dark": "rgba(52, 211, 153, .12)" },
+      "ambar-atencao": { "role": "semantic", "displayName": "Âmbar de atenção", "canonical": "#8a5d0b", "cssVar": "--atencao", "dark": "#e0b45f", "tonalRamp": ["oklch(18% 0.04 80)", "oklch(28% 0.07 80)", "oklch(38% 0.09 80)", "oklch(49% 0.11 80)", "oklch(62% 0.13 80)", "oklch(75% 0.12 80)", "oklch(86% 0.08 80)", "oklch(95% 0.03 80)"] },
+      "ambar-atencao-veu": { "role": "semantic", "displayName": "Véu de âmbar", "canonical": "rgba(180, 124, 20, .1)", "cssVar": "--atencao-soft", "dark": "rgba(224, 180, 95, .12)" },
+      "vermelho-critico": { "role": "semantic", "displayName": "Vermelho crítico", "canonical": "#b42318", "cssVar": "--critico", "dark": "#f08e80", "tonalRamp": ["oklch(18% 0.07 30)", "oklch(28% 0.11 30)", "oklch(38% 0.15 30)", "oklch(50% 0.19 30)", "oklch(62% 0.17 30)", "oklch(74% 0.12 30)", "oklch(86% 0.07 30)", "oklch(95% 0.02 30)"] },
+      "vermelho-critico-veu": { "role": "semantic", "displayName": "Véu de vermelho", "canonical": "rgba(180, 35, 24, .08)", "cssVar": "--critico-soft", "dark": "rgba(240, 142, 128, .12)" },
+      "circulo-azul": { "role": "semantic", "displayName": "Círculo azul (Teto)", "canonical": "#2563eb", "cssVar": "--circulo", "dark": "#7ab0ec", "tonalRamp": ["oklch(20% 0.1 262)", "oklch(30% 0.15 262)", "oklch(42% 0.2 262)", "oklch(55% 0.22 262)", "oklch(65% 0.18 262)", "oklch(75% 0.12 262)", "oklch(86% 0.07 262)", "oklch(95% 0.02 262)"] },
+      "triangulo-roxo": { "role": "semantic", "displayName": "Triângulo roxo (Paredes)", "canonical": "#9333ea", "cssVar": "--triangulo", "dark": "#c89ae0", "tonalRamp": ["oklch(20% 0.11 305)", "oklch(31% 0.17 305)", "oklch(43% 0.22 305)", "oklch(55% 0.25 305)", "oklch(66% 0.19 305)", "oklch(76% 0.13 305)", "oklch(87% 0.07 305)", "oklch(95% 0.02 305)"] },
+      "quadrado-verde": { "role": "semantic", "displayName": "Quadrado verde (Piso)", "canonical": "#047857", "cssVar": "--quadrado", "dark": "#4fc79a", "note": "Mesmo hex de --bom no claro; token separado porque o papel (categoria) é outro e no escuro o valor diverge.", "tonalRamp": ["oklch(18% 0.05 165)", "oklch(28% 0.08 165)", "oklch(38% 0.1 165)", "oklch(50% 0.12 165)", "oklch(62% 0.13 165)", "oklch(74% 0.12 165)", "oklch(86% 0.08 165)", "oklch(95% 0.03 165)"] },
+      "pentagono-ambar": { "role": "semantic", "displayName": "Pentágono âmbar (Pedras naturais)", "canonical": "#b45309", "cssVar": "--pentagono", "dark": "#e3a967", "tonalRamp": ["oklch(18% 0.05 60)", "oklch(28% 0.09 60)", "oklch(40% 0.12 60)", "oklch(52% 0.15 60)", "oklch(64% 0.15 60)", "oklch(76% 0.12 60)", "oklch(87% 0.07 60)", "oklch(95% 0.03 60)"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "O h1 da cabeça de tela e o número do placar; 23–24px abaixo de 720px." },
+      "headline": { "displayName": "Headline", "purpose": "Título do modal; cartões de seleção usam 16–17px na mesma voz." },
+      "title": { "displayName": "Title", "purpose": "h2 do cabeçalho de cartão e h3 do estado vazio." },
+      "body": { "displayName": "Body", "purpose": "Texto corrente; descrições em 13.5px/1.6 até 68ch; tabelas e botões em 13px." },
+      "label": { "displayName": "Label", "purpose": "Rótulos estruturais em caixa alta (9.5–11px, 0.1em): cabeçalho de coluna, campo, grupo do menu, rótulo de dado." },
+      "mono": { "displayName": "Mono", "purpose": "JetBrains Mono para números, códigos de tag e contagens, sempre com tabular-nums." }
+    },
+    "shadows": [
+      { "name": "sombra-1", "value": "0 1px 2px rgba(15, 18, 30, .04), 0 1px 3px -1px rgba(15, 18, 30, .03)", "dark": "0 1px 2px rgba(0, 0, 0, .5), 0 1px 3px -1px rgba(0, 0, 0, .4)", "purpose": "Repouso de cartão, botão secundário, campo e recorte." },
+      { "name": "sombra-2", "value": "0 2px 6px -1px rgba(15, 18, 30, .04), 0 4px 20px -2px rgba(15, 18, 30, .07)", "dark": "0 2px 6px -1px rgba(0, 0, 0, .5), 0 4px 22px -2px rgba(0, 0, 0, .55)", "purpose": "Hover do mesmo elemento, um degrau acima." },
+      { "name": "sombra-3", "value": "0 4px 12px -2px rgba(15, 18, 30, .06), 0 20px 56px -16px rgba(15, 18, 30, .22)", "dark": "0 4px 14px -2px rgba(0, 0, 0, .5), 0 24px 64px -18px rgba(0, 0, 0, .8)", "purpose": "O que flutua: gaveta, modal, legenda do visor, toast, barra lateral móvel." },
+      { "name": "anel", "value": "0 0 0 3px rgba(79, 70, 229, .16)", "dark": "0 0 0 3px rgba(139, 142, 248, .24)", "purpose": "Anel de foco em todo :focus-visible e em campos em foco; substitui o outline." },
+      { "name": "linha-interna", "value": "inset 0 0 0 1px var(--line)", "purpose": "A borda de luz de cartões, gaveta, modal, chips e nós; combinada com sombra-1/2/3." },
+      { "name": "sombra-primario", "value": "0 1px 2px rgba(15, 18, 30, .06), 0 4px 16px -4px color-mix(in srgb, var(--accent) 55%, transparent)", "purpose": "Exclusiva do botão primário; hover sobe para 65%." }
+    ],
+    "motion": [
+      { "name": "mola", "value": "cubic-bezier(.16, 1, .3, 1)", "purpose": "A única curva de saída do sistema: transições e entradas com transform." },
+      { "name": "rapido", "value": ".16s", "purpose": "Cor, fundo e box-shadow de item de menu, linha de tabela, célula editável." },
+      { "name": "normal", "value": ".22s", "purpose": "Botão, cartão de seleção, campo, chip, placar; entrada surgir da faixa." },
+      { "name": "lento", "value": ".32s", "purpose": "Gaveta, modal, barra lateral móvel, sombra do cartão, barra de progresso." },
+      { "name": "surgir", "value": "opacity 0 -> 1", "purpose": "Fade de entrada da faixa, do véu e do modal; único uso de ease em vez de --mola." },
+      { "name": "subir", "value": "opacity 0, translateY(10px) scale(.985) -> none", "purpose": "Entrada do modal, do toast e da legenda flutuante, com --mola." },
+      { "name": "sem-transicao-visor", "value": "transition: none !important", "purpose": "Canvas do visor, camada de marcas e canvas da legenda: movidos a cada quadro do arraste." }
+    ],
+    "breakpoints": [
+      { "name": "menu-compacto", "value": "1080px", "purpose": "Barra lateral encolhe para 74px, só ícones." },
+      { "name": "movel", "value": "720px", "purpose": "Barra lateral vira gaveta de 268px com véu; barra superior 56px; margens 16px." },
+      { "name": "visor-largo", "value": "1100px", "purpose": "Dica do visor compacto volta a aparecer." }
+    ]
+  },
+  "components": [
+    {
+      "name": "Botão primário",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "A única ação em índigo da tela; sombra tingida do próprio acento.",
+      "html": "<button class=\"ds-btn-primario\">Ler pranchas</button>",
+      "css": ".ds-btn-primario { display: inline-flex; align-items: center; gap: 7px; padding: 9px 16px; border-radius: 11px; border: 1px solid transparent; background: var(--accent, #4f46e5); color: var(--accent-ink, #fff); font-family: var(--sans, 'Plus Jakarta Sans', sans-serif); font-size: 13px; font-weight: 500; letter-spacing: -.008em; white-space: nowrap; cursor: pointer; box-shadow: 0 1px 2px rgba(15,18,30,.06), 0 4px 16px -4px color-mix(in srgb, var(--accent, #4f46e5) 55%, transparent); transition: all var(--normal, .22s) var(--mola, cubic-bezier(.16,1,.3,1)); } .ds-btn-primario:hover { background: var(--accent-forte, #4338ca); transform: translateY(-1px); box-shadow: 0 2px 4px rgba(15,18,30,.08), 0 8px 24px -6px color-mix(in srgb, var(--accent, #4f46e5) 65%, transparent); } .ds-btn-primario:active { transform: translateY(0); } .ds-btn-primario:focus-visible { outline: none; box-shadow: var(--anel, 0 0 0 3px rgba(79,70,229,.16)); } .ds-btn-primario:disabled { opacity: .4; cursor: not-allowed; box-shadow: none; transform: none; }"
+    },
+    {
+      "name": "Botão secundário",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Branco da prancha com linha de luz e sombra rasa; sobe um degrau no hover.",
+      "html": "<button class=\"ds-btn\">Exportar XLSX</button>",
+      "css": ".ds-btn { display: inline-flex; align-items: center; gap: 7px; padding: 9px 16px; border-radius: 11px; border: 1px solid var(--line, rgba(15,18,30,.06)); background: var(--surface, #fff); color: var(--ink, #15161a); font-family: var(--sans, 'Plus Jakarta Sans', sans-serif); font-size: 13px; font-weight: 500; letter-spacing: -.008em; white-space: nowrap; cursor: pointer; box-shadow: var(--sombra-1, 0 1px 2px rgba(15,18,30,.04), 0 1px 3px -1px rgba(15,18,30,.03)); transition: all var(--normal, .22s) var(--mola, cubic-bezier(.16,1,.3,1)); } .ds-btn:hover { border-color: var(--line-strong, rgba(15,18,30,.11)); box-shadow: var(--sombra-2, 0 2px 6px -1px rgba(15,18,30,.04), 0 4px 20px -2px rgba(15,18,30,.07)); transform: translateY(-1px); } .ds-btn:active { transform: translateY(0); box-shadow: var(--sombra-1); } .ds-btn:focus-visible { outline: none; box-shadow: var(--anel, 0 0 0 3px rgba(79,70,229,.16)); } .ds-btn:disabled { opacity: .4; cursor: not-allowed; box-shadow: none; transform: none; }"
+    },
+    {
+      "name": "Botão discreto",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Sem fundo, sem borda, sem sombra; só ganha papel de fundo no hover. Menu, tema, voltar e ações de tabela.",
+      "html": "<button class=\"ds-btn-discreto\"><svg width=\"15\" height=\"15\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" aria-hidden=\"true\"><path d=\"M15 18l-6-6 6-6\"/></svg>Voltar</button>",
+      "css": ".ds-btn-discreto { display: inline-flex; align-items: center; gap: 7px; padding: 9px 16px; border-radius: 11px; border: 1px solid transparent; background: none; color: var(--ink-2, #5a5f6b); font-family: var(--sans, 'Plus Jakarta Sans', sans-serif); font-size: 13px; font-weight: 500; letter-spacing: -.008em; cursor: pointer; transition: all var(--normal, .22s) var(--mola, cubic-bezier(.16,1,.3,1)); } .ds-btn-discreto svg { margin-left: -2px; } .ds-btn-discreto:hover { background: var(--surface-3, #f0f0f5); color: var(--ink, #15161a); } .ds-btn-discreto:focus-visible { outline: none; box-shadow: var(--anel, 0 0 0 3px rgba(79,70,229,.16)); }"
+    },
+    {
+      "name": "Campo de busca",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Campo dos filtros: branco, borda de linha forte, sombra rasa; foco em índigo com anel.",
+      "html": "<input class=\"ds-campo\" type=\"search\" placeholder=\"Buscar local, material ou fornecedor\">",
+      "css": ".ds-campo { padding: 9px 13px; border: 1px solid var(--borda, rgba(15,18,30,.11)); border-radius: 11px; background: var(--surface, #fff); color: var(--ink, #15161a); font-family: var(--sans, 'Plus Jakarta Sans', sans-serif); font-size: 13px; min-width: 210px; max-width: 420px; box-shadow: var(--sombra-1, 0 1px 2px rgba(15,18,30,.04), 0 1px 3px -1px rgba(15,18,30,.03)); transition: all var(--normal, .22s) var(--mola, cubic-bezier(.16,1,.3,1)); } .ds-campo::placeholder { color: var(--ink-3, #8b91a0); } .ds-campo:hover { border-color: var(--line-strong, rgba(15,18,30,.11)); } .ds-campo:focus, .ds-campo:focus-visible { outline: none; border-color: var(--accent, #4f46e5); box-shadow: var(--anel, 0 0 0 3px rgba(79,70,229,.16)); }"
+    },
+    {
+      "name": "Campo com rótulo",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Rótulo em caixa alta de 10px, 7px acima do campo, com texto de ajuda em grafite claro.",
+      "html": "<label class=\"ds-campo-rotulado\"><span class=\"ds-rotulo\">Nome do empreendimento</span><input class=\"ds-campo-rotulado-input\" type=\"text\" value=\"Green Park\"><small class=\"ds-ajuda\">Como aparece no carimbo da prancha.</small></label>",
+      "css": ".ds-campo-rotulado { display: flex; flex-direction: column; gap: 7px; font-family: var(--sans, 'Plus Jakarta Sans', sans-serif); } .ds-rotulo { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3, #8b91a0); font-weight: 600; } .ds-campo-rotulado-input { padding: 9px 13px; border: 1px solid var(--borda, rgba(15,18,30,.11)); border-radius: 11px; background: var(--surface, #fff); color: var(--ink, #15161a); font: inherit; font-size: 13px; box-shadow: var(--sombra-1, 0 1px 2px rgba(15,18,30,.04), 0 1px 3px -1px rgba(15,18,30,.03)); transition: all var(--normal, .22s) var(--mola, cubic-bezier(.16,1,.3,1)); } .ds-campo-rotulado-input:hover { border-color: var(--line-strong, rgba(15,18,30,.11)); } .ds-campo-rotulado-input:focus, .ds-campo-rotulado-input:focus-visible { outline: none; border-color: var(--accent, #4f46e5); box-shadow: var(--anel, 0 0 0 3px rgba(79,70,229,.16)); } .ds-ajuda { font-size: 12px; color: var(--ink-3, #8b91a0); line-height: 1.5; }"
+    },
+    {
+      "name": "Item de navegação",
+      "kind": "nav",
+      "refersTo": "nav-item",
+      "description": "Botão da barra lateral: ícone de 17px, contagem mono à direita; ativo em véu de índigo.",
+      "html": "<nav class=\"ds-nav\"><div class=\"ds-nav-grupo\">Levantamento</div><button class=\"ds-nav-item\"><svg class=\"ds-nav-ico\" viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M4 6h16M4 12h16M4 18h10\"/></svg><span>Documentos</span><span class=\"ds-nav-cont\">12</span></button><button class=\"ds-nav-item\" aria-current=\"page\"><svg class=\"ds-nav-ico\" viewBox=\"0 0 24 24\" aria-hidden=\"true\"><rect x=\"3\" y=\"4\" width=\"18\" height=\"16\" rx=\"1.5\"/><path d=\"M3 10h18M9 10v10\"/></svg><span>Locais</span><span class=\"ds-nav-cont\">148</span></button><button class=\"ds-nav-item\"><svg class=\"ds-nav-ico\" viewBox=\"0 0 24 24\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"8\"/><path d=\"M12 8v4l3 2\"/></svg><span>Revisão</span><span class=\"ds-nav-cont\">7</span></button></nav>",
+      "css": ".ds-nav { display: flex; flex-direction: column; gap: 2px; width: 232px; padding: 8px 12px; background: var(--ground, #fafafc); font-family: var(--sans, 'Plus Jakarta Sans', sans-serif); box-shadow: inset -1px 0 0 var(--line, rgba(15,18,30,.06)); } .ds-nav-grupo { font-size: 9.5px; letter-spacing: .11em; text-transform: uppercase; color: var(--ink-3, #8b91a0); padding: 0 12px 6px; font-weight: 600; } .ds-nav-item { display: flex; align-items: center; gap: 11px; width: 100%; text-align: left; padding: 8px 12px; border: 0; border-radius: 10px; background: none; cursor: pointer; color: var(--ink-2, #5a5f6b); font: inherit; font-size: 13.5px; font-weight: 500; transition: background var(--rapido, .16s) var(--mola, cubic-bezier(.16,1,.3,1)), color var(--rapido, .16s) var(--mola, cubic-bezier(.16,1,.3,1)); } .ds-nav-item:hover { background: var(--surface-3, #f0f0f5); color: var(--ink, #15161a); } .ds-nav-item[aria-current=\"page\"] { background: var(--accent-soft, rgba(79,70,229,.075)); color: var(--accent, #4f46e5); font-weight: 600; } .ds-nav-item:focus-visible { outline: none; box-shadow: var(--anel, 0 0 0 3px rgba(79,70,229,.16)); } .ds-nav-ico { width: 17px; height: 17px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; } .ds-nav-cont { margin-left: auto; font-family: var(--mono, 'JetBrains Mono', monospace); font-size: 10.5px; font-weight: 500; color: var(--ink-3, #8b91a0); font-variant-numeric: tabular-nums; } .ds-nav-item[aria-current=\"page\"] .ds-nav-cont { color: var(--accent, #4f46e5); }"
+    },
+    {
+      "name": "Selo de estado",
+      "kind": "chip",
+      "refersTo": "chip-status-good",
+      "description": "Cápsula de status: véu do estado como fundo, cor cheia como texto. Quatro tons fixos mais o apagado.",
+      "html": "<div class=\"ds-selos\"><span class=\"ds-selo ds-selo-bom\">Confirmado</span><span class=\"ds-selo ds-selo-atencao\">Pendente</span><span class=\"ds-selo ds-selo-critico\">Sem fonte</span><span class=\"ds-selo ds-selo-neutro\">Vetorial</span><span class=\"ds-selo ds-selo-apagado\">Proposto</span></div>",
+      "css": ".ds-selos { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; font-family: var(--sans, 'Plus Jakarta Sans', sans-serif); } .ds-selo { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 500; white-space: nowrap; line-height: 1.4; letter-spacing: -.005em; } .ds-selo-bom { background: var(--bom-soft, rgba(4,120,87,.085)); color: var(--bom, #047857); } .ds-selo-atencao { background: var(--atencao-soft, rgba(180,124,20,.1)); color: var(--atencao, #8a5d0b); } .ds-selo-critico { background: var(--critico-soft, rgba(180,35,24,.08)); color: var(--critico, #b42318); } .ds-selo-neutro { background: var(--surface-3, #f0f0f5); color: var(--ink-2, #5a5f6b); } .ds-selo-apagado { background: none; color: var(--ink-3, #8b91a0); box-shadow: inset 0 0 0 1px var(--line-strong, rgba(15,18,30,.11)); }"
+    },
+    {
+      "name": "Tag de forma",
+      "kind": "chip",
+      "refersTo": "pill-mono",
+      "description": "A tag da prancha: forma geométrica em SVG de 13px mais número em mono, na cor semântica da forma; ao lado, a pílula mono de código.",
+      "html": "<div class=\"ds-formas\"><span class=\"ds-forma ds-forma-circulo\"><svg viewBox=\"0 0 16 16\" aria-hidden=\"true\"><circle cx=\"8\" cy=\"8\" r=\"6.5\"/></svg>12</span><span class=\"ds-forma ds-forma-triangulo\"><svg viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path d=\"M8 2l6.5 12h-13z\"/></svg>4</span><span class=\"ds-forma ds-forma-quadrado\"><svg viewBox=\"0 0 16 16\" aria-hidden=\"true\"><rect x=\"2\" y=\"2\" width=\"12\" height=\"12\"/></svg>7</span><span class=\"ds-forma ds-forma-pentagono\"><svg viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path d=\"M8 1.5l6.5 4.7-2.5 7.6h-8L1.5 6.2z\"/></svg>3</span><span class=\"ds-pilula\">Q-01</span></div>",
+      "css": ".ds-formas { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; } .ds-forma { display: inline-flex; align-items: center; gap: 5px; font-family: var(--mono, 'JetBrains Mono', monospace); font-size: 11.5px; font-weight: 500; white-space: nowrap; font-variant-numeric: tabular-nums; } .ds-forma svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; } .ds-forma-circulo { color: var(--circulo, #2563eb); } .ds-forma-triangulo { color: var(--triangulo, #9333ea); } .ds-forma-quadrado { color: var(--quadrado, #047857); } .ds-forma-pentagono { color: var(--pentagono, #b45309); } .ds-pilula { font-family: var(--mono, 'JetBrains Mono', monospace); font-size: 10.5px; font-weight: 500; background: var(--surface-3, #f0f0f5); padding: 3px 9px; border-radius: 999px; color: var(--ink-2, #5a5f6b); }"
+    },
+    {
+      "name": "Cartão",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Contêiner de 20px de raio: branco, linha de luz interna e sombra-1; hover sobe para sombra-2.",
+      "html": "<section class=\"ds-cartao\"><header class=\"ds-cartao-cabecalho\"><h2>Acabamentos por local</h2><div class=\"ds-cartao-acoes\"><span class=\"ds-pilula\">148</span></div></header><div class=\"ds-cartao-corpo\"><p>Cada linha aponta a prancha e a legenda de onde saiu. Campo sem respaldo fica vazio.</p></div></section>",
+      "css": ".ds-cartao { background: var(--surface, #fff); border-radius: var(--raio-g, 20px); box-shadow: var(--sombra-1, 0 1px 2px rgba(15,18,30,.04), 0 1px 3px -1px rgba(15,18,30,.03)), inset 0 0 0 1px var(--line, rgba(15,18,30,.06)); overflow: hidden; color: var(--ink, #15161a); font-family: var(--sans, 'Plus Jakarta Sans', sans-serif); font-size: 14px; line-height: 1.55; transition: box-shadow var(--lento, .32s) var(--mola, cubic-bezier(.16,1,.3,1)); } .ds-cartao:hover { box-shadow: var(--sombra-2, 0 2px 6px -1px rgba(15,18,30,.04), 0 4px 20px -2px rgba(15,18,30,.07)), inset 0 0 0 1px var(--line, rgba(15,18,30,.06)); } .ds-cartao:focus-visible { outline: none; box-shadow: var(--anel, 0 0 0 3px rgba(79,70,229,.16)), inset 0 0 0 1px var(--line, rgba(15,18,30,.06)); } .ds-cartao-cabecalho { padding: 20px 24px 18px; display: flex; align-items: center; gap: 14px; } .ds-cartao-cabecalho h2 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -.014em; line-height: 1.25; } .ds-cartao-acoes { margin-left: auto; display: flex; gap: 7px; } .ds-cartao-corpo { padding: 0 24px 24px; color: var(--ink-2, #5a5f6b); font-size: 13.5px; line-height: 1.6; } .ds-cartao-corpo p { margin: 0; max-width: 68ch; } .ds-pilula { font-family: var(--mono, 'JetBrains Mono', monospace); font-size: 10.5px; font-weight: 500; background: var(--surface-3, #f0f0f5); padding: 3px 9px; border-radius: 999px; color: var(--ink-2, #5a5f6b); }"
+    },
+    {
+      "name": "Cartão de seleção",
+      "kind": "card",
+      "refersTo": "card-selection",
+      "description": "Cartão clicável de local ou empreendimento: sobe 2px no hover; o atual ganha borda índigo de 1.5px.",
+      "html": "<article class=\"ds-cartao-selecao\" role=\"button\" tabindex=\"0\"><div class=\"ds-cartao-selecao-topo\"><div><h3>Sala de estar</h3><div class=\"ds-meta\">TIPO 3 · unidade privativa</div></div><span class=\"ds-selo ds-selo-bom\">Completo</span></div><div class=\"ds-resumo\"><span><b>9</b> itens</span><span><b>3</b> fontes</span></div></article>",
+      "css": ".ds-cartao-selecao { background: var(--surface, #fff); border-radius: var(--raio, 14px); box-shadow: var(--sombra-1, 0 1px 2px rgba(15,18,30,.04), 0 1px 3px -1px rgba(15,18,30,.03)), inset 0 0 0 1px var(--line, rgba(15,18,30,.06)); padding: 18px 20px; display: flex; flex-direction: column; gap: 14px; border: 1.5px solid transparent; cursor: pointer; width: 260px; color: var(--ink, #15161a); font-family: var(--sans, 'Plus Jakarta Sans', sans-serif); transition: all var(--normal, .22s) var(--mola, cubic-bezier(.16,1,.3,1)); } .ds-cartao-selecao:hover { box-shadow: var(--sombra-2, 0 2px 6px -1px rgba(15,18,30,.04), 0 4px 20px -2px rgba(15,18,30,.07)), inset 0 0 0 1px var(--line, rgba(15,18,30,.06)); transform: translateY(-2px); } .ds-cartao-selecao:focus-visible { outline: 2px solid var(--accent, #4f46e5); outline-offset: 2px; } .ds-cartao-selecao-topo { display: flex; align-items: flex-start; gap: 11px; } .ds-cartao-selecao h3 { margin: 0; font-size: 16px; letter-spacing: -.022em; font-weight: 700; line-height: 1.25; } .ds-meta { font-size: 12.5px; color: var(--ink-3, #8b91a0); margin-top: 3px; } .ds-cartao-selecao-topo .ds-selo { flex: none; margin-left: auto; } .ds-selo { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 500; line-height: 1.4; } .ds-selo-bom { background: var(--bom-soft, rgba(4,120,87,.085)); color: var(--bom, #047857); } .ds-resumo { display: flex; gap: 12px; font-size: 12.5px; color: var(--ink-3, #8b91a0); } .ds-resumo b { color: var(--ink, #15161a); font-weight: 600; font-variant-numeric: tabular-nums; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "A Mesa do Revisor",
+    "overview": "Tudo serve à sessão longa de revisão: a hierarquia é feita por espaço, a evidência está sempre a um clique, e nada compete com o desenho. A interface é serena e técnica, discreta, quase invisível; a prancha e os dados são os protagonistas. A cor vem da própria prancha: papel levemente frio, grafite do traço, o índigo dos códigos de esquadria e as quatro cores das formas geométricas que marcam as tags.\n\nA densidade é a de uma mesa de trabalho, não a de um painel: o respiro é maior que o necessário de propósito, porque numa tela com 200 linhas de acabamento o branco é o que deixa a leitura possível. As superfícies nascem levemente elevadas e se separam por luz (linhas translúcidas e sombras rasas em camadas), nunca por bordas opacas. Os componentes são contidos e silenciosos, e todo movimento desacelera na mesma curva, o que dá a sensação de uma peça só.\n\nDuas referências foram rejeitadas de forma confirmada: o painel SaaS genérico (cartões de KPI coloridos, gráficos decorativos, gradientes) e o software de engenharia antigo (grade cinza densa, barras de ferramentas empilhadas).",
+    "keyCharacteristics": [
+      "A prancha é o protagonista: o visor ocupa até 72vh e recebe fundo neutro, sem moldura decorativa.",
+      "Separação por luz: linhas rgba e sombras em camadas, nenhuma borda opaca.",
+      "Índigo escasso: só no botão primário, no foco, no item de menu ativo e nos elos da cadeia de evidência.",
+      "As quatro formas e os três estados são cores semânticas, não decoração.",
+      "Uma única curva de saída (--mola) para todo o sistema; o canvas do visor fica fora dela.",
+      "Tema escuro que troca a família de superfícies por grafites profundos e clareia o índigo, sem inverter o claro."
+    ],
+    "rules": [
+      { "name": "A Regra da Escassez do Índigo", "body": "O índigo só marca o que é ação primária ou estado de foco e seleção: botão primário, anel de foco, item de menu ativo, link, cadeia de evidência. Ele nunca comunica status (isso é dos três estados) nem categoria (isso é das quatro formas). Se um índigo novo aparece numa tela sem ser um desses, está errado.", "section": "colors" },
+      { "name": "A Regra das Quatro Formas", "body": "Círculo, triângulo, quadrado e pentágono têm cor porque na prancha eles têm forma. A cor acompanha a forma e a categoria que ela representa; não se usa uma delas para \"dar cor\" a um elemento sem forma.", "section": "colors" },
+      { "name": "A Regra do Rótulo em Caixa Alta", "body": "O único texto em caixa alta é rótulo estrutural: cabeçalho de coluna, nome de campo, grupo do menu, rótulo de dado. Fica entre 9.5px e 11px, peso 600, tracking 0.09–0.12em, sempre em grafite claro (ou na cor da forma quando é categoria). Título nunca vai em caixa alta.", "section": "typography" },
+      { "name": "A Regra do Número Tabular", "body": "Todo número que se compara em coluna (contagens, tags, medidas, placar) usa font-variant-numeric: tabular-nums; quando é código ou contagem auxiliar, vai em JetBrains Mono.", "section": "typography" },
+      { "name": "A Regra do Respiro", "body": "Espaço é hierarquia. Antes de introduzir uma linha, uma cor de fundo ou um título para separar dois grupos, aumente o espaço entre eles: um gap de 24px separa blocos; 14px separa cartões irmãos; 7–9px separa controles que agem juntos.", "section": "layout" },
+      { "name": "A Regra da Separação por Luz", "body": "Nenhuma borda opaca. O que divide duas superfícies é uma linha translúcida em rgba (--line a 6%, --line-strong a 11%) ou uma sombra em camadas. Uma cor sólida de borda em qualquer componente novo é defeito.", "section": "elevation" },
+      { "name": "A Regra das Camadas Sempre Visíveis", "body": "Cartões e painéis não são planos em repouso: nascem com --sombra-1 e a linha de luz interna. O hover sobe um degrau (--sombra-2), nunca dois; só o que flutua sobre a página usa --sombra-3.", "section": "elevation" },
+      { "name": "A Regra do Raio Generoso", "body": "Quanto maior o contêiner, maior o raio: 20 → 14 → 10 → 8px. Um raio menor que 8px só existe em detalhes de 8px ou menos (marcador de categoria, barra de progresso).", "section": "shapes" },
+      { "name": "A Regra da Única Curva de Saída", "body": "Toda transição e toda entrada com transform usa cubic-bezier(.16, 1, .3, 1) (--mola) em uma de três durações: 0.16s para cor e fundo, 0.22s para botão e cartão, 0.32s para gaveta, modal e barra lateral. Só o fade puro de opacidade (surgir na faixa, no véu e no modal) usa ease.", "section": "components" },
+      { "name": "A Exceção do Visor", "body": "O canvas da prancha, a camada de marcas e o canvas da legenda nunca recebem transição. Qualquer regra nova que os alcance precisa preservar o transition: none !important.", "section": "components" }
+    ],
+    "dos": [
+      "Do separar superfícies com inset 0 0 0 1px var(--line) ou border-bottom: 1px solid var(--line); a linha é sempre rgba.",
+      "Do dar a todo cartão novo --sombra-1 em repouso e --sombra-2 no hover; reservar --sombra-3 para o que flutua sobre a página.",
+      "Do usar o véu do estado como fundo e a cor cheia como texto em qualquer selo ou faixa de status (--bom/--bom-soft, --atencao/--atencao-soft, --critico/--critico-soft).",
+      "Do colorir categoria e tag pela forma (Teto círculo, Paredes triângulo, Piso quadrado, Pedras naturais pentágono) usando os tokens --circulo, --triangulo, --quadrado, --pentagono.",
+      "Do escrever números comparáveis com tabular-nums e códigos em JetBrains Mono.",
+      "Do manter :focus-visible com box-shadow: var(--anel) e outline: none.",
+      "Do usar --mola e uma das três durações (--rapido, --normal, --lento) em toda transição nova.",
+      "Do definir cores novas nos dois temas ao mesmo tempo, em :root e em :root[data-theme=\"dark\"], com o escuro como grafite profundo e o acento clareado."
+    ],
+    "donts": [
+      "Don't usar borda sólida opaca em nenhum componente; se precisa de contorno, use a linha de luz ou uma borda transparent que só ganha cor no estado selecionado.",
+      "Don't colocar índigo em selos, faixas, placares ou ícones de status; índigo é ação primária, foco, seleção e link.",
+      "Don't criar cartões de KPI coloridos, gráficos decorativos ou gradientes; o placar é branco, o número é grafite, e só a cor do valor muda em alerta ou aviso.",
+      "Don't empilhar barras de ferramentas nem comprimir a grade: a densidade vem de tabelas com 14px por 18px de célula, não de cromo extra.",
+      "Don't animar o canvas do visor, a camada de marcas ou o canvas da legenda.",
+      "Don't usar caixa alta em títulos; ela é exclusiva dos rótulos estruturais de 9.5–11px.",
+      "Don't introduzir uma segunda curva de easing ou uma quarta duração."
+    ]
+  }
+}

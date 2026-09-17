@@ -1,0 +1,34 @@
+{
+  "enabledMcpjsonServers": ["context7", "playwright"],
+  "enabledPlugins": {
+    "commit-commands@claude-plugins-official": true
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/bloquear-env.mjs",
+            "timeout": 10,
+            "statusMessage": "Conferindo se é arquivo de segredos"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/checar-sintaxe.mjs",
+            "timeout": 20,
+            "statusMessage": "node --check no arquivo editado"
+          }
+        ]
+      }
+    ]
+  }
+}
