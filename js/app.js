@@ -443,5 +443,32 @@ export function confirmar({ titulo, texto = '', ok = 'Confirmar', cancelar = 'Ca
 document.addEventListener('keydown', ev => {
   if (ev.key !== 'Escape') return;
   const m = document.getElementById('modal');
-  if (m && !m.hidden) fecharModal(); else fecharGaveta();
+  if (m && !m.hidden) { fecharModal(); return; }
+  /* Esc no inspetor devolve o foco à linha que estava aberta */
+  const linha = document.querySelector('#conteudo tr.selecionada [data-acao="verEvidencia"]');
+  fecharGaveta();
+  linha?.focus();
+});
+
+/* A mesa se opera pelo teclado: ↑/↓ percorrem as linhas que têm evidência e
+   abrem cada uma no inspetor; Enter leva o foco para dentro do inspetor. */
+document.addEventListener('keydown', ev => {
+  if (!['ArrowDown', 'ArrowUp', 'Enter'].includes(ev.key)) return;
+  if (ev.target.closest('input, textarea, select, [contenteditable], #modal, #gaveta')) return;
+  const botoes = [...document.querySelectorAll('#conteudo [data-acao="verEvidencia"]')];
+  if (!botoes.length) return;
+  const g = document.getElementById('gaveta');
+  if (ev.key === 'Enter') {
+    if (!g?.classList.contains('aberta') || ev.target.closest('button, a, [role="button"]')) return;
+    ev.preventDefault();
+    (g.querySelector('.aba-prova.ativa') || g.querySelector('button'))?.focus();
+    return;
+  }
+  ev.preventDefault();
+  const atual = document.querySelector('#conteudo tr.selecionada');
+  let i = atual ? botoes.findIndex(b => b.closest('tr') === atual) : -1;
+  i = ev.key === 'ArrowDown' ? Math.min(botoes.length - 1, i + 1) : Math.max(0, i - 1);
+  const b = botoes[i];
+  b.closest('tr')?.scrollIntoView({ block: 'nearest' });
+  b.click();
 });

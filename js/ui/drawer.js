@@ -29,8 +29,18 @@ let ctx = null;   // { esp, provas, iProva, nivel, visor, chave }
 
 export function fecharGaveta() {
   document.getElementById('gaveta')?.classList.remove('aberta');
+  document.body.classList.remove('inspetor');
+  document.querySelectorAll('#conteudo tr.selecionada').forEach(t => t.classList.remove('selecionada'));
   const v = document.getElementById('veu'); if (v) v.hidden = true;
   ctx = null;
+}
+
+/* A linha da tabela cuja evidência está aberta fica marcada: é o vínculo
+   visível entre a tabela e o inspetor ao lado. */
+function marcarLinha(id) {
+  document.querySelectorAll('#conteudo tr.selecionada').forEach(t => t.classList.remove('selecionada'));
+  const b = document.querySelector(`#conteudo [data-acao="verEvidencia"][data-id="${id}"]`);
+  b?.closest('tr')?.classList.add('selecionada');
 }
 
 export function abrirGaveta(esp) {
@@ -48,23 +58,23 @@ export function abrirGaveta(esp) {
   g.innerHTML = `
     <header>
       <div style="min-width:0">
-        <div class="cat" style="color:var(--ink-3)">${esc(esp.categoria || 'sem categoria')}</div>
-        <h2 style="font-size:15px">${esc(esp.descricao || esp.produto || 'Item sem descrição')}</h2>
+        <h2 style="font-size:14px" title="${esc(esp.descricao || esp.produto || '')}">${esc(esp.descricao || esp.produto || 'Item sem descrição')}</h2>
       </div>
-      <button class="btn discreto" data-acao="fecharGaveta" style="margin-left:auto" aria-label="Fechar">✕</button>
+      <button class="btn discreto pequeno" data-acao="fecharGaveta" style="margin-left:auto;flex:none" aria-label="Fechar"><i class="ico-fechar" aria-hidden="true"></i><kbd class="so-teclado">Esc</kbd></button>
     </header>
     <div class="corpo">
       <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <span class="selo neutro">${esc(esp.categoria || 'sem categoria')}</span>
         ${marcaForma(esp.forma, esp.numero)}
         ${seloConfianca(esp.confianca)} ${seloStatus(esp.status)}
         ${motores.map(m => `<span class="selo neutro" title="motor que leu esta evidência">${esc(nomeMotor(m))}</span>`).join('')}
         ${(esp.motivos || []).map(m => `<span class="selo atencao">${esc(MOTIVOS_PENDENCIA[m] || m)}</span>`).join('')}
       </div>
 
-      ${esp.status === 'conflito' ? `<div class="aviso-faixa critico"><span>⚠</span><div><b>Conflito documental.</b> Duas fontes descrevem este item de formas diferentes — nenhuma foi descartada.
+      ${esp.status === 'conflito' ? `<div class="aviso-faixa critico"><span class="ico-aviso" aria-hidden="true">!</span><div><b>Conflito documental.</b> Duas fontes descrevem este item de formas diferentes — nenhuma foi descartada.
         <div style="margin-top:6px">${(esp.divergencias || []).map(d => `<div>• ${esc(d.documento)} p.${esc(d.pagina)}: ${esc(d.descricao)}</div>`).join('')}</div>
         <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
-          ${(esp.divergencias || []).map((d, i) => `<button class="btn pequeno" data-acao="resolverConflito" data-id="${esp.id}" data-i="${i}">Manter “${esc(d.documento)}”</button>`).join('')}
+          ${(esp.divergencias || []).map((d, i) => `<button class="btn pequeno" data-acao="resolverConflito" data-id="${esp.id}" data-i="${i}" title="Manter o que diz ${esc(d.documento)}">Manter “${esc(d.documento.replace(/.pdf$/i, '').slice(0, 28))}${d.documento.length > 32 ? '…' : ''}”</button>`).join('')}
           <button class="btn pequeno" data-acao="resolverConflito" data-id="${esp.id}" data-i="-1">Manter a descrição atual</button>
         </div></div></div>` : ''}
 
@@ -142,6 +152,8 @@ export function abrirGaveta(esp) {
       </div>
     </div>`;
   g.classList.add('aberta');
+  document.body.classList.add('inspetor');
+  marcarLinha(esp.id);
   const veu = document.getElementById('veu'); if (veu) veu.hidden = false;
 
   g.querySelectorAll('[data-prova]').forEach(b => b.addEventListener('click', () => selecionar(+b.dataset.prova)));

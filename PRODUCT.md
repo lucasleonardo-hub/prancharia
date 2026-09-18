@@ -105,7 +105,13 @@ sistema construtivo.
 Nome: **Prancharia**, subtítulo "análise de pranchas". Marca gráfica existente
 em `favicon.svg` e no glifo da barra lateral. Voz da interface e da
 documentação: português direto, técnico, sem jargão de marketing, explicando o
-porquê das regras. Nenhum outro compromisso de identidade foi declarado.
+porquê das regras.
+
+Preferência visual declarada pelo usuário (2026-09-19, rodada de direção do
+Impeccable): o **padrão da categoria** de ferramenta de operação, executado no
+nível de acabamento de **Linear** e **Figma** — denso, neutro, teclado em tudo,
+painéis a serviço do dado. Direções expressivas (prancha de amostras, carimbo,
+grade visível) foram vistas e recusadas de propósito; não reabrir sem pedido.
 
 ## Evidence on Hand
 

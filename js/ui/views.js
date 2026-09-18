@@ -108,7 +108,7 @@ function avisoModoLocal() {
   let local = false;
   try { local = /^(localhost|127\.0\.0\.1|\[::1\])$/i.test(location.hostname); } catch { /* sem window */ }
   if (local) return '';
-  return `<div class="aviso-faixa"><span>⚠</span><div><b>Não consegui falar com o servidor compartilhado.</b> O que aparece abaixo é só deste navegador — pode não ser a mesma lista que outra pessoa (ou você, em outro navegador) vê. O sistema continua tentando em segundo plano e liga sozinho quando o servidor acordar; se preferir, <button class="btn pequeno" data-acao="religarNuvem" style="margin-left:4px">tentar agora</button>. O que você criar enquanto isso fica guardado aqui e sobe ao servidor assim que ele responder.</div></div>`;
+  return `<div class="aviso-faixa"><span class="ico-aviso" aria-hidden="true">!</span><div><b>Não consegui falar com o servidor compartilhado.</b> O que aparece abaixo é só deste navegador — pode não ser a mesma lista que outra pessoa (ou você, em outro navegador) vê. O sistema continua tentando em segundo plano e liga sozinho quando o servidor acordar; se preferir, <button class="btn pequeno" data-acao="religarNuvem" style="margin-left:4px">tentar agora</button>. O que você criar enquanto isso fica guardado aqui e sobe ao servidor assim que ele responder.</div></div>`;
 }
 
 /* Com a nuvem ligada ainda há duas coisas a avisar. A primeira é grave: o
@@ -120,12 +120,12 @@ function avisoModoLocal() {
 function avisoNuvemLigada() {
   const partes = [];
   if (store.NUVEM.persistente === false) {
-    partes.push(`<div class="aviso-faixa critico"><span>⚠</span><div><b>O servidor está sem banco persistente.</b> Ele roda num disco efêmero: tudo o que for gravado lá some quando ele reiniciar ou hibernar — é por isso que os empreendimentos não aparecem em outro navegador. Este navegador guarda uma cópia de tudo e reenvia sozinho, mas outra pessoa só verá os dados depois que o servidor tiver um banco de verdade. Configure <code>TURSO_DATABASE_URL</code> no painel do Render (passo a passo no LEIA-ME, seção “Banco persistente”).</div></div>`);
+    partes.push(`<div class="aviso-faixa critico"><span class="ico-aviso" aria-hidden="true">!</span><div><b>O servidor está sem banco persistente.</b> Ele roda num disco efêmero: tudo o que for gravado lá some quando ele reiniciar ou hibernar — é por isso que os empreendimentos não aparecem em outro navegador. Este navegador guarda uma cópia de tudo e reenvia sozinho, mas outra pessoa só verá os dados depois que o servidor tiver um banco de verdade. Configure <code>TURSO_DATABASE_URL</code> no painel do Render (passo a passo no LEIA-ME, seção “Banco persistente”).</div></div>`);
   }
   const p = estado.nuvemPendentes;
   if (p && p.maisNovos && p.maisNovos.length) {
     const nomes = p.maisNovos.slice(0, 4).map(e => esc(e.nome)).join(', ') + (p.maisNovos.length > 4 ? '…' : '');
-    partes.push(`<div class="aviso-faixa"><span>⚠</span><div><b>${p.maisNovos.length} empreendimento(s) têm uma versão mais nova neste navegador</b> do que no servidor (${nomes}). Provavelmente você trabalhou enquanto o servidor estava fora do ar. <button class="btn pequeno" data-acao="enviarLocais" style="margin-left:4px">Enviar a versão deste navegador</button> substitui a do servidor.</div></div>`);
+    partes.push(`<div class="aviso-faixa"><span class="ico-aviso" aria-hidden="true">!</span><div><b>${p.maisNovos.length} empreendimento(s) têm uma versão mais nova neste navegador</b> do que no servidor (${nomes}). Provavelmente você trabalhou enquanto o servidor estava fora do ar. <button class="btn pequeno" data-acao="enviarLocais" style="margin-left:4px">Enviar a versão deste navegador</button> substitui a do servidor.</div></div>`);
   }
   return partes.join('');
 }
@@ -401,7 +401,7 @@ const documentos = {
         </div></div>
       ${estado.processando ? `<div class="cartao"><div class="corpo">
         <div style="display:flex;justify-content:space-between;gap:12px;font-size:13px;margin-bottom:6px"><span id="progTexto" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(estado.processando.texto)}</span><span class="num" id="progPct" style="flex:none">${Math.round(estado.processando.pct * 100)}%</span></div>
-        <div class="progresso"><i id="progBarra" style="width:${Math.round(estado.processando.pct * 100)}%"></i></div></div></div>`
+        <div class="progresso"><i id="progBarra" style="--pct:${estado.processando.pct}"></i></div></div></div>`
       : `<label class="zona-solta" for="entradaDocs" id="zonaSolta">
         <svg class="ico" viewBox="0 0 24 24" aria-hidden="true" stroke-linecap="round" stroke-linejoin="round">${ICONES.upload}</svg>
         <div><b>Arraste os PDFs para cá</b><span>ou clique para escolher. Pranchas de arquitetura e memoriais descritivos, um ou vários de uma vez.</span></div>
@@ -642,7 +642,7 @@ function atualizarProgresso(texto, pctDoc) {
   const t = document.getElementById('progTexto');
   const n = document.getElementById('progPct');
   const numero = Math.round(pct * 100) + '%';
-  if (barra) barra.style.width = numero;
+  if (barra) barra.style.setProperty('--pct', String(pct));
   if (t) t.textContent = rotulo;
   if (n) n.textContent = numero;
   /* cede ao navegador no máximo a cada ~80 ms: o suficiente para pintar, sem
@@ -790,7 +790,7 @@ const estrutura = {
         <button class="btn pequeno discreto" data-acao="removerNivel" data-nivel="${nivel}" data-id="${it.id}">Remover</button></td></tr>`).join('');
 
     return `<div class="cabeca"><div>
-      <button class="btn discreto pequeno voltar" data-rota="config">← Configurações</button>
+      <button class="btn discreto pequeno voltar" data-rota="config"><i class="ico-voltar" aria-hidden="true"></i>Configurações</button>
       <h1>${esc(def.plural)}</h1>
       <p class="desc">${esc(def.ajuda)} Este nível existe porque o tipo do empreendimento é <b>${esc(tipoDe(e).nome)}</b>.</p></div>
       <div class="acoes">
@@ -1017,18 +1017,18 @@ function fichaAmbiente(e, id) {
   return `
     <div class="cabeca">
       <div>
-        <button class="btn discreto pequeno voltar" data-rota="locais">← Locais</button>
+        <button class="btn discreto pequeno voltar" data-rota="locais"><i class="ico-voltar" aria-hidden="true"></i>Locais</button>
         <h1>${esc(a.nome)}</h1>
         <p class="desc">${[temAreasComuns(e) ? (a.areaComum ? 'Área comum (Manual do Condomínio)' : 'Unidade privativa (Manual do Proprietário)') : '', a.pavimento, a.tipologia, a.area, a.nomeMemorial && a.nomeMemorial !== a.nome ? `no memorial: ${a.nomeMemorial}` : ''].filter(Boolean).map(esc).join(' · ') || 'sem pavimento ou tipologia definidos'}</p>
       </div>
       <div class="acoes">
         ${temAreasComuns(e) ? `<button class="btn" data-acao="alternarAreaComum" data-id="${a.id}">${a.areaComum ? 'É área comum (MC)' : 'É unidade privativa (MP)'}</button>` : ''}
         <button class="btn" data-acao="renomearAmbiente" data-id="${a.id}">Renomear</button>
-        <button class="btn" data-acao="confirmarAmbiente" data-id="${a.id}">Confirmar</button>
+        <button class="btn primario" data-acao="confirmarAmbiente" data-id="${a.id}">Confirmar</button>
         <button class="btn discreto" data-acao="excluirAmbiente" data-id="${a.id}">Excluir</button>
       </div>
     </div>
-    ${a.confianca === 'baixa' ? '<div class="aviso-faixa"><span>⚠</span><div><b>Local proposto.</b> O rótulo foi lido na prancha sem área cotada ao lado. Confirme antes de exportar.</div></div>' : ''}
+    ${a.confianca === 'baixa' ? '<div class="aviso-faixa"><span class="ico-aviso" aria-hidden="true">!</span><div><b>Local proposto.</b> O rótulo foi lido na prancha sem área cotada ao lado. Confirme antes de exportar.</div></div>' : ''}
 
     <div class="placar">
       <div><dt>Itens</dt><dd>${itens.length}</dd></div>
@@ -1039,9 +1039,10 @@ function fichaAmbiente(e, id) {
     </div>
 
     <div class="cartao"><header><h2>Acabamentos</h2>
+      <span class="atalhos" aria-label="Atalhos de teclado"><kbd>↑</kbd><kbd>↓</kbd> linhas · <kbd>Enter</kbd> inspetor · <kbd>Esc</kbd> fecha</span>
       <div class="acoes">
         <button class="btn pequeno" data-acao="adicionarItem" data-amb="${a.id}">Adicionar item</button>
-        <button class="btn pequeno primario" data-acao="copiarPlanilhaLocal" data-amb="${a.id}">Copiar planilha</button></div></header>
+        <button class="btn pequeno" data-acao="copiarPlanilhaLocal" data-amb="${a.id}">Copiar planilha</button></div></header>
       ${itens.length ? tabela([{ nome: 'Produto' }, { nome: 'Sistema' }, { nome: 'Descrição' }, { nome: 'Marca / fornecedor' }, { nome: 'Origem' }, { nome: 'Confiança' }, { nome: '' }], linhas)
         : `<div class="vazio"><h3>Nenhum acabamento vinculado</h3><p>Nenhuma tag, linha de tabela ou trecho de memorial deste projeto apontou para este local.</p></div>`}
       ${faltando.length ? `<div class="faltando">
@@ -1419,7 +1420,7 @@ const fornecedores = {
       <td><button class="btn pequeno" data-acao="editarFornecedorMarca" data-id="${m.id}">Definir fornecedor</button>
         <button class="btn pequeno discreto" data-acao="removerMarca" data-id="${m.id}">Remover</button></td></tr>`).join('');
     return `<div class="cabeca"><div>
-      <button class="btn discreto pequeno voltar" data-rota="produtos">← Produtos</button>
+      <button class="btn discreto pequeno voltar" data-rota="produtos"><i class="ico-voltar" aria-hidden="true"></i>Produtos</button>
       <h1>Marcas e fornecedores</h1>
       <p class="desc">Marca é quem fabrica; fornecedor é quem entrega. O sistema nunca deduz um a partir do outro — os dois só são preenchidos com evidência ou por você.</p></div>
       <div class="acoes"><button class="btn" data-acao="novaMarca">Adicionar marca</button></div></div>
@@ -1643,7 +1644,7 @@ const locais = {
 
     if (estado.filtros.mostrarTriagem) {
       return `<div class="cabeca"><div>
-          <button class="btn discreto pequeno" data-acao="fecharTriagem" style="margin-bottom:6px">← Locais</button>
+          <button class="btn discreto pequeno" data-acao="fecharTriagem" style="margin-bottom:6px"><i class="ico-voltar" aria-hidden="true"></i>Locais</button>
           <h1>Fila de triagem</h1>
           <p class="desc">Especificações lidas dos documentos que nenhuma geometria, rótulo ou termo de legenda amarrou a um local. É aqui que você diz à análise onde cada uma mora.</p></div></div>
         ${cartaoOrfaos(e, { sempre: true })}`;
@@ -1668,7 +1669,7 @@ const locais = {
         ${vivos.length ? `<button class="btn primario" data-acao="baixarTudo"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" stroke-linecap="round" stroke-linejoin="round">${ICONES.baixar}</svg>Baixar XLSX</button>` : ''}
       </div></div>
 
-      ${semLocal(e).length ? `<div class="aviso-faixa"><span>⚠</span><div><b>${semLocal(e).length} especificação(ões) sem local.</b> Nenhuma geometria, rótulo ou termo de legenda as amarrou a um local — a fila de triagem espera a sua decisão.
+      ${semLocal(e).length ? `<div class="aviso-faixa"><span class="ico-aviso" aria-hidden="true">!</span><div><b>${semLocal(e).length} especificação(ões) sem local.</b> Nenhuma geometria, rótulo ou termo de legenda as amarrou a um local — a fila de triagem espera a sua decisão.
         <button class="btn pequeno" data-acao="abrirTriagem" style="margin-left:6px">Abrir fila de triagem</button></div></div>` : ''}
 
       ${vivos.length > 1 ? `<div class="filtros">
@@ -2178,7 +2179,7 @@ const planilhas = {
         <button class="btn" data-acao="abrirObsidian" title="Gera um cofre de notas Markdown com o levantamento inteiro, ligado por [[links]]">Obsidian</button>
         <button class="btn primario" data-acao="baixarXlsx"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" stroke-linecap="round" stroke-linejoin="round">${ICONES.baixar}</svg>Baixar XLSX</button>
       </div></div>
-      ${pend.length ? `<div class="aviso-faixa"><span>⚠</span><div><b>${pend.length} item(ns) pendente(s).</b> Eles entram na exportação com o status e a confiança que têm hoje — a aba Pendências lista cada um. <button class="btn pequeno" data-rota="pendencias" style="margin-left:6px">Revisar agora</button></div></div>` : ''}
+      ${pend.length ? `<div class="aviso-faixa"><span class="ico-aviso" aria-hidden="true">!</span><div><b>${pend.length} item(ns) pendente(s).</b> Eles entram na exportação com o status e a confiança que têm hoje — a aba Pendências lista cada um. <button class="btn pequeno" data-rota="pendencias" style="margin-left:6px">Revisar agora</button></div></div>` : ''}
       <div class="filtros">${abas.map(a => `<button class="btn pequeno ${aba.nome === a.nome ? 'primario' : ''}" data-acao="trocarAba" data-nome="${esc(a.nome)}">${esc(a.nome)} <span class="pilula" style="background:transparent">${a.linhas.length - 1}</span></button>`).join('')}</div>
       <div class="cartao"><div class="rolagem"><table>
         <thead><tr>${(aba.linhas[0] || []).map(c => `<th${/^[a-z_]+\.[a-z_.]+$|^memorial_systems$/.test(c) ? ' class="num"' : ''}>${esc(c)}</th>`).join('')}</tr></thead>
@@ -2366,14 +2367,14 @@ const rastro = {
   render(e) {
     if (!e) return '';
     const a = acharAchado(estado.param);
-    if (!a) return `<div class="cabeca"><div><button class="btn discreto pequeno" data-rota="locais">← Locais</button><h1>Item não encontrado</h1></div></div>`;
+    if (!a) return `<div class="cabeca"><div><button class="btn discreto pequeno" data-rota="locais"><i class="ico-voltar" aria-hidden="true"></i>Locais</button><h1>Item não encontrado</h1></div></div>`;
     const provas = provasDe(e, a);
     const perguntas = rastreio(e, a);
     const cadeia = fluxo(e, a);
     const fontes = (a.evidencias || []).filter(Boolean);
     return `<div class="cabeca">
       <div>
-        <button class="btn discreto pequeno" data-acao="voltarDoRastro" data-amb="${esc(a.localId || '')}" style="margin-bottom:6px">← Voltar</button>
+        <button class="btn discreto pequeno" data-acao="voltarDoRastro" data-amb="${esc(a.localId || '')}" style="margin-bottom:6px"><i class="ico-voltar" aria-hidden="true"></i>Voltar</button>
         <h1>${esc(a.produto || a.descricao || a.codigoOrigem || 'Item')}</h1>
         <p class="desc">${esc([a.localNome || 'sem local', a.pavimento, a.categoria].filter(Boolean).join(' · '))}</p>
       </div>
@@ -2586,7 +2587,7 @@ function cartaoMotor() {
           ? 'Uma chamada por folha: a IA lê os quadros de acabamento, as tabelas, as legendas e as notas, e vincula cada produto ao local que a tabela declara.'
           : 'A folha é lida só pelos leitores vetoriais.'}</span>
       </div>
-      ${IA.desligadoPorFalha ? `<div class="aviso-faixa" style="margin-top:14px"><span>⚠</span><div><b>O motor multimodal se desligou nesta sessão</b> depois de ${IA.maxFalhas} falhas seguidas. O processamento seguiu no motor vetorial — nada foi perdido. Religue no botão acima depois de resolver o servidor.</div></div>` : ''}
+      ${IA.desligadoPorFalha ? `<div class="aviso-faixa" style="margin-top:14px"><span class="ico-aviso" aria-hidden="true">!</span><div><b>O motor multimodal se desligou nesta sessão</b> depois de ${IA.maxFalhas} falhas seguidas. O processamento seguiu no motor vetorial — nada foi perdido. Religue no botão acima depois de resolver o servidor.</div></div>` : ''}
       ${IA.ultimoErro ? `<p style="margin-top:12px;font-size:12.5px;color:var(--ink-3)">Último erro: <code>${esc(IA.ultimoErro.mensagem)}</code> — ${new Date(IA.ultimoErro.quando).toLocaleString('pt-BR')}.</p>` : ''}
       ${IA.chamadas ? `<p style="margin-top:6px;font-size:12.5px;color:var(--ink-3)">${IA.chamadas} chamada(s) ao servidor nesta sessão.</p>` : ''}
       <p style="margin-top:12px;font-size:12.5px;color:var(--ink-3)">A página publicada roda em sandbox sem rede externa: lá o sistema fica sempre na leitura vetorial. Para usar a IA, rode o projeto local com o servidor de <code>/server</code>.</p>

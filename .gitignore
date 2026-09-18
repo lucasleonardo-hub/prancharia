@@ -10,3 +10,7 @@ server/dados/
 .claude/settings.local.json
 # Impeccable: diário de injeção do modo live (gerado)
 .impeccable/live/inject-journal.json
+
+# capturas e perguntas do Impeccable sao de sessao; o brief (surfaces/) vai para o git
+.impeccable/review/
+.impeccable/questions/
