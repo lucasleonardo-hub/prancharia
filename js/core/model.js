@@ -390,7 +390,16 @@ export function migrarParaLocais(projetoAntigo) {
 /* Chave de comparação: colapsa pontuação além do espaço. É o que faz
    "B.SERVIÇO" e "B SERVIÇO" caírem no mesmo lugar. A `normalizar` preserva a
    pontuação, então as comparações de nome usam esta. */
-const chave = s => normalizar(s).replace(/[^a-z0-9]+/g, ' ').trim();
+/* "SALA DE JANTAR", "SALA JANTAR" e "SALA D JANTAR" são o mesmo nome: a
+   preposição é grafia, não identidade */
+const chave = s => {
+  /* "ESCRITÓRIO / DORM. HÓSP." e "DORM. HÓSP. / ESCRITÓRIO" são o mesmo cômodo
+     de uso duplo: as partes separadas por barra entram em ordem alfabética */
+  const partes = String(s || '').split('/')
+    .map(p => normalizar(p).replace(/[^a-z0-9]+/g, ' ').replace(/\b(de|da|do|das|dos|d)\b/g, ' ').replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  return partes.sort().join(' ');
+};
 
 /**
  * Comparação tolerante de nome de ambiente. Cobre zero à esquerda

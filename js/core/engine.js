@@ -863,7 +863,9 @@ function indiceDeChaves(emp) {
  */
 /* "DORM.01", "DORM 01" e "DORM. 01" são o mesmo cômodo: a pontuação e o
    espaço variam com a prancha e com a leitura por imagem, o nome não. */
-const chaveNome = nome => normalizar(nome).replace(/[^a-z0-9]+/g, '');
+const chaveNome = nome => String(nome || '').split('/')
+  .map(p => normalizar(p).replace(/\b(de|da|do|das|dos|d)\b/g, '').replace(/[^a-z0-9]+/g, ''))
+  .filter(Boolean).sort().join('/');   // "A / B" e "B / A" são o mesmo cômodo de uso duplo
 function chaveLocal(nome, pav, tip, comum) {
   if (comum === false || tip) return chaveNome(nome) + '|' + (tip ? 't:' + normalizar(tip) : '');
   return chaveNome(nome) + '|' + normalizar(pav || '') + '|';
@@ -1204,19 +1206,83 @@ function idxCol(tb, termos) {
 
 /* Lê da árvore, não da projeção: os locais desta folha acabaram de ser
    criados e as listas antigas só são refeitas no fim da consolidação. */
+/**
+ * O texto da coluna "Local" de uma tabela nomeia um ou vários ambientes, e
+ * quase sempre de forma abreviada: "Banhos 01, 02 e 03" são três banhos,
+ * "Salas jantar e estar" são duas salas, "Quartos, closet, banhos" são as
+ * famílias inteiras, "depósito 02-térreo" é o depósito 02 do térreo. Aqui o
+ * texto vira a lista de nomes que ele quer dizer, e cada nome é casado com os
+ * locais existentes — exato primeiro, família depois — sem nunca inventar.
+ */
+export function nomesDoLocalEscrito(texto) {
+  const bruto = String(texto || '').replace(/\s+/g, ' ').trim();
+  if (!bruto) return [];
+  const out = [];
+  for (const parte of bruto.split(/\s*(?:;|\/)\s*/)) {
+    /* "BANHOS 01, 02 E 03" → prefixo "BANHOS" + números; "SALAS JANTAR E ESTAR"
+       → prefixo "SALAS" + qualificadores; "QUARTOS, CLOSET, BANHOS" → nomes soltos */
+    const m = /^([A-Za-zÀ-ÿ.]+)\s+((?:\d{1,3}|[A-Za-zÀ-ÿ]+)(?:\s*(?:,| e |\+)\s*(?:\d{1,3}|[A-Za-zÀ-ÿ]+))+)$/i.exec(parte);
+    if (m && !/^(de|da|do|e|com|sem)$/i.test(m[1])) {
+      const prefixo = m[1];
+      const itens = m[2].split(/\s*(?:,| e |\+)\s*/).filter(Boolean);
+      for (const it of itens) out.push(`${prefixo} ${it}`);
+      continue;
+    }
+    for (const p of parte.split(/\s*(?:,| e )\s*/)) if (p.trim()) out.push(p.trim());
+  }
+  /* plural do prefixo: "BANHOS 01" é "BANHO 01", "SALAS JANTAR" é "SALA JANTAR" */
+  return [...new Set(out.map(n => n.replace(/^([A-Za-zÀ-ÿ]{4,}?)(?:s|es)\b(\s)/i, (_, r, sp) => r + sp)))];
+}
+
 function acharAmbientes(emp, texto, pavimentoDica) {
   if (!texto) return [];
-  const partes = texto.split(/\s*(?:,| e |\/|;)\s*/).map(s => s.trim()).filter(Boolean);
   const achados = [];
-  for (const p of partes) {
-    const [nome, pav] = p.split(/\s*[-–]\s*/);
+  for (const nomePav of nomesDoLocalEscrito(texto)) {
+    const [nome, pav] = nomePav.split(/\s*[-–]\s*/);
+    const lidos = new Set();
     for (const a of emp.locais) {
-      if (!mesmoAmbiente(a.nome, nome)) continue;
+      if (a.status === 'excluido' || !mesmoAmbiente(a.nome, nome)) continue;
+      /* sufixo de pavimento veta só quando o local TEM pavimento e ele difere;
+         local sem pavimento lido não pode ser descartado por isso */
       if (pav && a.pavimento && !normalizar(a.pavimento).startsWith(normalizar(pav).slice(0, 4))) continue;
-      achados.push(a);
+      achados.push(a); lidos.add(a.id);
+    }
+    if (lidos.size) continue;
+    /* sem casamento exato, a família resolve: "SALA JANTAR" alcança "SALA DE
+       JANTAR", "QUARTO" alcança QUARTO 01/02/03 — com a força que o casador
+       já atribui, e sem misturar pavimento quando o texto o nomeia */
+    for (const c of casarAmbientes(nome, emp.locais.filter(a => a.status !== 'excluido'), [])) {
+      if (c.forca === 'geral') continue;
+      if (pav && c.ambiente.pavimento && !normalizar(c.ambiente.pavimento).startsWith(normalizar(pav).slice(0, 4))) continue;
+      achados.push(c.ambiente);
     }
   }
   return [...new Set(achados)];
+}
+
+/**
+ * A tabela escreveu um local que nenhuma planta trouxe ("Entrada", "Hall
+ * subsolo"): a linha da tabela é evidência escrita, então o local nasce dela,
+ * com o pavimento do sufixo quando houver, marcado para revisão — é melhor um
+ * local proposto com o dado dentro do que o dado solto na fila de triagem.
+ */
+function localDaTabela(emp, texto, docMeta, folha, tb, linha) {
+  const nomes = nomesDoLocalEscrito(texto);
+  if (nomes.length !== 1) return null;                 // lista de vários: fica na triagem
+  const [nome, pav] = nomes[0].split(/\s*[-–]\s*/);
+  if (!nome || nome.length < 3 || /^\d+$/.test(nome) || /^(geral|todos|diversos|v[áa]rios)$/i.test(nome)) return null;
+  const comum = ladoDoRotulo(emp, { nome }, folha);
+  const local = criarLocal(nome.toUpperCase(), '', pav ? pav.toUpperCase() : '', null);
+  local.origem = 'tabela'; local.confianca = 'media'; local.status = 'revisar'; local.statusAuditoria = 'pendente';
+  local.areaComum = !!comum;
+  local.evidencias.push(criarEvidencia({
+    documentoOrigem: { docId: docMeta.id, pagina: folha.pagina, nomeDoc: docMeta.nome },
+    tipo: 'tabela', coordenadas: linha.caixa, regiao: tb.caixa || linha.caixa, tabelaCoordenadas: tb.caixa || null,
+    tituloLegenda: tb.titulo, texto: texto,
+    proveniencia: { motor_ia: 'fallback_vetorial', metodo: 'local_escrito_na_tabela', confianca: 'media' },
+  }));
+  emp.locais.push(local);
+  return local;
 }
 
 /* ---------------------------------------------------------------- */
@@ -1691,6 +1757,8 @@ function deEsquadrias(emp, tb, folha, docMeta) {
         texto: c.filter(Boolean).join(' | '), tituloLegenda: tb.titulo,
       },
     };
+    const criado = !alvos.length && locTexto ? localDaTabela(emp, locTexto, docMeta, folha, tb, tb.linhas[r]) : null;
+    if (criado) alvos.push(criado);
     if (!alvos.length) {
       out.push(espDeLinha(base, null, {
         localNome: locTexto, tipologia: (emp.estrutura?.tipologia?.[0]?.nome) || '',
@@ -1699,7 +1767,7 @@ function deEsquadrias(emp, tb, folha, docMeta) {
       }));
     } else for (const a of alvos) {
       out.push(espDeLinha(base, a, {
-        confianca: 'alta', status: 'identificado', motivos: [],
+        confianca: a === criado ? 'media' : 'alta', status: a === criado ? 'revisar' : 'identificado', motivos: [],
         cadeia: [a.nome, tb.titulo, cod, desc, 'Esquadrias'],
       }));
     }
@@ -1737,6 +1805,8 @@ function dePedras(emp, tb, folha, docMeta) {
         texto: c.filter(Boolean).join(' | '), tituloLegenda: tb.titulo,
       },
     };
+    const criado = !alvos.length && locTexto ? localDaTabela(emp, locTexto, docMeta, folha, tb, tb.linhas[r]) : null;
+    if (criado) alvos.push(criado);
     if (!alvos.length) {
       out.push(espDeLinha(base, null, {
         localNome: locTexto, tipologia: (emp.estrutura?.tipologia?.[0]?.nome) || '',
@@ -1745,7 +1815,7 @@ function dePedras(emp, tb, folha, docMeta) {
       }));
     } else for (const a of alvos) {
       out.push(espDeLinha(base, a, {
-        confianca: 'alta', status: 'identificado', motivos: [],
+        confianca: a === criado ? 'media' : 'alta', status: a === criado ? 'revisar' : 'identificado', motivos: [],
         cadeia: [a.nome, tb.titulo, cod || '—', desc, 'Revestimentos em Pedras Naturais'],
       }));
     }

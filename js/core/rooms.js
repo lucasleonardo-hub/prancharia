@@ -209,6 +209,7 @@ function reprovado(s) {
   if (!s || s.length < 2 || s.length > 34) return true;
   if (AREA.test(s) || NUMERICO.test(s) || NIVEL.test(s) || MEDIDA.test(s)) return true;
   if (CODIGO.test(s)) return true;
+  if (/^[áa]rea\s*(m²|m2|\(m|total|útil|util)?$/i.test(s)) return true;   // cabeçalho de coluna, não ambiente
   if (MOLDURA.test(s)) return true;
   if (ELEMENTO.test(s)) return true;
   if (!/[A-Za-zÀ-ÿ]{2}/.test(s)) return true;          // precisa de letra de verdade
@@ -347,23 +348,34 @@ export function lerAmbientes(textos, caixasProibidas = []) {
   const temAncoraCotada = confirmados.length > 0;
   let ancoras = confirmados;
   if (!confirmados.length) {
+    /* O corpo de letra dominante da folha nem sempre é o dos rótulos: numa
+       planta de paginação, o texto mais frequente é o da legenda (16 px) e os
+       nomes dos ambientes vêm em 10 px. Então cada corpo presente é testado, e
+       vale o que rende mais nomes de ambiente do vocabulário — com o mínimo de
+       três de sempre, para legenda e selo nunca servirem de âncora sozinhos. */
     const comLetra = horizontais.filter(t => /[A-Za-zÀ-ÿ]{3}/.test(limpo(t)));
-    const freq = new Map();
-    for (const t of comLetra) { const k = t.h.toFixed(1); freq.set(k, (freq.get(k) || 0) + 1); }
-    const dominante = [...freq.entries()].sort((a, b) => b[1] - a[1])[0];
-    corpo = dominante ? Number(dominante[0]) : 0;
-    if (!corpo) return [];
-    ancoras = comLetra
-      .filter(t => Math.abs(t.h - corpo) <= corpo * 0.14)
-      .map(t => ({ t, s: limpo(t) }))
-      .filter(({ s }) => !reprovado(s) && AMBIENTE.test(s) && palavras(s) <= 4 && !CONECTIVO.test(s))
-      .map(({ t, s }) => ({
-        nome: s, area: '',
-        x: centro(t), y: t.y, alturaTexto: t.h,
-        bboxTexto: [t.x, t.y - t.h, t.x + t.w, t.y + 2],
-        origem: 'rotulo', confianca: 'media',
-      }));
-    if (ancoras.length < 3) return [];
+    const corpos = [...new Set(comLetra.map(t => Number(t.h.toFixed(1))))].filter(Boolean);
+    const rotulosDe = (c) => blocos(comLetra.filter(t => Math.abs(t.h - c) <= c * 0.14), c)
+      .map(b => ({ b, s: b.frase }))
+      .filter(({ b, s }) => !reprovado(s) && AMBIENTE.test(s) && palavras(s) <= 4 && !CONECTIVO.test(s)
+        && (b.itens.length === 1 || AMBIENTE.test(limpo(b.ancora))))
+      .map(({ b, s }) => {
+        const t = b.ancora, ult = b.itens[b.itens.length - 1];
+        return {
+          nome: s, area: '',
+          x: centro(t), y: t.y, alturaTexto: t.h,
+          bboxTexto: [Math.min(...b.itens.map(i => i.x)), t.y - t.h, Math.max(...b.itens.map(i => i.x + i.w)), ult.y + 2],
+          origem: 'rotulo', confianca: 'media',
+        };
+      });
+    let melhor = { corpo: 0, ancoras: [] };
+    for (const c of corpos) {
+      const lista = rotulosDe(c);
+      if (lista.length > melhor.ancoras.length) melhor = { corpo: c, ancoras: lista };
+    }
+    corpo = melhor.corpo;
+    ancoras = melhor.ancoras;
+    if (!corpo || ancoras.length < 3) return [];
     for (const a of ancoras) confirmados.push(a);
   }
 
@@ -437,7 +449,7 @@ export function janelasDePlanta(ambientes, folga = 130) {
 
 /* O que é nome de pavimento ("TÉRREO", "1º SUBSOLO", "PAVIMENTO TIPO",
    "COBERTURA") e o que é nome de torre ou bloco ("TORRE 1", "BLOCO B"). */
-const PAV_NOME = /^(?:(?:\d{1,2}\s*[ºo°]?\s*)?(?:SUBSOLO|T[ÉE]RREO|PAVIMENTO|PAV\.?|ANDAR|COBERTURA|[ÁA]TICO|MEZANINO|SOBRELOJA|PILOTIS|GARAGEM|TIPO)\b[A-ZÀ-Ýa-zà-ÿ0-9 .ºª]{0,24}|(?:PAVIMENTO|PAV\.?|ANDAR)\s+[A-ZÀ-Ý0-9][A-ZÀ-Ýa-zà-ÿ0-9 .ºª]{0,24})$/i;
+const PAV_NOME = /^(?:(?:\d{1,2}\s*[ºo°]?\s*)?(?:SUBSOLO|T[ÉE]RREO|PAVIMENTO|PAV\.?|ANDAR|COBERTURA|[ÁA]TICO|MEZANINO|SOBRELOJA|PILOTIS|GARAGEM|TIPO|SUPERIOR|INFERIOR)\b[A-ZÀ-Ýa-zà-ÿ0-9 .ºª]{0,24}|(?:PAVIMENTO|PAV\.?|ANDAR)\s+[A-ZÀ-Ý0-9][A-ZÀ-Ýa-zà-ÿ0-9 .ºª]{0,24})$/i;
 const GRUPO_NOME = /^(?:TORRE|BLOCO|EDIF[ÍI]CIO|ED\.?|QUADRA|M[ÓO]DULO|SETOR)\s*[A-Z0-9]{1,4}$/i;
 
 /**
@@ -450,7 +462,11 @@ export function lerPavimentos(textos) {
   const out = [];
   for (const t of textos) {
     const s = limpo(t);
-    if (s.length > 90 || (!/PLANTA/i.test(s) && !/^PAVIMENTO\b/i.test(s))) continue;
+    /* "PLANTA BAIXA - TÉRREO", "PAVIMENTO SUPERIOR" e também o título de
+       planta que só traz o nome do projeto e o pavimento: "ALEXANDRE POMPEO -
+       TÉRREO". O que decide é o segmento de pavimento depois do traço. */
+    const tituloDeProjeto = /[-–]\s*(?:\d{1,2}\s*[ºo°]?\s*)?(?:SUBSOLO|T[ÉE]RREO|PAVIMENTO|COBERTURA|[ÁA]TICO|MEZANINO|PILOTIS|SUPERIOR|INFERIOR)\b[^-–]{0,20}$/i.test(s) && s.length <= 60;
+    if (s.length > 90 || (!/PLANTA/i.test(s) && !/^PAVIMENTO\b/i.test(s) && !tituloDeProjeto)) continue;
     const segmentos = s.split(/\s*[-–|]\s*/)
       .map(x => x.replace(/^(?:PLANTA(?:\s+BAIXA)?|BAIXA)\s*(?:D[OAE]S?\s+)?/i, '').trim()).filter(Boolean);
     let nome = '', grupo = '';
