@@ -379,6 +379,9 @@ function herdarTipologiaNoPedaco(itens) {
     const distintas = new Set(comTip.map(it => lerTipologia(it.tipologia)));
     for (const it of grupo) {
       if (lerTipologia(it.tipologia || '')) continue;
+      /* elevador, escada e hall estão no pedaço mas não na unidade: área comum
+         nunca herda tipologia (medido: ELEVADOR 01 virou "TIPO 3") */
+      if (classificarArea(it.local) === 'comum') continue;
       if (distintas.size === 1) { it.tipologia = comTip[0].tipologia; herdadas++; continue; }
       const c = centro(it); if (!c) continue;
       let melhor = null, d = Infinity;
