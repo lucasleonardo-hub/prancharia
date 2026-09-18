@@ -127,7 +127,7 @@ export function montarVisualizador(caixa, { documentoId, pagina = 1, foco = null
       <button class="btn pequeno" data-vis="menos">−</button>
       <span class="pilula" data-vis-zoom>100%</span>
       <button class="btn pequeno" data-vis="mais">+</button>
-      <button class="btn pequeno" data-vis="ajustar">Prancha inteira</button>
+      <button class="btn pequeno" data-vis="ajustar">${alvo && alvo.papel === 'memorial' ? 'Página inteira' : 'Prancha inteira'}</button>
       ${ponto ? `<button class="btn pequeno primario" data-vis="foco">Centralizar${alvo.rotulo && !compacto ? ' · ' + alvo.rotulo : ''}</button>` : ''}
       ${leg ? '<button class="btn pequeno" data-vis="legenda">Ir à legenda</button>' : ''}
       <span class="pilula" data-vis-pag>página ${pagina}</span>

@@ -27,6 +27,15 @@ export const NIVEIS = [
   { id: 'zoom', ordem: 3, rotulo: 'Zoom da evidência', desc: 'O ponto exato de onde o dado saiu.' },
 ];
 
+/* O memorial não tem "prancha": quando a evidência ativa é um trecho de
+   texto, os três níveis são a página, o parágrafo e a frase. */
+export const NIVEIS_MEMORIAL = [
+  { id: 'prancha', ordem: 1, rotulo: 'Página inteira', desc: 'A página do memorial, com o trecho marcado.' },
+  { id: 'regiao', ordem: 2, rotulo: 'Parágrafo', desc: 'O parágrafo em volta do trecho.' },
+  { id: 'zoom', ordem: 3, rotulo: 'Trecho', desc: 'A frase exata de onde o dado saiu.' },
+];
+export const niveisDe = papel => (papel === 'memorial' ? NIVEIS_MEMORIAL : NIVEIS);
+
 /* ---------- leitura da Evidência ---------- */
 
 export const docDe = ev => (ev && ev.documentoOrigem) || {};
@@ -42,7 +51,7 @@ export const refsDe = alvo => [...new Set((alvo.evidencias || []).map(refDoc).fi
 export const motorDe = ev => ((ev && ev.proveniencia) || {}).motor_ia || '';
 export const metodoDe = ev => ((ev && ev.proveniencia) || {}).metodo || '';
 
-const ehMemorial = ev => ev.tipo === 'texto_memorial' || /memorial/i.test(ev.tituloLegenda || '') || /memorial/i.test(nomeDoc(ev));
+export const ehMemorial = ev => !!ev && (ev.tipo === 'texto_memorial' || /memorial/i.test(ev.tituloLegenda || '') || /memorial/i.test(nomeDoc(ev)));
 
 const dilatar = (c, fx, fy) => {
   if (!c || c.length !== 4) return null;
@@ -80,14 +89,18 @@ export function provasDe(emp, esp) {
     const evs = local.evidencias || [];
     const ev = evs.find(x => (esp.evidencias || []).some(y => idDoc(y) === idDoc(x))) || evs[0];
     if (ev && ev.coordenadas) {
+      /* o local nomeado pelo memorial tem como rótulo o título de seção do
+         memorial — é um trecho de texto, não um rótulo de planta */
+      const papelLocal = ehMemorial(ev) ? 'memorial' : 'local';
       push({
-        papel: 'local', titulo: local.nome,
+        papel: papelLocal, titulo: local.nome,
         documentoId: idDoc(ev), documento: nomeDoc(ev), pagina: paginaDoc(ev),
         caixaZoom: dilatar(ev.coordenadas, 0.5, 1.6),
         caixaRegiao: ev.regiao || dilatar(ev.coordenadas, 5, 6),
-        realces: [{ caixa: ev.coordenadas, cor: PAPEIS.local.cor }],
+        realces: [{ caixa: ev.coordenadas, cor: PAPEIS[papelLocal].cor }],
         texto: ev.texto || local.nome,
-        nota: local.area ? `Área lida na planta: ${local.area}` : '',
+        nota: papelLocal === 'memorial' ? 'Título de seção do memorial que nomeou este local.'
+          : (local.area ? `Área lida na planta: ${local.area}` : ''),
         motor: motorDe(ev), metodo: metodoDe(ev),
       });
     }

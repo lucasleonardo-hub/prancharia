@@ -16,7 +16,7 @@
 import { esc, marcaForma, seloConfianca, seloStatus, estado, irPara, emp } from '../app.js';
 import { montarVisualizador, recortar } from './viewer.js';
 import { MOTIVOS_PENDENCIA } from '../core/model.js';
-import { provasDe, fluxo, PAPEIS, NIVEIS, refDoc } from '../core/provas.js';
+import { provasDe, fluxo, PAPEIS, NIVEIS, niveisDe, ehMemorial, refDoc } from '../core/provas.js';
 
 const ROTULO_MOTOR = {
   fallback_vetorial: 'leitura vetorial',
@@ -83,7 +83,7 @@ export function abrirGaveta(esp) {
       <section>
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
           <div class="cat" style="color:var(--ink-3)">Evidências (${provas.length})</div>
-          <span style="margin-left:auto;font-size:11.5px;color:var(--ink-3)">recortes da prancha original</span>
+          <span style="margin-left:auto;font-size:11.5px;color:var(--ink-3)" data-fonte-recorte>recortes da prancha original</span>
         </div>
         ${provas.length ? `
         <div class="abas-prova" data-abas>
@@ -95,7 +95,7 @@ export function abrirGaveta(esp) {
           ${NIVEIS.map(n => `<button class="nivel-cartao${n.id === 'regiao' ? ' ativo' : ''}" data-nivel="${n.id}">
             <span class="nivel-num">${n.ordem}</span>
             <canvas data-mini="${n.id}"></canvas>
-            <b>${esc(n.rotulo)}</b>
+            <b data-nivel-rotulo>${esc(n.rotulo)}</b>
           </button>`).join('')}
         </div>
 
@@ -181,6 +181,7 @@ function pintar() {
   const p = ctx.provas[ctx.iProva];
   if (!cx || !p) return;
 
+  vocabulario(g, p);
   const chave = [p.documentoId, p.pagina, ctx.iProva].join('|');
   if (ctx.chave !== chave) {
     ctx.chave = chave;
@@ -201,6 +202,22 @@ function pintar() {
   enquadrar();
   miniaturas(g, p);
   rodape(g, p);
+}
+
+/* A gaveta fala a língua da evidência ativa: recorte de prancha ou trecho
+   do memorial. O que muda é só o vocabulário — o visor é o mesmo. */
+function vocabulario(g, p) {
+  const memorial = p.papel === 'memorial';
+  const fonte = g.querySelector('[data-fonte-recorte]');
+  if (fonte) fonte.textContent = memorial ? 'trecho do memorial descritivo' : 'recortes da prancha original';
+  const ver = g.querySelector('[data-acao="verNaPrancha"]');
+  if (ver) ver.textContent = memorial ? 'Ver no memorial' : 'Ver na prancha';
+  const niveis = niveisDe(p.papel);
+  g.querySelectorAll('[data-nivel]').forEach(b => {
+    const n = niveis.find(x => x.id === b.dataset.nivel);
+    const r = b.querySelector('[data-nivel-rotulo]');
+    if (n && r) r.textContent = n.rotulo;
+  });
 }
 
 function enquadrar() {
@@ -233,7 +250,8 @@ function miniaturas(g, p) {
 
 function rodape(g, p) {
   const rod = g.querySelector('[data-rodape]');
-  const nivel = NIVEIS.find(n => n.id === ctx.nivel) || NIVEIS[1];
+  const niveis = niveisDe(p.papel);
+  const nivel = niveis.find(n => n.id === ctx.nivel) || niveis[1];
   if (rod) rod.innerHTML = `<b>${nivel.ordem}. ${esc(nivel.rotulo)}</b> · ${esc(p.documento || '')} · página ${esc(p.pagina || '—')}`
     + ` · <b>${esc(PAPEIS[p.papel].rotulo)}</b>${p.titulo ? ' · ' + esc(p.titulo) : ''}`
     + `${p.motor ? ` · <span style="color:var(--ink-3)">${esc(nomeMotor(p.motor))}${p.metodo ? ' / ' + esc(p.metodo) : ''}</span>` : ''}`;
@@ -266,7 +284,7 @@ export function irVerNaPranchaLocal(local) {
      o memorial só quando não há mais nada */
   const evs = local.evidencias || [];
   const ev = evs.find(x => x.coordenadas)
-    || evs.find(x => x.documentoOrigem && x.documentoOrigem.docId && !/memorial/i.test(x.tituloLegenda || ''))
+    || evs.find(x => x.documentoOrigem && x.documentoOrigem.docId && !ehMemorial(x))
     || evs[0];
   if (!ev || !ev.documentoOrigem || !ev.documentoOrigem.docId) return;
   estado.filtros.foco = {

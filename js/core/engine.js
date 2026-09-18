@@ -5,6 +5,7 @@
 import { openPdf, walkPaths, readText, isRed, naFilaDeRender } from './pdfdoc.js';
 import { coletorDeFormas, montarTags, FORMAS } from './shapes.js';
 import { lerAmbientes, lerPavimentos, lerTipologias, atribuirTipologias, criarMascara, vincularTags, janelasDePlanta } from './rooms.js';
+import { ladoDaFolha } from './areas.js';
 import { classificarArea, lerTipologia, partesDoNome, familiaDoNome, mesmoCerne } from './areas.js';
 import { temAreasComuns, temNivel } from './tipos.js';
 import { coletorDeFios, lerTabela } from './tables.js';
@@ -804,11 +805,16 @@ function indiceDeChaves(emp) {
  *   - cômodo de unidade sem tipologia lida: só o nome — as plantas dos andares
  *     repetidas não podem virar um DORM.01 por andar.
  */
+/* "DORM.01", "DORM 01" e "DORM. 01" são o mesmo cômodo: a pontuação e o
+   espaço variam com a prancha e com a leitura por imagem, o nome não. */
+const chaveNome = nome => normalizar(nome).replace(/[^a-z0-9]+/g, '');
 function chaveLocal(nome, pav, tip, comum) {
-  if (comum === false || tip) return normalizar(nome) + '|' + (tip ? 't:' + normalizar(tip) : '');
-  return chaveAmb(nome, pav) + '|';
+  if (comum === false || tip) return chaveNome(nome) + '|' + (tip ? 't:' + normalizar(tip) : '');
+  return chaveNome(nome) + '|' + normalizar(pav || '') + '|';
 }
 const chaveDoLocal = l => chaveLocal(l.nome, l.pavimento, l.tipologia, !!l.areaComum);
+/* expostos para o teste de identidade do local (testes e e2e) */
+export { chaveLocal, ladoDoRotulo };
 
 /** O lado do condomínio que um rótulo de prancha revela: true, false ou undefined. */
 function ladoDoRotulo(emp, a, folha) {
@@ -817,6 +823,12 @@ function ladoDoRotulo(emp, a, folha) {
   if (vocab === 'comum') return true;
   if (vocab === 'privativa') return false;
   if (folha && (folha.tipologias || []).length) return true;   // folha com unidades marcadas: fora delas é comum
+  /* nome que sozinho não decide (CIRCULAÇÃO, WC, LAVANDERIA, DEPÓSITO): a
+     maioria da folha decide — é o que impede a planta de cada pavimento de
+     criar um WC novo por andar */
+  const lado = a.ladoFolha || (folha && folha.ladoFolha) || '';
+  if (lado === 'privativa') return false;
+  if (lado === 'comum') return true;
   return temAreasComuns(emp) ? undefined : false;
 }
 
@@ -956,6 +968,7 @@ function obterOuCriarLocal(emp, a, docMeta, folha, porChave = null) {
 
 /** Cria ou reencontra o Local de cada rótulo lido na folha. */
 function casarLocais(emp, folha, docMeta) {
+  folha.ladoFolha = ladoDaFolha((folha.ambientes || []).map(x => x.nome));
   const porChave = new Map(emp.locais.map(l => [chaveDoLocal(l), l]));
   const criados = [];
   for (const a of folha.ambientes) {
@@ -1279,6 +1292,7 @@ async function leituraAmpla(emp, folha, docMeta) {
   };
 
   const out = [];
+  const ladoIA = ladoDaFolha(itens.filter(it => it.origemLeitura === 'planta').map(it => it.local));
   for (const it of itens) {
     /* planta lida por imagem: a IA devolve um item por rótulo de ambiente,
        com a tipologia da unidade ("TIPO 1") quando a planta marca as
@@ -1293,6 +1307,7 @@ async function leituraAmpla(emp, folha, docMeta) {
         grupo: unica ? (unica.grupo || '') : '',
         tipologia: tipologiasSuspeitas ? '' : (lerTipologia(it.tipologia || '') || ''),
         confianca: ['alta', 'media'].includes(it.confianca) ? it.confianca : 'baixa',
+        ladoFolha: ladoIA,
       };
       const { local } = obterOuCriarLocal(emp, amb, docMeta, folha);
       if (!(it.descricao || it.produto || it.codigoOrigem)) continue;

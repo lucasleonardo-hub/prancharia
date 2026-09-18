@@ -111,7 +111,27 @@ export function lerTipologia(texto) {
   const m = /^(?:(?:APTO|APARTAMENTO|AP|UNIDADE|UNID|CASA|LOJA|SALA|QUARTO)\.?\s+)?(?:TIPO|TIPOLOGIA|TP)\.?\s*[-–:]?\s*(?:(PNE|PCD|PCR|PMR|ACESSIVEL)\s*)?[-–]?\s*(\d{1,3}|[A-Z]{1,2}\d?)(?:\s*[-–]?\s*(PNE|PCD|PCR|PMR|ACESSIVEL))?$/.exec(s);
   if (!m) return null;
   const marca = m[1] || m[3] || '';
-  return `TIPO ${marca ? marca + ' ' : ''}${m[2]}`;
+  /* "TIPO 03" e "TIPO 3" são a mesma tipologia: o zero à esquerda é grafia da
+     prancha (ou da leitura por imagem), não identidade */
+  const numero = /^\d+$/.test(m[2]) ? String(Number(m[2])) : m[2];
+  return `TIPO ${marca ? marca + ' ' : ''}${numero}`;
+}
+
+/**
+ * O lado que a folha inteira revela: uma planta cheia de SALA, DORM e SUÍTE é
+ * planta de unidade, e nela CIRCULAÇÃO, WC e LAVANDERIA são privativos; uma
+ * planta de HALL, ESCADA e SALÃO DE FESTAS é de área comum, e nela DEPÓSITO e
+ * WC são comuns. Decide só quando a maioria é clara — senão devolve ''.
+ */
+export function ladoDaFolha(nomes) {
+  let comum = 0, privativa = 0;
+  for (const n of nomes || []) {
+    const v = classificarArea(n);
+    if (v === 'comum') comum++; else if (v === 'privativa') privativa++;
+  }
+  if (privativa >= 2 && privativa > comum) return 'privativa';
+  if (comum >= 2 && comum > privativa) return 'comum';
+  return '';
 }
 
 const PAV = /\b(?:do|da|no|na|dos|das|de)\s+((?:\d{1,2}\s*[ºo°]?\s*)?(?:pavimento|pav\.?|andar|subsolo|terreo|atico|cobertura|mezanino|sobreloja)(?:\s+(?:tipo|superior|inferior|\d{1,2}))?)\b/i;

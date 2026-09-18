@@ -74,6 +74,11 @@ export function linhasPlanilha(emp, especs, comExtras = false) {
 
 function montarDescricao(a) {
   const partes = [a.descricao || ''];
+  /* a planilha não tem coluna de quantidade: mais de uma esquadria do mesmo
+     código no local vira "2 un." na frente da descrição, como o usuário
+     preenche à mão — a IA transcreve, e é aqui que a contagem vira texto */
+  const qtd = Number(String(a.quantidade || '').replace(',', '.'));
+  if (a.categoria === 'Esquadrias' && qtd > 1) partes.unshift(`${qtd} un.`);
   if (a.modelo && !(a.descricao || '').includes(a.modelo)) partes.push('Modelo: ' + a.modelo);
   if (a.dimensao && !(a.descricao || '').includes(a.dimensao)) partes.push(a.dimensao);
   if (a.peitoril) partes.push('Peitoril: ' + a.peitoril);

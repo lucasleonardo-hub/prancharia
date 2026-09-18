@@ -22,7 +22,7 @@ import { openPdf } from '../core/pdfdoc.js';
 import { pendencias, pastaDeAbas, exportarXlsx, exportarCsv, exportarJson, relatorioAuditoria, tipologiasComDados, tabelaCopia, ordenarEspecificacoes, locaisDe, especificacoesDe } from '../core/exporter.js';
 import { auditar, lerXlsx, lerCsv, textoDePdf } from '../core/audit.js';
 import { CLASSES, analisarEmpreendimento, analisarArquivos, agrupar, resumo } from '../core/auditoria.js';
-import { provasDe, rastreio, fluxo, PAPEIS, NIVEIS, refDoc, nomeDoc, paginaDoc, idDoc, refsDe, motorDe } from '../core/provas.js';
+import { provasDe, rastreio, fluxo, PAPEIS, NIVEIS, refDoc, nomeDoc, paginaDoc, idDoc, refsDe, motorDe, ehMemorial } from '../core/provas.js';
 import { abrirGaveta, irVerNaPrancha, irVerNaPranchaLocal, fecharGaveta } from './drawer.js';
 import { montarVisualizador, recortar } from './viewer.js';
 
@@ -980,13 +980,16 @@ function fichaAmbiente(e, id) {
   const itens = itensDo(e, a.id);
   const itensOrd = semVaziosRedundantes(ordenarAchados(itens));
   itens.length = 0; itens.push(...itensOrd);
-  const ev = (a.evidencias || [])[0];
+  /* o rótulo lido na planta ganha do título do memorial: a prancha com
+     posição primeiro, depois qualquer prancha, o memorial por último */
+  const evsLocal = a.evidencias || [];
+  const ev = evsLocal.find(x => x.coordenadas && !ehMemorial(x)) || evsLocal.find(x => idDoc(x) && !ehMemorial(x)) || evsLocal[0];
   const cats = CATEGORIAS.filter(c => itens.some(i => i.categoria === c));
   const esq = itens.filter(i => i.categoria === 'Esquadrias');
   const pend = itens.filter(i => i.status === 'revisar' || i.status === 'conflito' || i.confianca === 'baixa');
   const docs = [...new Set(itens.flatMap(i => (i.evidencias || []).map(nomeDoc)).concat((a.evidencias || []).map(nomeDoc)))].filter(Boolean);
   const doMemorial = itens.filter(i => i.origemLeitura === 'memorial'
-    || (i.evidencias || []).some(f => /memorial/i.test(f.tituloLegenda || '') || /memorial/i.test(nomeDoc(f))));
+    || (i.evidencias || []).some(ehMemorial));
   const faltando = ESSENCIAIS_LOCAL.filter(c => !itens.some(i => i.categoria === c));
   const semCat = itens.filter(i => !i.categoria);
   const grupos = [...cats, ...(semCat.length ? [''] : [])];
@@ -1094,7 +1097,7 @@ function fichaAmbiente(e, id) {
     ${doMemorial.length ? `<div class="cartao"><header><h2>O que o memorial diz sobre este local</h2>
       <div class="acoes"><span class="selo neutro">${doMemorial.length}</span></div></header>
       <div class="corpo"><ul class="lista-limpa">${doMemorial.map(i => {
-        const f = (i.evidencias || []).find(x => /memorial/i.test(x.tituloLegenda || '') || /memorial/i.test(nomeDoc(x))) || {};
+        const f = (i.evidencias || []).find(ehMemorial) || {};
         return `<li><span class="pilula">p.${esc(paginaDoc(f))}</span><div><b>${esc(i.produto || i.categoria || '')}</b>
           <div style="color:var(--ink-2);font-size:12.5px">${esc((f.texto || i.descricao || '').slice(0, 220))}</div></div></li>`;
       }).join('')}</ul></div>
@@ -1104,9 +1107,9 @@ function fichaAmbiente(e, id) {
       <div class="cartao"><header><h2>Onde o local foi lido</h2></header>
         <div class="corpo">${ev && ev.coordenadas ? `<div class="recorte">
           <canvas data-mapa-ambiente='${esc(JSON.stringify({ documentoId: idDoc(ev), pagina: paginaDoc(ev), caixa: ev.regiao || janelaCentrada(ev.coordenadas, 400, 250), realces: [{ caixa: ev.coordenadas, cor: "#d13b2a" }] }))}'></canvas>
-          <div class="legenda-recorte">${esc(refDoc(ev))}${ev.regiao ? ' · região do local (Nível 2)' : ''}</div></div>
-          <button class="btn pequeno" data-acao="verNaPranchaLocal" data-id="${a.id}" style="margin-top:10px">Ver na prancha</button>`
-          : ev && ev.documentoOrigem && ev.documentoOrigem.docId && !/memorial/i.test(ev.tituloLegenda || '')
+          <div class="legenda-recorte">${esc(refDoc(ev))}${ehMemorial(ev) ? ' · título de seção do memorial' : (ev.regiao ? ' · região do local (Nível 2)' : '')}</div></div>
+          <button class="btn pequeno" data-acao="verNaPranchaLocal" data-id="${a.id}" style="margin-top:10px">${ehMemorial(ev) ? 'Ver no memorial' : 'Ver na prancha'}</button>`
+          : ev && ev.documentoOrigem && ev.documentoOrigem.docId && !ehMemorial(ev)
             ? `<p style="color:var(--ink-3);font-size:13px">Rótulo lido por imagem em ${esc(refDoc(ev))}, sem a posição gravada — a prancha abre inteira.</p>
                <button class="btn pequeno" data-acao="verNaPranchaLocal" data-id="${a.id}" style="margin-top:10px">Ver na prancha</button>`
           : ev && ev.documentoOrigem && ev.documentoOrigem.docId
@@ -1181,7 +1184,7 @@ function origemDoItem(i) {
   if (i.forma) return marcaForma(i.forma, i.numero);
   const f = (i.evidencias || [])[0] || {};
   const o = i.origemLeitura || '';
-  if (o === 'memorial' || /memorial/i.test(f.tituloLegenda || '')) return `<span class="pilula">memorial p.${esc(paginaDoc(f) || '—')}</span>`;
+  if (o === 'memorial' || ehMemorial(f)) return `<span class="pilula">memorial p.${esc(paginaDoc(f) || '—')}</span>`;
   if (o === 'legenda_tabela') return `<span class="pilula">legenda da prancha</span>`;
   if (o === 'tabela') return `<span class="pilula">${esc(f.tituloLegenda || 'tabela da prancha')}</span>`;
   if (o === 'hachura') return `<span class="pilula">hachura da área</span>`;
