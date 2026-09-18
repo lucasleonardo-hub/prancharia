@@ -117,7 +117,22 @@ async function comGemini({ instrucaoSistema, schema, partes, limiteMs, chaveCach
   const modelo = modeloGemini(chaveCache, instrucaoSistema, schema, maxOutputTokens);
   const { signal, cancelar } = comPrazo(limiteMs);
   try {
-    const r = await modelo.generateContent({ contents: [{ role: 'user', parts: partes }] }, { signal });
+    /* 503 "model overloaded" e 429 são passageiros e frequentes no Flash: duas
+       novas tentativas com espera curta, ainda dentro do prazo da chamada,
+       antes de entregar a folha ao próximo provedor da cadeia. */
+    let r;
+    for (let tentativa = 0; ; tentativa++) {
+      try {
+        r = await modelo.generateContent({ contents: [{ role: 'user', parts: partes }] }, { signal });
+        break;
+      } catch (err) {
+        const msg = String(err && err.message || '');
+        const passageiro = msg.includes('[503') || msg.includes('[429') || /overloaded/i.test(msg);
+        if (!passageiro || tentativa >= 2 || signal.aborted) throw err;
+        console.warn(`[gemini] ${msg.slice(0, 80)}… — nova tentativa ${tentativa + 1}/2`);
+        await new Promise(res => setTimeout(res, 4000 * (tentativa + 1)));
+      }
+    }
     const bruto = lerJsonSolto(r.response.text());
     const tokens = (r.response.usageMetadata || {}).totalTokenCount || 0;
     return { bruto, tokens, modelo: GEMINI_MODEL };

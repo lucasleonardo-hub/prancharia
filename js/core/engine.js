@@ -178,6 +178,10 @@ export const OPCOES_RECORTE = {
   larguraLocal: 1600,      // Nível 2 — a região do local
   larguraDetalhe: 900,     // Nível 3 — o zoom no ponto exato
   larguraLegenda: 1000,
+  /* Mosaico da planta raster: cada pedaço da folha sai nesta largura, que é
+     a que deixa o rótulo de ambiente legível numa A0 (a folha inteira, em
+     qualquer largura razoável, não deixa). */
+  larguraMosaico: 1600,
   /* Um quadro de acabamentos tem texto de 7,8 pt numa folha de 3370 pt. Para a
      IA ler a linha, o recorte precisa de resolução: 1800 px na largura do
      quadro dá ~4× o tamanho original, e é o que faz a diferença entre ler
@@ -340,7 +344,14 @@ export function regioesDeLeitura(folha) {
   if (cl) marcadas.push({ caixa: cl, rotulo: 'bloco de legendas' });
 
   if (!marcadas.length) {
-    return [{ caixa: [0, 0, base.width, base.height], rotulo: 'a folha inteira', largura: OPCOES_RECORTE.larguraFolha }];
+    /* Folha sem quadro, tabela ou legenda reconhecidos — em geral a planta
+       raster, desenhada como imagem. Inteira numa imagem só, os rótulos de
+       ambiente de uma A0 ficam ilegíveis (medido: um local por folha). Vai um
+       mosaico em grade com sobreposição, cada pedaço em alta resolução e em
+       chamada própria (a chamada única com sete imagens era recusada com 503
+       pelo tamanho); a Q12 devolve a caixa por imagem, e caixaNaPagina traz
+       cada rótulo de volta para a folha. */
+    return mosaicoDaFolha(base);
   }
   /* quadros encostados viram um recorte só, para a IA ver a tabela completa */
   const juntos = agruparCaixas(marcadas.map(m => m.caixa), 90);
@@ -352,6 +363,48 @@ export function regioesDeLeitura(folha) {
       largura: OPCOES_RECORTE.larguraQuadro,
     };
   });
+}
+
+/** Cômodo sem tipologia herda a do vizinho mais próximo no mesmo pedaço. */
+function herdarTipologiaNoPedaco(itens) {
+  const plantas = itens.filter(it => it.origemLeitura === 'planta' && it.local);
+  const porImagem = new Map();
+  for (const it of plantas) { const k = Number(it.imagem) || 1; (porImagem.get(k) || porImagem.set(k, []).get(k)).push(it); }
+  const centro = it => (Array.isArray(it.caixa) && it.caixa.length === 4)
+    ? [(Number(it.caixa[0]) + Number(it.caixa[2])) / 2, (Number(it.caixa[1]) + Number(it.caixa[3])) / 2] : null;
+  let herdadas = 0;
+  for (const grupo of porImagem.values()) {
+    const comTip = grupo.filter(it => lerTipologia(it.tipologia || ''));
+    if (!comTip.length) continue;
+    const distintas = new Set(comTip.map(it => lerTipologia(it.tipologia)));
+    for (const it of grupo) {
+      if (lerTipologia(it.tipologia || '')) continue;
+      if (distintas.size === 1) { it.tipologia = comTip[0].tipologia; herdadas++; continue; }
+      const c = centro(it); if (!c) continue;
+      let melhor = null, d = Infinity;
+      for (const v of comTip) { const cv = centro(v); if (!cv) continue; const dd = Math.hypot(cv[0] - c[0], cv[1] - c[1]); if (dd < d) { d = dd; melhor = v; } }
+      if (melhor && d < 350) { it.tipologia = melhor.tipologia; herdadas++; }
+    }
+  }
+  if (herdadas) console.info(`[IA] mosaico: ${herdadas} cômodo(s) herdaram a tipologia do vizinho no mesmo pedaço`);
+}
+
+/** A folha em pedaços: 3 × 2 na paisagem, 2 × 3 no retrato, com 12 % de
+    sobreposição para um rótulo cortado na borda aparecer inteiro no vizinho. */
+export function mosaicoDaFolha(base, { colunas = null, linhas = null, sobra = 0.12 } = {}) {
+  const paisagem = base.width >= base.height;
+  const nc = colunas || (paisagem ? 3 : 2), nl = linhas || (paisagem ? 2 : 3);
+  const lw = base.width / nc, lh = base.height / nl;
+  const dx = lw * sobra, dy = lh * sobra;
+  const out = [];
+  for (let l = 0; l < nl; l++) for (let c = 0; c < nc; c++) {
+    out.push({
+      caixa: limitar([c * lw - dx, l * lh - dy, (c + 1) * lw + dx, (l + 1) * lh + dy], base),
+      rotulo: `pedaço ${l + 1}.${c + 1} da folha (linha ${l + 1} de ${nl}, coluna ${c + 1} de ${nc})`,
+      largura: OPCOES_RECORTE.larguraMosaico, mosaico: true,
+    });
+  }
+  return out;
 }
 
 /** Locais sem alguma categoria essencial — é o que orienta a busca da IA. */
@@ -1237,31 +1290,45 @@ async function leituraAmpla(emp, folha, docMeta) {
   const nomes = (emp.locais || []).filter(vivo).map(l => l.nome);
   const regioesEnviadas = [];        // na ordem das imagens: IMAGEM 1 é regioesEnviadas[0]
 
-  let corpo;
-  try {
-    const imagens = [];
-    for (const r of regioes.slice(0, IA.maxRegioesPorFolha)) {
+  const carga = {
+    documento: docMeta.nome || '', pagina: folha.pagina,
+    locais: nomes, jaLidos,
+    lacunas: lacunasDeCobertura(emp),
+    /* passo 2 do pipeline: o pacote estruturado do que o vetor leu nesta
+       folha — ambientes, legendas e tabelas linha a linha — para a IA
+       verificar o que falta em vez de reler tudo */
+    vetor: pacoteVetorialDaFolha(folha),
+  };
+  /* Folha com quadros: uma chamada com todos os recortes, como sempre. Planta
+     raster em mosaico: uma chamada por pedaço, em paralelo — pedidos do
+     tamanho que o modelo aceita, e um pedaço que falha não derruba a folha. */
+  const mosaico = regioes.some(r => r.mosaico);
+  const grupos = mosaico ? regioes.map(r => [r]) : [regioes.slice(0, IA.maxRegioesPorFolha)];
+  const itens = [];
+  const lerGrupo = async (grupo) => {
+    const imagens = [], proprias = [];
+    for (const r of grupo) {
       const b64 = await recorteBase64(folha.page, r.caixa, { largura: r.largura });
-      if (b64) { imagens.push({ rotulo: r.rotulo, base64: b64 }); regioesEnviadas.push(r); }
+      if (b64) { imagens.push({ rotulo: r.rotulo, base64: b64 }); proprias.push(r); }
     }
-    if (!imagens.length) return [];
-    corpo = await chamarBff(IA.rotaFolha, {
-      documento: docMeta.nome || '', pagina: folha.pagina,
-      imagens, locais: nomes, jaLidos,
-      lacunas: lacunasDeCobertura(emp),
-      /* passo 2 do pipeline: o pacote estruturado do que o vetor leu nesta
-         folha — ambientes, legendas e tabelas linha a linha — para a IA
-         verificar o que falta em vez de reler tudo */
-      vetor: pacoteVetorialDaFolha(folha),
-    }, IA.timeoutQuadroMs);
-    anotarSucesso();
-  } catch (err) {
-    anotarFalha(err, 'leitura ampla da folha');
-    return [];                       // a folha continua com o que o vetor leu
-  }
-
-  const itens = Array.isArray(corpo.itens) ? corpo.itens : [];
-  if (!itens.length) return [];
+    if (!imagens.length) return;
+    const base = regioesEnviadas.length;   // IMAGEM 1 desta chamada é regioesEnviadas[base]
+    regioesEnviadas.push(...proprias);
+    try {
+      const corpo = await chamarBff(IA.rotaFolha, { ...carga, imagens }, IA.timeoutQuadroMs);
+      anotarSucesso();
+      for (const it of (Array.isArray(corpo.itens) ? corpo.itens : [])) {
+        it.imagem = base + Math.max(1, Number(it.imagem) || 1);
+        itens.push(it);
+      }
+    } catch (err) {
+      anotarFalha(err, mosaico ? `leitura do ${grupo[0].rotulo}` : 'leitura ampla da folha');
+    }
+  };
+  const fila = grupos.slice();
+  const trabalhadores = mosaico ? Math.max(1, Math.min(IA.paralelas || 1, fila.length)) : 1;
+  await Promise.all(Array.from({ length: trabalhadores }, async () => { while (fila.length) await lerGrupo(fila.shift()); }));
+  if (!itens.length) return [];       // a folha continua com o que o vetor leu
 
   /* A caixa que a IA devolve é relativa à imagem (0–1000 em cada eixo); aqui
      ela volta para as coordenadas da página, para o rótulo ter "Ver na
@@ -1291,6 +1358,11 @@ async function leituraAmpla(emp, folha, docMeta) {
     return (r || regioes[0]).caixa;
   };
 
+  /* No mosaico o "TIPO 1" da unidade fica escrito uma vez, e o cômodo pode
+     cair num pedaço que não o mostra. Dentro do mesmo pedaço, o cômodo sem
+     tipologia herda a do cômodo mais próximo que trouxe uma — sem isso ele
+     viraria um local paralelo, fora da unidade certa. */
+  if (mosaico) herdarTipologiaNoPedaco(itens);
   const out = [];
   const ladoIA = ladoDaFolha(itens.filter(it => it.origemLeitura === 'planta').map(it => it.local));
   for (const it of itens) {
