@@ -285,7 +285,18 @@ th {
 @media (min-width: 1080px) {
   .rolagem { overflow-x: clip; }
   thead th { position: sticky; top: var(--barra); z-index: 1; }
+  /* com o inspetor aberto a tabela não se espreme: ganha largura mínima e
+     rola de lado; o cabeçalho deixa de grudar só nesse estado */
+  body.inspetor .rolagem { overflow-x: auto; }
+  body.inspetor .rolagem > table { min-width: 720px; }
+  body.inspetor thead th { position: static; }
 }
+@media (min-width: 1080px) and (max-width: 1439px) { :root { --inspetor: 320px; } }
+/* linha com evidência é clicável: o clique abre ou troca o produto no inspetor;
+   a célula só vira campo de edição na linha já selecionada */
+tbody tr:has([data-acao="verEvidencia"]) { cursor: pointer; }
+tbody tr:has([data-acao="verEvidencia"]):not(.selecionada) [data-editavel] { cursor: pointer; }
+tbody tr:has([data-acao="verEvidencia"]):not(.selecionada) [data-editavel]:hover { background: none; box-shadow: none; }
 /* a linha é o alvo: o botão de evidência aparece na linha sob o ponteiro ou
    selecionada (no toque fica sempre visível) */
 tbody td [data-acao="verEvidencia"] { background: none; border-color: transparent; color: var(--ink-2); }

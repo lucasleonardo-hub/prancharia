@@ -1304,7 +1304,11 @@ async function editarCampo(span) {
   }
   inp.style.width = '100%'; inp.style.minWidth = '150px'; inp.id = 'edit_' + campo + '_' + id;
   span.replaceWith(inp); inp.focus(); if (inp.select) inp.select();
+  let fechado = false;
   const fim = async (gravar) => {
+    /* Esc cancela e tira o campo da página; a remoção dispara blur, que
+       chamaria isto de novo sobre um campo já removido */
+    if (fechado) return; fechado = true;
     const novo = (inp.value || '').trim();
     inp.replaceWith(span);
     if (!gravar || novo === antes) { render(); return; }
@@ -1346,7 +1350,11 @@ async function editarCampoGrupo(span) {
   }
   inp.style.width = '100%'; inp.style.minWidth = '150px';
   span.replaceWith(inp); inp.focus(); if (inp.select) inp.select();
+  let fechado = false;
   const fim = async (gravar) => {
+    /* Esc cancela e tira o campo da página; a remoção dispara blur, que
+       chamaria isto de novo sobre um campo já removido */
+    if (fechado) return; fechado = true;
     const novo = (inp.value || '').trim();
     inp.replaceWith(span);
     if (!gravar || novo === antes) { render(); return; }

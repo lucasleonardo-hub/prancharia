@@ -181,6 +181,21 @@ export function renderEstadoSistema() {
 
 /* ---------- eventos globais ---------- */
 
+/* Clique numa célula editável de uma linha que NÃO é a selecionada seleciona a
+   linha (abre ou troca o produto no inspetor) em vez de começar a editar: a
+   edição fica para o clique seguinte, já na linha selecionada — a convenção
+   de tabela de trabalho (uma vez seleciona, a segunda edita). Roda na fase de
+   captura para chegar antes do ouvinte que o próprio campo carrega. */
+document.addEventListener('click', (ev) => {
+  const campo = ev.target.closest('#conteudo tbody tr [data-editavel]');
+  if (!campo || ev.target.closest('input, textarea, select, [contenteditable]')) return;
+  const linha = campo.closest('tr');
+  const alvo = linha.querySelector('[data-acao="verEvidencia"]');
+  if (!alvo || linha.classList.contains('selecionada')) return;
+  ev.stopPropagation(); ev.preventDefault();
+  alvo.click();
+}, true);
+
 document.addEventListener('click', async (ev) => {
   /* Gaveta do menu no celular: abaixo de 720px ela cobre o próprio botão que a
      abriu, então sem isto não havia como fechá-la a não ser navegando. */
@@ -192,7 +207,16 @@ document.addEventListener('click', async (ev) => {
   const nav = ev.target.closest('[data-rota]');
   if (nav) { irPara(nav.dataset.rota, nav.dataset.param); document.getElementById('lateral').classList.remove('aberta'); return; }
   const acao = ev.target.closest('[data-acao]');
-  if (!acao) return;
+  /* A linha da tabela é o alvo: clicar em qualquer ponto dela (fora de botão,
+     link, campo ou célula editável) abre ou troca o produto no inspetor —
+     sem precisar caçar o botão "Evidências". */
+  if (!acao) {
+    const linha = ev.target.closest('#conteudo tbody tr');
+    const alvo = linha && !ev.target.closest('button, a, input, select, textarea, label, [data-editavel], [contenteditable]')
+      ? linha.querySelector('[data-acao="verEvidencia"]') : null;
+    if (alvo && window.getSelection && String(window.getSelection()).length === 0) { alvo.click(); }
+    return;
+  }
   const { acao: nome, ...dados } = acao.dataset;
   const view = VIEWS[estado.rota];
   if (ACOES[nome]) { ev.preventDefault(); await ACOES[nome](dados, acao, ev); return; }
@@ -444,6 +468,9 @@ document.addEventListener('keydown', ev => {
   if (ev.key !== 'Escape') return;
   const m = document.getElementById('modal');
   if (m && !m.hidden) { fecharModal(); return; }
+  /* Esc dentro de um campo em edição é do campo (cancela a edição); o
+     inspetor só fecha quando o foco não está num campo */
+  if (ev.target.closest('input, textarea, select, [contenteditable]')) return;
   /* Esc no inspetor devolve o foco à linha que estava aberta */
   const linha = document.querySelector('#conteudo tr.selecionada [data-acao="verEvidencia"]');
   fecharGaveta();
