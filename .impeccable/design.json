@@ -45,10 +45,11 @@
       { "name": "veu", "value": "rgba(15, 16, 18, .4)", "purpose": "Fundo atrás de modal, inspetor deslizante (< 1080 px) e gaveta lateral (< 720 px)." }
     ],
     "motion": [
-      { "name": "mola", "value": "cubic-bezier(.2, 0, 0, 1)", "purpose": "Única curva de easing do sistema." },
-      { "name": "rapido", "value": "120ms", "purpose": "Cor, fundo e borda em hover; surgir de véu e toast." },
-      { "name": "normal", "value": "160ms", "purpose": "Reservado para transições intermediárias; hoje definido e não consumido por regra própria." },
-      { "name": "lento", "value": "200ms", "purpose": "Deslizar do inspetor e da gaveta lateral; largura da barra de progresso." },
+      { "name": "mola", "value": "cubic-bezier(.05, .7, .1, 1)", "purpose": "Curva de entrada (desacelera forte), gramática Material." },
+      { "name": "saida", "value": "cubic-bezier(.3, 0, .8, .15)", "purpose": "Curva de saída (acelera): fechar inspetor, véu e menu." },
+      { "name": "rapido", "value": "140ms", "purpose": "Feedback: cor, fundo e borda em hover; surgir do véu." },
+      { "name": "normal", "value": "220ms", "purpose": "Mudança de estado: entrada de tela e do conteúdo do inspetor; recolher do inspetor." },
+      { "name": "lento", "value": "340ms", "purpose": "Mudança de leiaute: coluna do inspetor crescendo, modal abrindo, toast subindo." },
       { "name": "visor-nunca", "value": "transition: none !important", "purpose": "Canvas do visor, camada de marcas e miniatura da legenda: o arraste os move a cada quadro." },
       { "name": "reduced-motion", "value": "animation: none; transition: none", "purpose": "prefers-reduced-motion desliga tudo." }
     ],
@@ -182,7 +183,7 @@
       "Do manter a linha de tabela em 34 px, o botão em 28 px (24 px pequeno), o campo em 28 px e o item de menu em 28 px.",
       "Do mostrar o atalho de teclado como <kbd> inline e escondê-lo em toque ou abaixo de 1080 px.",
       "Do usar ícones SVG de 16 px com traço 1.6 (14 px em botões) ou os ícones desenhados em CSS; sempre com currentColor.",
-      "Do transicionar cor, fundo e borda em 120 ms, painéis deslizantes em 200 ms, com cubic-bezier(.2, 0, 0, 1); respeitar prefers-reduced-motion.",
+      "Do transicionar cor, fundo e borda em 140 ms, estados em 220 ms e leiaute em 340 ms, entradas com cubic-bezier(.05, .7, .1, 1) e saídas com cubic-bezier(.3, 0, .8, .15); com prefers-reduced-motion fica só o fade.",
       "Do definir o escuro como paleta própria (fundo #0f1012, acento #6f9bff), nunca por inversão ou filtro.",
       "Do tratar Locais como linhas de 40 px num único painel e Empreendimentos como cartões, porque só o empreendimento carrega ações e números próprios."
     ],

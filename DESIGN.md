@@ -211,7 +211,7 @@ components:
 
 Prancharia é uma ferramenta de operação para sessões longas de revisão linha a linha. A tabela de acabamentos e a prancha são o conteúdo; todo o resto (barra lateral, barra superior, inspetor) é cromo que se afasta para o cinza e só volta a aparecer quando o ponteiro ou o teclado o chamam. A régua de acabamento é a das ferramentas que a equipe usa o dia inteiro (Linear, Figma): cinzas quase sem cor, divisórias de 1 px, tipografia de trabalho em 13 px, um único acento que marca ação, seleção e foco, e o teclado em tudo. É a execução do padrão da categoria, escolhida de propósito; direções expressivas foram vistas e recusadas (PRODUCT.md, compromissos de marca).
 
-Quatro decisões governam o sistema. **Cor só onde significa**: o acento cobalto, os três estados (bom, atenção, crítico) e as quatro formas geométricas das tags são as únicas cores, e nunca aparecem como decoração. **Divisória, não sombra**: superfícies se separam por uma linha translúcida de 1 px; sombra só no que flutua de verdade. **Densidade como respeito**: numa tela com 200 linhas de acabamento, a linha de 34 px e o cabeçalho de 11 px são o que deixa a sessão longa possível. **Movimento quase nulo**: 120 ms para cor e fundo, 160–200 ms para painéis que deslizam, e o canvas do visor nunca recebe transição.
+Quatro decisões governam o sistema. **Cor só onde significa**: o acento cobalto, os três estados (bom, atenção, crítico) e as quatro formas geométricas das tags são as únicas cores, e nunca aparecem como decoração. **Divisória, não sombra**: superfícies se separam por uma linha translúcida de 1 px; sombra só no que flutua de verdade. **Densidade como respeito**: numa tela com 200 linhas de acabamento, a linha de 34 px e o cabeçalho de 11 px são o que deixa a sessão longa possível. **Movimento com gramática Material**: entradas desaceleram forte em `cubic-bezier(.05, .7, .1, 1)`, saídas aceleram em `cubic-bezier(.3, 0, .8, .15)` e são mais curtas; três durações (140 ms feedback, 220 ms mudança de estado, 340 ms mudança de leiaute); só transform, opacidade, cor e a coluna do inspetor animam, e o canvas do visor nunca recebe transição.
 
 O sistema recusa o painel de cartões brancos flutuando sobre cinza com botão índigo (a fórmula que denuncia geração automática), a grade cinza do CAD antigo e qualquer vocabulário de marketing: sem heróis, sem gradientes, sem cartões de KPI, sem bordas laterais coloridas.
 
@@ -324,7 +324,7 @@ Discretos e uniformes; o acento aparece uma vez por tela, no botão primário.
 - **Link** (`.btn.link`): inline, cor do acento, sublinha no hover; sem altura própria.
 - **Disabled:** opacidade .45 e cursor `not-allowed`.
 - **Keyboard cap:** `<kbd>` de 10 px mono em `ink-3`, borda `line-strong`, raio 3 px, dentro do botão com 2 px de margem à esquerda.
-- **Transition:** fundo, borda e cor em 120 ms `cubic-bezier(.2, 0, 0, 1)`.
+- **Transition:** fundo, borda e cor em 140 ms com a curva de entrada; ao pressionar, `scale(.985)` em 60 ms.
 
 ### Chips
 Selos de estado em 11 px, peso 500, raio 4 px, padding `1px 6px`.
@@ -373,18 +373,18 @@ A tabela densa é o primeiro viewport.
 ### Inspector (assinatura)
 - **Painel:** 360 px fixo à direita em `surface`, divisória à esquerda; cabeçalho de 44 px mínimos com título de 14 px em duas linhas com reticências e botão fechar (X em CSS mais `<kbd>Esc</kbd>`); corpo com `14px 16px 24px` e blocos separados por 16 px.
 - **Conteúdo:** visor compacto da prancha (`min(46vh, 360px)`, `surface-3`, cursor de agarrar), abas de prova (12 px, borda `line`, ativa com borda na cor do papel e ponto de 7 px), níveis de zoom em três miniaturas de 60 px com número sobreposto, ficha de dados em duas colunas, cadeia da informação (ponto de 7 px em acento, fio de 1 px em `line-strong`).
-- **Motion:** desliza de `translateX(100%)` em 200 ms com a mola; abaixo de 1080 px ganha `sombra-pop` e véu.
+- **Motion (assinatura):** em tela larga o inspetor é a terceira coluna do grid do app, que cresce de 0 até 360 px em 340 ms empurrando a tabela, com o conteúdo entrando por fade e 6 px de subida; fechar recolhe em 220 ms com a curva de saída; trocar de produto refaz só a entrada do conteúdo. Abaixo de 1080 px volta a deslizar de `translateX(100%)` sobre um véu, com `sombra-pop`.
 
 ### Visor da prancha (assinatura)
 Canvas sobre `surface-3`, `min(72vh, 780px)` de altura (compacto `min(46vh, 360px)`), barra de ferramentas acima com divisória, legenda flutuante no canto inferior direito (`surface`, raio 6 px, borda `line`, `sombra-pop`, miniatura de até 132 px). O canvas e a camada de marcas têm `transition: none` forçado: o arraste os move a cada quadro.
 
 ### Modal
-Caixa de `min(720px, 100%)` (pergunta: 480 px), `surface`, raio 8 px, borda `line`, `sombra-pop`, sobre véu a 40 % que surge em 120 ms. Cabeçalho `16px 20px 4px` com título 15 px 600 e descrição 13 px `ink-2`; corpo `14px 20px`; rodapé `12px 20px 16px` com divisória e botões à direita. Grade de tipos de documento em cartões de `minmax(190px, 1fr)`, pressionado com borda em acento e `accent-soft`.
+Caixa de `min(720px, 100%)` (pergunta: 480 px), `surface`, raio 8 px, borda `line`, `sombra-pop`, sobre véu a 40 % que surge em 140 ms; a caixa abre de `scale(.96)` para 1 com fade em 340 ms. Cabeçalho `16px 20px 4px` com título 15 px 600 e descrição 13 px `ink-2`; corpo `14px 20px`; rodapé `12px 20px 16px` com divisória e botões à direita. Grade de tipos de documento em cartões de `minmax(190px, 1fr)`, pressionado com borda em acento e `accent-soft`.
 
 ### Faixas, progresso, toast
 - **Faixa de aviso:** `atencao-soft` com texto em `atencao` e borda da cor a 25 %, raio 6 px, `10px 12px`, ícone de aviso em CSS à esquerda; variante crítica idem em vermelho.
 - **Progresso:** trilho de 4 px em `surface-3`, barra em acento, largura anima em 200 ms.
-- **Toast:** `ink` sobre `ground` (invertido), 13 px 500, `8px 14px`, raio 6 px, `sombra-pop`, centrado embaixo a 20 px, surge em 120 ms.
+- **Toast:** `ink` sobre `ground` (invertido), 13 px 500, `8px 14px`, raio 6 px, `sombra-pop`, centrado embaixo a 20 px, sobe 10 px com fade em 340 ms.
 
 ## Do's and Don'ts
 
@@ -396,7 +396,7 @@ Caixa de `min(720px, 100%)` (pergunta: 480 px), `surface`, raio 8 px, borda `lin
 - **Do** manter a linha de tabela em 34 px, o botão em 28 px (24 px pequeno), o campo em 28 px e o item de menu em 28 px.
 - **Do** mostrar o atalho de teclado como `<kbd>` inline e escondê-lo em toque ou abaixo de 1080 px.
 - **Do** usar ícones SVG de 16 px com traço 1.6 (14 px em botões) ou os ícones desenhados em CSS; sempre com `currentColor`.
-- **Do** transicionar cor, fundo e borda em 120 ms, painéis deslizantes em 200 ms, com `cubic-bezier(.2, 0, 0, 1)`; respeitar `prefers-reduced-motion`.
+- **Do** transicionar cor, fundo e borda em 140 ms, estados em 220 ms e leiaute em 340 ms, entradas com `cubic-bezier(.05, .7, .1, 1)` e saídas com `cubic-bezier(.3, 0, .8, .15)`; cada tela, o conteúdo do inspetor e o modal entram com fade e leve deslocamento; com `prefers-reduced-motion` fica só o fade.
 - **Do** definir o escuro como paleta própria (fundo `#0f1012`, acento `#6f9bff`), nunca por inversão ou filtro.
 - **Do** tratar Locais como linhas de 40 px num único painel e Empreendimentos como cartões, porque só o empreendimento carrega ações e números próprios.
 

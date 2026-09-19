@@ -76,11 +76,15 @@
   --raio-s: 4px;
   --raio-xs: 4px;
 
-  /* ---------- movimento ---------- */
-  --mola: cubic-bezier(.2, 0, 0, 1);
-  --rapido: .12s;
-  --normal: .16s;
-  --lento: .2s;
+  /* ---------- movimento: gramática Material ----------
+     Entrada desacelera forte (--mola), saída acelera e é mais curta
+     (--saida). Três durações: feedback, mudança de estado, mudança de
+     leiaute. Só transform, opacidade, cor e a coluna do painel animam. */
+  --mola: cubic-bezier(.05, .7, .1, 1);
+  --saida: cubic-bezier(.3, 0, .8, .15);
+  --rapido: .14s;
+  --normal: .22s;
+  --lento: .34s;
 
   /* ---------- tipografia ---------- */
   --sans: "Source Sans 3", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -150,7 +154,18 @@ html { scrollbar-color: var(--line-strong) transparent; scrollbar-width: thin; }
 ::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 4px; }
 
 @keyframes surgir { from { opacity: 0; } to { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+@keyframes entrar { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes abrir-modal { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: none; } }
+@keyframes subir { from { opacity: 0; transform: translate(-50%, 10px); } to { opacity: 1; transform: translate(-50%, 0); } }
+/* Reduzir movimento: some o deslocamento, fica o fade que confirma a ação. */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after { animation-duration: .12s !important; transition-duration: .12s !important; }
+  .faixa, #gaveta > .corpo, .modal-caixa, .toast, .visor-legenda { animation-name: surgir !important; }
+  #app, #gaveta, #lateral, .btn { transition: none !important; }
+}
+
+/* troca de tema: as superfícies mudam de cor juntas, sem piscar */
+body, #lateral, #barra, #gaveta, .cartao, .modal-caixa { transition: background-color var(--normal) var(--mola), color var(--normal) var(--mola), border-color var(--normal) var(--mola); }
 
 /* rótulo estrutural: cabeçalho de coluna, nome de campo, grupo do menu */
 .rotulo-estrutural, th, .campo label, nav .grupo, .placar dt, .cat, .cadeia .rotulo,
@@ -160,7 +175,14 @@ html { scrollbar-color: var(--line-strong) transparent; scrollbar-width: thin; }
 }
 
 /* ---------- estrutura ---------- */
-#app { display: grid; grid-template-columns: var(--lateral) 1fr; min-height: 100vh; }
+/* Três colunas: barra lateral, principal e o inspetor, que nasce com largura
+   zero e cresce empurrando a tabela — é a coluna do grid que anima, não a
+   largura do painel nem o recuo do conteúdo. */
+#app { display: grid; grid-template-columns: var(--lateral) 1fr 0; min-height: 100vh; transition: grid-template-columns var(--lento) var(--mola); }
+@media (min-width: 1080px) {
+  body.inspetor #app { grid-template-columns: var(--lateral) 1fr var(--inspetor); }
+  body:not(.inspetor) #app { transition-duration: var(--normal); transition-timing-function: var(--saida); }
+}
 #lateral {
   display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh;
   padding: 10px 10px 10px; background: var(--ground); border-right: 1px solid var(--line);
@@ -218,7 +240,7 @@ nav button .cont { margin-left: auto; font-family: var(--mono); font-size: 11px;
 .trilha > span:not(.selo) { flex: none; opacity: .6; }
 .trilha .selo { flex: none; }
 #conteudo { padding: 14px 20px 64px; flex: 1; }
-.faixa { display: flex; flex-direction: column; gap: 16px; }
+.faixa { display: flex; flex-direction: column; gap: 16px; animation: entrar var(--normal) var(--mola); }
 
 /* ---------- cabeça de tela ---------- */
 .cabeca { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 2px 0 4px; }
@@ -236,7 +258,8 @@ nav button .cont { margin-left: auto; font-family: var(--mono); font-size: 11px;
   transition: background var(--rapido) var(--mola), border-color var(--rapido) var(--mola), color var(--rapido) var(--mola);
 }
 .btn:hover { background: var(--surface-2); }
-.btn:active { background: var(--surface-3); }
+.btn:active { background: var(--surface-3); transform: scale(.985); transition-duration: .06s; }
+.btn.primario:active { transform: scale(.985); }
 .btn.primario { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
 .btn.primario:hover { background: var(--accent-forte); }
 .btn.discreto { background: none; border-color: transparent; color: var(--ink-2); }
@@ -309,7 +332,7 @@ th:first-child { padding-left: 14px; } td:first-child { padding-left: 14px; }
 th:last-child { padding-right: 14px; } td:last-child { padding-right: 14px; }
 td { padding: 7px 12px; border-bottom: 1px solid var(--line); vertical-align: top; line-height: 1.4; }
 tbody tr:last-child td { border-bottom: 0; }
-tbody tr { transition: background var(--rapido) var(--mola); }
+tbody tr { transition: background var(--rapido) var(--mola), box-shadow var(--rapido) var(--mola); }
 tbody tr:hover { background: var(--surface-2); }
 tbody tr.selecionada { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
 td.num, th.num { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 12px; }
@@ -395,9 +418,20 @@ details > summary:hover { color: var(--ink); }
   position: fixed; top: 0; right: 0; bottom: 0; width: var(--inspetor);
   background: var(--surface); border-left: 1px solid var(--line); z-index: 60;
   display: flex; flex-direction: column; transform: translateX(100%);
-  transition: transform var(--lento) var(--mola);
+  transition: transform var(--normal) var(--saida);
 }
-#gaveta.aberta { transform: none; }
+#gaveta.aberta { transform: none; transition-duration: var(--lento); transition-timing-function: var(--mola); }
+/* em tela larga o painel é a terceira coluna do grid: gruda no topo, tem a
+   altura da janela e o conteúdo mantém a largura final enquanto a coluna
+   cresce, para nada refluir durante o movimento */
+@media (min-width: 1080px) {
+  #gaveta { position: sticky; top: 0; height: 100vh; width: auto; min-width: 0; overflow: hidden; transform: none; align-self: start; opacity: 0; transition: opacity var(--rapido) var(--saida); }
+  #gaveta.aberta { opacity: 1; transition: opacity var(--normal) var(--mola) .08s; }
+  #gaveta > header, #gaveta > .corpo { width: var(--inspetor); flex: none; }
+  #gaveta > .corpo { flex: 1 1 auto; min-height: 0; }
+}
+/* o conteúdo do painel entra (e troca de produto) com um leve fade e subida */
+#gaveta.aberta > .corpo { animation: entrar var(--normal) var(--mola); }
 #gaveta header { padding: 10px 16px; min-height: var(--barra); display: flex; align-items: flex-start; gap: 10px; border-bottom: 1px solid var(--line); flex: none; }
 /* título longo: duas linhas e reticências; o texto inteiro fica no title */
 #gaveta header h2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -408,7 +442,6 @@ details > summary:hover { color: var(--ink); }
 #gaveta .ficha-dados { grid-template-columns: repeat(2, 1fr); }
 #gaveta .niveis-evidencia { grid-template-columns: repeat(3, 1fr); }
 @media (min-width: 1080px) {
-  body.inspetor #principal { padding-right: var(--inspetor); }
   #veu { display: none !important; }
 }
 #veu { position: fixed; inset: 0; background: rgba(15, 16, 18, .4); z-index: 55; animation: surgir var(--rapido) ease; }
@@ -437,6 +470,7 @@ details > summary:hover { color: var(--ink); }
   background: var(--surface); border-radius: var(--raio-g); border: 1px solid var(--line);
   box-shadow: var(--sombra-pop);
   width: min(720px, 100%); max-height: calc(100vh - 48px); display: flex; flex-direction: column; overflow: hidden;
+  animation: abrir-modal var(--lento) var(--mola);
 }
 .modal-caixa > header { padding: 16px 20px 4px; }
 .modal-caixa > header h2 { font-size: 15px; font-weight: 600; }
@@ -566,7 +600,7 @@ article.cartao-selecao[role="button"]:focus-visible { outline: none; box-shadow:
   position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 90;
   background: var(--ink); color: var(--ground); padding: 8px 14px; border-radius: var(--raio);
   font-size: 13px; font-weight: 500; box-shadow: var(--sombra-pop); max-width: calc(100% - 32px);
-  animation: surgir var(--rapido) ease;
+  animation: subir var(--lento) var(--mola);
 }
 
 /* ---------- categorias do local ---------- */
