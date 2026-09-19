@@ -43,10 +43,38 @@ O script:
 Variáveis úteis: `PORTA_BFF`, `PORTA_WEB`, `ROTA` (ex.: `#/documentos`),
 `CAPTURA` (caminho do PNG), `PW_DIR` (onde está o `playwright-core`).
 
+## Capturas em lote (passe de design)
+
+Uma mudança de interface não se verifica com uma captura só. O script
+`scripts/capturas.mjs` faz a rodada completa que o passe de design espera:
+cria um projeto pelo modal, percorre todas as rotas do menu por
+`location.hash`, alterna o tema escuro (`[data-acao="tema"]`), e repete em
+400px (gaveta móvel) e 960px (trilho de ícones). Cada tela vira
+`<PREF>-<tela>.png` na pasta `SAIDA`.
+
+```bash
+cd "<raiz do repo>"
+SAIDA="$TEMP/capturas" PREF=antes  node .claude/skills/e2e/scripts/capturas.mjs
+# ... aplique a mudança ...
+SAIDA="$TEMP/capturas" PREF=depois node .claude/skills/e2e/scripts/capturas.mjs
+```
+
+Rode antes e depois da mudança e leia os pares de PNG (`antes-modal.png`
+com `depois-modal.png`, e assim por diante). Sem `SAIDA`, as capturas vão para
+`%TEMP%\prancharia-capturas` (a pasta é criada). Portas padrão 3901/5901 para
+não colidir com o script base; `PORTA_BFF` e `PORTA_WEB` mudam isso. Sai com
+código 1 se houve erro de console. Detalhe para testes de foco: o card de
+empreendimento não é focável pelo teclado; só os cards de local trazem
+`role="button" tabindex="0"`, então mire `#/locais`.
+
 ## Estender
 
 Copie o script base para o scratchpad e acrescente passos depois de
-`await pagina.goto(...)`. Padrões que já se provaram:
+`await pagina.goto(...)`. **Escreva o script com o Write/Edit tool, não por
+heredoc nem `node -e`**: neste ambiente (Git Bash sob o Bash tool) a barra
+invertida de um regex ou de um caminho Windows some no caminho até o disco,
+e o comando ainda reporta sucesso. Depois de qualquer escrita pelo shell,
+confira os bytes com `grep` antes de rodar. Padrões que já se provaram:
 
 - **"Outro navegador"**: `await navegador.newContext()` cria um contexto sem
   localStorage nem IndexedDB; é como testar que os dados vieram do servidor.

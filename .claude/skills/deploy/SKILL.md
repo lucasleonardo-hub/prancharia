@@ -40,6 +40,18 @@ vercel --prod --yes
 
 Guarde a URL que o comando imprime (produção: https://prancharia.vercel.app).
 
+**Falha transitória conhecida.** A primeira tentativa pode devolver
+`{"status":"error","reason":"deploy_failed","message":"Not authorized"}`
+mesmo com login e link válidos (`vercel whoami` não distingue esse caso).
+Repita uma vez com o escopo explícito antes de investigar credenciais:
+
+```bash
+vercel --prod --yes --scope "$(node -p "require('./.vercel/project.json').orgId")"
+```
+
+Só investigue login se falhar de novo. Com `--debug`, um 400 `missing_files`
+antes do sucesso é o handshake normal de upload, não um erro.
+
 ## 3. Backend no Render (só se `server/` mudou)
 
 A chave fica em `~/.prancharia-render.env` (`RENDER_API_KEY` e
