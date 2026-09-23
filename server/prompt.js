@@ -20,6 +20,13 @@ export const MAPEAMENTO_CATEGORIAS = 'soleiras, peitoris, bitbox e pingadeiras d
    É o contrato do pipeline híbrido: vetorial primeiro, IA como revisora. */
 export const ACOES_REVISAO = ['confirmar', 'completar', 'novo'];
 
+/* Regras que valem tanto para a leitura por local quanto para a leitura
+   ampla da folha — escritas uma vez e interpoladas nas duas instruções, como
+   MAPEAMENTO_CATEGORIAS, para nunca divergirem. */
+export const REGRA_REJUNTE = 'Revestimento cerâmico ou porcelanato pede REJUNTE. Quando a prancha o especifica (cor, tipo, marca — "REJUNTE EPÓXI CINZA PLATINA", "REJUNTE ACRÍLICO NA COR DO PISO"), devolva-o como item próprio, na mesma categoria do revestimento (Piso ou Paredes), com "produto" "Rejunte" e o mesmo local. Quando não há rejunte escrito, não invente: o sistema cria a linha vazia para a equipe preencher.';
+export const REGRA_CHAMADA = 'LINHA DE CHAMADA. A tag nem sempre está dentro do cômodo: em ambiente pequeno o projetista desenha o bloco de tags do lado de fora e liga cada uma ao lugar por uma linha de chamada (reta ou quebrada, curta ou longa, às vezes com seta ou ponto na ponta). Siga a linha: a tag pertence ao ambiente onde a PONTA da linha termina, não ao ambiente sobre o qual ela está desenhada. Diga na justificativa que seguiu a linha ("círculo 03 fora do contorno, linha de chamada termina dentro do BANHO").';
+export const REGRA_CORTE = 'SÍMBOLO DE CORTE E BOLHA DE DETALHE NÃO SÃO TAG. O que os distingue da tag é o CONTEÚDO do círculo, não a linha: a tag tem um número só; o símbolo de corte traz letra (A, B) ou tem o círculo dividido ao meio com o número da folha embaixo, e a bolha de detalhe traz o número do detalhe em cima e a folha embaixo ("1/A-05"). Esses símbolos costumam vir presos a uma linha longa que atravessa a planta, com seta ou triângulo preenchido na ponta (corte AA, BB, 1, 2). São indicações de desenho, não acabamento: não os traduza pela legenda, mesmo que tragam um número — "corte 1" não é "piso 01".';
+
 export const ORIGENS = [
   'tag',          // forma geométrica com número, desenhada dentro do local
   'hachura',      // padrão gráfico preenchendo a área, casado com a amostra da legenda
@@ -60,7 +67,7 @@ Não reescreva o que o vetor já leu certo; a energia vai para o que FALTA. Um i
 R1. FORMA + NÚMERO É A CHAVE. "Números iguais em formas diferentes representam materiais DIFERENTES." Quadrado 08 e Triângulo 08 são dois materiais distintos. Nunca traduza um número sem a sua forma.
 R2. VERACIDADE ABSOLUTA. Se a prancha não diz, o campo volta como string vazia "". É PROIBIDO escrever "N/A", "n/a", "não se aplica", "a definir por conta própria", "-", "indefinido" ou qualquer preenchimento de cortesia. Se a legenda escreve "A DEFINIR", isso é o que a prancha diz e deve ser transcrito como está. NUNCA copie o número da tag para "descricao" como se fosse a especificação — "numero" e "codigoOrigem" já guardam esse número; se você não achou na legenda o texto de material correspondente àquele forma+número, "descricao" fica "" (vazia), mesmo que a categoria dê para adivinhar pelo contexto.
 R3. ISOLAMENTO ESTRITO DO LOCAL. Só entra o que pertence ao local recortado na IMAGEM 1. Tag desenhada fora do contorno do ambiente, ou material de um ambiente vizinho visível no recorte, NÃO entra. Se não der para decidir de quem é a tag, devolva o item com confianca "baixa" e explique na justificativa.
-R4. NÃO CONSIDERE UM LOCAL COMPLETO SÓ PORQUE UMA ESQUADRIA FOI IDENTIFICADA. Todo ambiente FECHADO (sala, dormitório, banho, cozinha, hall, corredor, garagem coberta) tem piso, paredes e teto — o teto tem forro ou pintura, o piso e a parede têm algum revestimento. Se você só achou a porta, continue procurando piso, parede, teto, rodapé e pedras. Se realmente não houver indicação, NÃO invente a linha: o sistema cria a linha obrigatória vazia para a equipe preencher; a sua parte é não deixar passar o que está desenhado. Revestimento cerâmico ou porcelanato pede REJUNTE: quando a prancha o especifica (cor, tipo, marca — "REJUNTE EPÓXI CINZA PLATINA"), devolva-o como item próprio na mesma categoria do revestimento (Piso ou Paredes) com "produto" "Rejunte"; quando não especifica, não invente.
+R4. NÃO CONSIDERE UM LOCAL COMPLETO SÓ PORQUE UMA ESQUADRIA FOI IDENTIFICADA. Use como CHECKLIST DE BUSCA: em todo ambiente fechado (sala, dormitório, banho, cozinha, hall, corredor, garagem coberta) procure piso, paredes e teto — raramente algum deles fica sem especificação numa prancha executiva, e o teto costuma aparecer como forro ou pintura. Se você só achou a porta, continue procurando piso, parede, teto, rodapé e pedras. Registre SOMENTE o que estiver escrito ou desenhado (R2): se realmente não houver indicação, NÃO invente a linha — o sistema cria a linha obrigatória vazia para a equipe preencher; a sua parte é não deixar passar o que está na prancha. ${REGRA_REJUNTE}
 R5. TRANSCREVA, NÃO REESCREVA. O campo "descricao" recebe o texto da legenda exatamente como está escrito na prancha, inclusive "(120X120)", "OU SIMILAR", "(aprovar amostra no local)". O campo "produto" é o substantivo curto do item (Porcelanato, Rodapé, Textura, Porta, Soleira, Forro de gesso).
 R6. UMA LINHA POR PRODUTO. Não agrupe dois materiais na mesma linha. Não repita a mesma linha duas vezes.
 R7. JUSTIFICATIVA OBRIGATÓRIA. Em "justificativa", escreva em português a cadeia que você seguiu, citando o que viu: "quadrado 08 desenhado junto à porta → LEGENDA PISOS, linha 08 → PORCELANATO A DEFINIR". É este texto que vai aparecer como evidência para o engenheiro conferir.
@@ -71,8 +78,8 @@ R11. NADA SEM EVIDÊNCIA. Toda adição sua precisa dizer DE ONDE saiu, na image
 R12. AÇÃO DECLARADA. "acao" é "confirmar" quando o item já estava nos dados vetoriais e a imagem concorda; "completar" quando você preenche campo vazio ou corrige um item já extraído (mantenha a mesma forma+número, ou o mesmo codigoOrigem, para o sistema casar); "novo" quando só a imagem mostra o item.
 R13. ESQUADRIAS: UMA LINHA POR CÓDIGO NESTE LOCAL — exceção deliberada à R5 no campo "produto". Porta, janela, porta-balcão, basculante, maxim-ar, veneziana, porta corta-fogo e portão desenhados no contorno deste local entram com "categoria" "Esquadrias", "codigoOrigem" = o código da planta e "produto" = tipo + código exatamente como a prancha escreve ("Porta de abrir P02", "Janela de correr J01"; sem tipo legível, "Esquadria P02"), porque a planilha identifica a esquadria pelo código. "descricao" transcreve do quadro só o que está escrito: material (alumínio, PVC, madeira, aço), linha/perfil, dimensão (largura x altura), vidro, cor/acabamento e ferragens. O mesmo código repetido neste local é UMA linha com "quantidade" igual ao total que você contou no desenho — a soma é sua, antes de responder; não devolva duas linhas iguais. Esquadria na parede que divide este local de outro pertence aos dois: devolva-a para este local mesmo assim. Código sem tradução no quadro entra só com o código (R10). Local com abertura desenhada não fica sem linha de esquadria; local sem abertura desenhada não recebe esquadria.
 R14. CATEGORIAS DA PLANILHA: ${MAPEAMENTO_CATEGORIAS}
-R15. LINHA DE CHAMADA. A tag nem sempre está dentro do cômodo: em ambiente pequeno o projetista desenha o bloco de tags do lado de fora e liga cada uma ao lugar por uma linha de chamada (reta ou quebrada, às vezes com seta ou ponto na ponta). Siga a linha: a tag pertence ao ambiente onde a PONTA da linha termina, não ao ambiente sobre o qual ela está desenhada. Diga na justificativa que seguiu a linha ("círculo 03 fora do contorno, linha de chamada termina dentro do BANHO"). Tag fora do contorno e sem linha de chamada segue a R3.
-R16. SÍMBOLO DE CORTE E BOLHA DE DETALHE NÃO SÃO TAG. O círculo dividido ao meio com letra ou número em cima e número da folha embaixo (corte, vista, detalhe), o círculo preso a uma linha longa que atravessa a planta e termina em seta ou triângulo preenchido (corte AA, BB, 1, 2) e a referência "1/A-05" são indicações de desenho. Não os traduza pela legenda, mesmo que tragam um número: "corte 1" não é "piso 01". Na dúvida entre tag e símbolo de corte, olhe se há uma linha longa saindo do círculo.
+R15. ${REGRA_CHAMADA} Tag fora do contorno e sem linha de chamada segue a R3.
+R16. ${REGRA_CORTE}
 
 === CONFIANÇA ===
 "alta"  — a tradução é inequívoca: forma e número legíveis e a legenda correspondente encontrada.
@@ -470,8 +477,8 @@ Q12. AMBIENTES DA PLANTA. Quando a imagem é uma planta baixa e a lista de AMBIE
      POSIÇÃO DO RÓTULO: em cada item de ambiente, preencha "imagem" (o número da imagem em que o rótulo está: 1, 2…) e "caixa" = [x0, y0, x1, y1], a caixa do texto do rótulo dentro daquela imagem, em milésimos da largura e da altura da imagem (0 a 1000, origem no canto superior esquerdo). É com isso que o sistema abre a prancha no lugar certo.
 Q13. ESQUADRIAS: UMA LINHA POR CÓDIGO — exceção deliberada à Q4 no campo "produto". Na tabela de esquadrias, "codigoOrigem" = o código, "produto" = tipo + código como a prancha escreve ("Porta de abrir P02", "Janela de correr J01"), "quantidade" = a coluna de quantidade quando existir, "descricao" = material, linha/perfil, dimensão (largura x altura), vidro, cor/acabamento e ferragens — só o que está escrito. "local" fica vazio, salvo quando a própria linha declara o ambiente (Q2). Sem quadro, só o código desenhado: a linha entra com o código e os outros campos vazios.
 Q14. CATEGORIAS DA PLANILHA: ${MAPEAMENTO_CATEGORIAS}
-Q15. REJUNTE É ITEM PRÓPRIO. Quando o quadro ou a nota especifica o rejunte de um revestimento ("REJUNTE EPÓXI CINZA PLATINA", "REJUNTE ACRÍLICO NA COR DO PISO"), devolva-o como linha separada, na mesma categoria do revestimento (Piso ou Paredes), com "produto" "Rejunte" e o "local" da linha do revestimento. Quando não há rejunte escrito, não invente — o sistema cria a linha vazia para a equipe.
-Q16. TAG, LINHA DE CHAMADA E SÍMBOLO DE CORTE. Numa planta, a tag ligada por linha de chamada pertence ao ambiente onde a PONTA da linha termina. O círculo dividido com número da folha embaixo, o círculo preso a uma linha longa com seta na ponta (corte AA, 1, 2) e a referência "1/A-05" são indicações de desenho, não acabamento: não os traduza pela legenda. Na Q12, esses símbolos também não são ambiente.
+Q15. REJUNTE É ITEM PRÓPRIO. ${REGRA_REJUNTE}
+Q16. ${REGRA_CHAMADA} ${REGRA_CORTE} Na Q12, esses símbolos também não são ambiente.
 
 === CONFIANÇA ===
 "alta"  — linha de tabela legível, com o ambiente declarado na própria linha.
@@ -679,7 +686,7 @@ D2. Disciplinas possíveis:
   - indefinida: quando não dá para saber.
 D3. Tipo de documento: "prancha" (folha de desenho com carimbo), "memorial" (documento de texto corrido, em geral A4, com capítulos), "outro" (planilha, orçamento, laudo, imagem solta).
 D4. Um documento de texto sobre estrutura ou instalações (memorial de cálculo, memorial hidráulico) pertence à disciplina correspondente, com tipo "memorial". A disciplina "memorial" é reservada ao memorial descritivo de acabamentos e vendas, que é o que interessa ao levantamento.
-D5. Uma prancha de arquitetura que traz um quadro "MEMORIAL DE ACABAMENTOS" é arquitetura, tipo prancha.
+D5. "acabamentos" é a folha DEDICADA ao assunto: o caderno, a tabela, a paginação, a planta de piso ou de forro. Uma planta baixa que só carrega um quadro "MEMORIAL DE ACABAMENTOS" como bloco adicional continua sendo arquitetura, tipo prancha — o que decide é o conteúdo principal da folha.
 D6. Confiança: "alta" quando o carimbo ou o título deixa explícito; "media" quando você inferiu pelo conteúdo desenhado; "baixa" quando só o nome ou a pasta sustenta a escolha, ou a imagem está ilegível.
 D7. Justificativa obrigatória e concreta: cite o que você leu ("carimbo: PROJETO ESTRUTURAL — FÔRMA DO 1º PAVIMENTO"; "planta com tubulações e caixas de passagem, sem nomes de ambiente"). Sem justificativa a resposta é descartada.
 D8. Não invente. Se a imagem está ilegível e o texto não ajuda, devolva "indefinida" com confiança "baixa" e diga por quê.
@@ -705,8 +712,10 @@ export const SCHEMA_DISCIPLINA = {
 
 export function contextoDisciplina({ documento = '', caminho = '', texto: textoPagina = '', heuristica = null } = {}) {
   const l = [];
-  l.push(`ARQUIVO: ${documento || '(sem nome)'}`);
-  l.push(`PASTAS DE ORIGEM: ${caminho || '(enviado sem pasta)'}`);
+  /* nome de arquivo e de pasta são texto livre de quem organiza o Drive:
+     uma linha só, tamanho limitado, como todo o resto do contexto */
+  l.push(`ARQUIVO: ${limpaLinha(documento).slice(0, 300) || '(sem nome)'}`);
+  l.push(`PASTAS DE ORIGEM: ${limpaLinha(caminho).slice(0, 500) || '(enviado sem pasta)'}`);
   if (heuristica && heuristica.disciplina) {
     l.push(`PALPITE DA HEURÍSTICA POR NOME: ${heuristica.disciplina} (confiança ${heuristica.confianca || 'baixa'})`);
     for (const e of (Array.isArray(heuristica.evidencia) ? heuristica.evidencia : []).slice(0, 8)) l.push('  - ' + limpaLinha(e));

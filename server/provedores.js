@@ -182,7 +182,14 @@ async function comChatCompletions({ nome, cliente, modelo, chave, instrucaoSiste
       max_tokens: maxOutputTokens,
     }, { signal });
     const texto = r.choices?.[0]?.message?.content || '';
-    const bruto = extrairArray(lerJsonSolto(texto), chaveEnvoltoria);
+    const solto = lerJsonSolto(texto);
+    let bruto = extrairArray(solto, chaveEnvoltoria);
+    /* o modelo respondeu com UM objeto solto em vez do envelope — comum no
+       modo `disciplina`, que pede "um objeto". Um objeto com campos e sem
+       nenhum array dentro é esse item: vai embrulhado, não descartado como
+       vazio (o vazio pararia a cadeia aqui, sem tentar o próximo provedor). */
+    if (!bruto.length && solto && typeof solto === 'object' && !Array.isArray(solto)
+        && Object.keys(solto).length && !Object.values(solto).some(Array.isArray)) bruto = [solto];
     const tokens = (r.usage || {}).total_tokens || 0;
     return { bruto, tokens, modelo };
   } catch (err) {

@@ -63,7 +63,11 @@ function distAoSegmento(px, py, s) {
  *
  * Devolve { aceitos, descartados: [{ candidato, motivo }] }.
  */
-export function filtrarSimbolosDeDesenho(candidatos, textos, segmentos, { linhaLonga = 120 } = {}) {
+/* Linha de corte atravessa a planta: numa A0 em 1:50, 1 m são ~57 pt e um
+   corte cruza dezenas de metros. A linha de chamada liga a tag a um cômodo
+   a poucos metros — 300 pt (~5 m) separa as duas sem engolir a chamada
+   longa de um bloco de tags desenhado longe. */
+export function filtrarSimbolosDeDesenho(candidatos, textos, segmentos, { linhaLonga = 300 } = {}) {
   const aceitos = [], descartados = [];
   const triangulos = candidatos.filter(c => c.forma === 'triangulo');
   for (const c of candidatos) {

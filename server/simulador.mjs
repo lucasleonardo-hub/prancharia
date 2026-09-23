@@ -363,8 +363,16 @@ const servidor = http.createServer((req, res) => {
 
   if (req.method === 'POST' && req.url.startsWith('/api/vision/classify-document')) {
     const pedacos = [];
-    req.on('data', c => pedacos.push(c));
+    let bytes = 0, excedeu = false;
+    req.on('data', c => {
+      /* paridade com o limite do express.json em server.js: uma página em
+         JPEG reduzido tem ~150 KB; 50 MB é o teto, não a expectativa */
+      bytes += c.length;
+      if (bytes > 50 * 1024 * 1024) { excedeu = true; req.destroy(); return; }
+      pedacos.push(c);
+    });
     req.on('end', async () => {
+      if (excedeu) { res.writeHead(413, CABECA); return res.end(JSON.stringify({ ok: false, erro: 'corpo grande demais', disciplina: null })); }
       const t0 = Date.now();
       let corpo = {};
       try { corpo = JSON.parse(Buffer.concat(pedacos).toString('utf8') || '{}'); } catch { /* corpo inválido */ }

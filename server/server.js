@@ -632,8 +632,14 @@ app.post('/api/vision/classify-document', async (req, res) => {
   } catch (err) {
     const ms = agora() - t0;
     const msg = err.message || String(err);
+    const estourou = /tempo limite/.test(msg);
+    /* o detalhe do provedor fica no log do servidor; o cliente só precisa
+       saber que a classificação falhou — ele segue com a heurística */
     registrar({ ok: false, ms, local: rotulo, erro: msg });
-    res.status(/tempo limite/.test(msg) ? 504 : 502).json({ ok: false, erro: msg, motor: 'multimodal_gemini', ms, disciplina: null });
+    res.status(estourou ? 504 : 502).json({
+      ok: false, erro: estourou ? 'tempo limite ao classificar o documento' : 'falha ao classificar o documento',
+      motor: 'multimodal_gemini', ms, disciplina: null,
+    });
   }
 });
 
