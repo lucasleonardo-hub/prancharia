@@ -1753,11 +1753,15 @@ const ACOES_ORFAOS = {
     if (!alvo) { aviso('Escolha o local na lista da linha.'); return; }
     moverParaLocal(e, a, alvo);
     a.status = 'corrigido';
-    a.motivos = (a.motivos || []).filter(m => !['tag_sem_ambiente', 'termo_sem_ambiente', 'sem_local', 'lista_aberta'].includes(m));
+    /* a pessoa escolheu o local: as dúvidas de vínculo espacial deixam de existir */
+    a.motivos = (a.motivos || []).filter(m => !['tag_sem_ambiente', 'termo_sem_ambiente', 'sem_local', 'lista_aberta',
+      'vinculo_por_proximidade', 'vinculo_por_chamada', 'baixa_confianca', 'ambiente_proposto'].includes(m));
     if (a.confianca === 'baixa') a.confianca = 'media';
     orfaosSel.delete(id);
     await salvar({ texto: `Item atribuído ao local “${alvo.nome}” na triagem`, tipo: 'revisao', alvo: a.id, depois: alvo.nome });
+    const gavetaAberta = document.getElementById('gaveta')?.classList.contains('aberta');
     render(); aviso(`Atribuído a ${alvo.nome}.`);
+    if (gavetaAberta) abrirGaveta(a);
   },
   async loteAtribuirLocal() {
     const e = emp();
@@ -2790,6 +2794,27 @@ const ACOES_MOTOR = {
   },
 };
 
+/* Revisar é um gesto humano sobre o item: confirmado por uma pessoa, ele
+   sobe para confiança alta e perde as pendências. O estado da leitura fica
+   guardado para a revisão poder ser desfeita sem perder o que o motor viu. */
+function revisar(a, marcar) {
+  if (marcar) {
+    if (a.status !== 'confirmado') {
+      a.leitura = { confianca: a.confianca, motivos: [...(a.motivos || [])], status: a.status };
+    }
+    a.status = 'confirmado';
+    a.confianca = 'alta';
+    a.motivos = [];
+    a.revisadoEm = new Date().toISOString();
+  } else {
+    const l = a.leitura || {};
+    a.status = 'revisar';
+    a.confianca = l.confianca || a.confianca;
+    a.motivos = l.motivos ? [...l.motivos] : (a.motivos || []);
+    a.revisadoEm = null;
+  }
+}
+
 /* ================= ações compartilhadas ================= */
 const ACOES_COMUNS = {
   ...ACOES_ORFAOS,
@@ -2800,16 +2825,24 @@ const ACOES_COMUNS = {
   abrirRastro({ id }) { fecharGaveta(); irPara('rastro', id); },
   async confirmarAchado({ id }) {
     const a = acharAchado(id); if (!a) return;
-    a.status = 'confirmado'; if (a.confianca === 'baixa') a.confianca = 'media';
-    a.motivos = [];
+    revisar(a, true);
     await salvar({ texto: `Item confirmado: ${a.produto || a.descricao || a.codigoOrigem || ''}`, tipo: 'revisao', alvo: a.id });
-    fecharGaveta(); render(); aviso('Item confirmado.');
+    fecharGaveta(); render(); aviso('Item confirmado: confiança alta.');
   },
   async marcarRevisar({ id }) {
     const a = acharAchado(id); if (!a) return;
-    a.status = 'revisar';
+    revisar(a, false);
     await salvar({ texto: `Item marcado para revisar`, tipo: 'revisao', alvo: a.id });
     fecharGaveta(); render();
+  },
+  /* o check "Revisado" do inspetor: marca e desmarca sem fechar a gaveta */
+  async alternarRevisado({ id }) {
+    const a = acharAchado(id); if (!a) return;
+    const marcar = a.status !== 'confirmado';
+    revisar(a, marcar);
+    await salvar({ texto: marcar ? `Item revisado: ${a.produto || a.descricao || a.codigoOrigem || ''}` : 'Revisão desfeita: item volta ao estado da leitura', tipo: 'revisao', alvo: a.id });
+    render();
+    abrirGaveta(a);
   },
   async excluirAchado({ id }) {
     const a = acharAchado(id); if (!a) return;

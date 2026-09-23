@@ -106,6 +106,25 @@ aberto:
 | Glossário | `#/glossario` | regras aprendidas, regras do processo e a lista de sistemas construtivos |
 | Configurações | `#/config` | estrutura do tipo (cada nível leva a `#/estrutura/<nivel>`), motor de leitura e onde os dados moram (com o backup do servidor) |
 
+O **inspetor de evidência** (`js/ui/drawer.js`), aberto ao clicar em qualquer
+linha de item, diz o que o item é e o que fazer com ele, nesta ordem:
+
+- **Selos em grupos nomeados** — Categoria, Revisão, Confiança, Leitura e
+  Pendências — em vez de uma fila só. Em Revisão fica o check **Revisado**.
+- **Revisado** é o gesto humano: confirma o item, sobe a confiança para
+  **alta** e zera as pendências; o estado da leitura fica guardado em
+  `leitura` e desmarcar restaura tudo (`revisar` em `js/ui/views.js`).
+  "Confirmar" faz o mesmo e fecha a gaveta.
+- **O que fazer** — para cada pendência, a instrução (`ACOES_PENDENCIA` em
+  `js/core/model.js`) e, uma vez só, os botões que resolvem: ver na prancha,
+  mover para outro local (seletor), editar, confirmar, excluir. Item revisado
+  mostra a faixa verde com data.
+- **Cadeia da informação** em frases, na ordem em que aconteceu: prancha →
+  tag (e como foi ligada ao cômodo) → local → legenda → material → memorial
+  → marca → linha da planilha; cada passo com "Ver" que abre a evidência
+  correspondente (`fluxo` em `js/core/provas.js`; a tela Rastreabilidade
+  usa a mesma cadeia em blocos).
+
 O rodapé da barra lateral mostra o tempo todo onde os dados estão indo
 (servidor compartilhado ou só este navegador) e qual motor lê a próxima
 prancha. Os diálogos de edição e confirmação são do próprio sistema

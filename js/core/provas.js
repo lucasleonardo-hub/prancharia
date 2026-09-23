@@ -179,23 +179,43 @@ export function rastreio(emp, esp) {
   return linhas.map(([pergunta, resposta]) => ({ pergunta, resposta: (resposta || '').toString().trim() }));
 }
 
-/** A cadeia vertical, do que a planilha mostra até a origem de cada dado. */
+/**
+ * A cadeia da informação, na ordem em que ela aconteceu: de onde o dado saiu
+ * até a linha que ele vira na planilha. Cada elo traz `rotulo`/`valor` (o
+ * que a tela de rastreabilidade usa) e `frase`, a leitura corrida que o
+ * inspetor mostra; `prova` aponta para a evidência que o sustenta.
+ */
 export function fluxo(emp, esp) {
   const evs = (esp.evidencias || []).filter(Boolean);
-  const prancha = evs.find(ev => !ehMemorial(ev) && ev.tipo !== 'rotulo');
+  const prancha = evs.find(ev => !ehMemorial(ev) && ev.tipo !== 'rotulo' && ev.tipo !== 'ambiente');
   const memorial = evs.find(ehMemorial);
   const local = (emp.locais || []).find(l => l.id === esp.localId) || null;
   const legenda = evs.find(ev => ev.legendaCoordenadas);
-  const elos = [
-    { rotulo: 'Planilha', valor: 'Linha exportada em ' + (esp.categoria || 'sem categoria'), papel: null },
-    { rotulo: 'Produto', valor: esp.produto || esp.descricao, papel: null },
-    { rotulo: 'Local', valor: local ? local.nome : esp.localNome, papel: 'local' },
-    { rotulo: 'Prancha', valor: prancha ? refDoc(prancha) : '', papel: 'tag' },
-    { rotulo: 'Tag', valor: esp.forma ? `${FORMAS[esp.forma]?.rotulo || esp.forma} ${esp.numero}` : (esp.codigoOrigem || ''), papel: 'tag' },
-    { rotulo: 'Legenda', valor: legenda ? (legenda.tituloLegenda || '') : '', papel: 'legenda' },
-    { rotulo: 'Material', valor: esp.descricao, papel: 'legenda' },
-    { rotulo: 'Memorial', valor: memorial ? refDoc(memorial) : '', papel: 'memorial' },
-    { rotulo: 'Marca', valor: esp.marca, papel: memorial ? 'memorial' : null },
-  ];
-  return elos.filter(e => e.valor);
+  const nomeLocal = local ? local.nome + (local.pavimento ? ` · ${local.pavimento}` : '') : (esp.localNome || '');
+  const tag = esp.forma ? `${FORMAS[esp.forma]?.rotulo || esp.forma} ${esp.numero}` : (esp.codigoOrigem || '');
+  const motivos = esp.motivos || [];
+  const comoLigou = motivos.includes('vinculo_por_chamada') ? ', ligada ao cômodo pela linha de chamada'
+    : motivos.includes('vinculo_por_proximidade') ? ', atribuída ao cômodo mais próximo (fora das paredes)'
+    : motivos.includes('tag_sem_ambiente') ? ', fora das paredes lidas'
+    : motivos.includes('baixa_confianca') ? ', entre dois cômodos quase à mesma distância' : '';
+  const linhaPlanilha = `vira a linha “${esp.categoria || 'sem categoria'}” de ${nomeLocal || 'local a definir'} na planilha`
+    + (esp.produto ? `, produto ${esp.produto}` : '');
+  const elos = [];
+
+  if (esp.origemLeitura === 'obrigatoria') {
+    elos.push({ rotulo: 'Local', valor: nomeLocal, frase: `O ambiente ${nomeLocal} é fechado: tem ${esp.categoria ? esp.categoria.toLowerCase() : 'esta categoria'} por natureza`, papel: 'local', prova: 'local' });
+    elos.push({ rotulo: 'Documentos', valor: 'nenhum especifica', frase: `nenhum documento lido especifica ${esp.produto ? esp.produto.toLowerCase() + ' para ' : ''}${esp.categoria ? esp.categoria.toLowerCase() : 'a categoria'} aqui`, papel: null });
+    elos.push({ rotulo: 'Planilha', valor: 'linha vazia para preencher', frase: `${linhaPlanilha} — vazia, para a equipe preencher ou apontar a fonte`, papel: null });
+    return elos;
+  }
+  if (prancha) elos.push({ rotulo: 'Prancha', valor: refDoc(prancha), frase: `Lido na prancha ${refDoc(prancha)}`, papel: 'tag', prova: 'tag' });
+  else if (memorial) elos.push({ rotulo: 'Memorial', valor: refDoc(memorial), frase: `Lido no memorial ${refDoc(memorial)}`, papel: 'memorial', prova: 'memorial' });
+  if (tag) elos.push({ rotulo: 'Tag', valor: tag, frase: `pela tag ${tag}${comoLigou}`, papel: 'tag', prova: 'tag' });
+  if (nomeLocal) elos.push({ rotulo: 'Local', valor: nomeLocal, frase: `${tag ? 'no' : 'para o'} local ${nomeLocal}`, papel: 'local', prova: 'local' });
+  if (legenda) elos.push({ rotulo: 'Legenda', valor: legenda.tituloLegenda || 'legenda', frase: `traduzida pela legenda “${legenda.tituloLegenda || 'legenda'}”`, papel: 'legenda', prova: 'legenda' });
+  if (esp.descricao) elos.push({ rotulo: 'Material', valor: esp.descricao, frase: `que diz: “${esp.descricao}”`, papel: legenda ? 'legenda' : (prancha ? 'tag' : (memorial ? 'memorial' : null)), prova: legenda ? 'legenda' : (prancha ? 'tag' : (memorial ? 'memorial' : null)) });
+  if (memorial && prancha) elos.push({ rotulo: 'Memorial', valor: refDoc(memorial), frase: `cruzado com o memorial ${refDoc(memorial)}`, papel: 'memorial', prova: 'memorial' });
+  if (esp.marca) elos.push({ rotulo: 'Marca', valor: esp.marca, frase: `marca ${esp.marca}${memorial ? ', citada no memorial' : ''}`, papel: memorial ? 'memorial' : null, prova: memorial ? 'memorial' : null });
+  elos.push({ rotulo: 'Planilha', valor: `linha ${esp.categoria || 'sem categoria'}`, frase: linhaPlanilha, papel: null });
+  return elos;
 }

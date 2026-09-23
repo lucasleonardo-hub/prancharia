@@ -47,6 +47,29 @@ export const MOTIVOS_PENDENCIA = {
   termo_sem_ambiente: 'Termo da legenda sem local correspondente',
 };
 
+/* O que fazer com cada pendência — a frase que a evidência sozinha não diz.
+   `botoes` aponta para ações que o inspetor já tem: ver (na prancha), local
+   (mover para outro local), editar, confirmar, excluir. */
+export const ACOES_PENDENCIA = {
+  sem_sistema: { fazer: 'Escolha o sistema construtivo na lista oficial, em Editar. Quando a descrição já nomeia o material, a auditoria sugere o sistema na tela Revisão.', botoes: ['editar'] },
+  tag_sem_ambiente: { fazer: 'A tag está fora das paredes que o sistema leu. Abra a prancha, veja em que cômodo ela está desenhada e mova o item para esse local.', botoes: ['ver', 'local'] },
+  legenda_ausente: { fazer: 'Esta forma com este número não existe na legenda da prancha. Confira se a legenda está em outra folha ou se o número foi lido errado; corrija o material em Editar ou exclua o item.', botoes: ['ver', 'editar', 'excluir'] },
+  baixa_confianca: { fazer: 'Dois cômodos ficaram quase à mesma distância da tag. Veja na prancha de quem ela é: confirme, ou mova para o outro local.', botoes: ['ver', 'local', 'confirmar'] },
+  ambiente_proposto: { fazer: 'O nome do local foi presumido pela leitura. Confira o rótulo na prancha; se estiver errado, renomeie o local na tela Locais.', botoes: ['ver', 'confirmar'] },
+  conflito: { fazer: 'Prancha e memorial descrevem materiais diferentes. Decida qual fonte vale com os botões “Manter” logo acima.', botoes: [] },
+  incompleto: { fazer: 'Falta um campo essencial. Procure no memorial ou no quadro de acabamentos e complete em Editar.', botoes: ['editar'] },
+  ilegivel: { fazer: 'O trecho não pôde ser lido. Abra o documento no visor e transcreva à mão em Editar.', botoes: ['ver', 'editar'] },
+  marca_proposta: { fazer: 'A marca veio de regra da empresa, não do documento. Só confirme se o memorial ou a prancha a citam; senão, apague a marca em Editar.', botoes: ['editar', 'confirmar'] },
+  vinculo_por_proximidade: { fazer: 'A tag está fora de qualquer cômodo e foi dada ao rótulo mais próximo. Veja na prancha se há linha de chamada ou se ela pertence a outro local: confirme ou mova.', botoes: ['ver', 'local', 'confirmar'] },
+  vinculo_por_chamada: { fazer: 'A tag foi ligada ao cômodo pela linha de chamada. Confira na prancha que a linha termina mesmo neste local e confirme.', botoes: ['ver', 'confirmar'] },
+  categoria_obrigatoria: { fazer: 'Todo ambiente fechado tem esta categoria, mas nenhum documento a especificou. Procure no memorial ou no caderno de acabamentos e preencha em Editar; se o ambiente realmente não tem, exclua a linha.', botoes: ['editar', 'excluir'] },
+  rejunte_obrigatorio: { fazer: 'Há porcelanato ou cerâmica sem rejunte especificado. Procure cor e tipo do rejunte no memorial e preencha em Editar; se nenhum documento diz, deixe a linha vazia para a construtora informar.', botoes: ['editar'] },
+  vinculo_por_familia: { fazer: 'A legenda fala no plural (“dormitórios”) e o item foi copiado para este local por pertencer à família. Confirme se este cômodo recebe mesmo o material; senão, exclua aqui.', botoes: ['ver', 'confirmar', 'excluir'] },
+  vinculo_geral: { fazer: 'A legenda vale para todos os locais e o item foi replicado. Confirme, ou exclua nos locais em que não se aplica.', botoes: ['confirmar', 'excluir'] },
+  lista_aberta: { fazer: 'A lista de ambientes da legenda termina em “etc.”: o sistema não sabe que outros cômodos recebem o item. Mova ou copie para os locais que faltam.', botoes: ['local'] },
+  termo_sem_ambiente: { fazer: 'A legenda cita um ambiente que não existe na árvore. Escolha o local correspondente, ou crie-o na tela Locais.', botoes: ['local'] },
+};
+
 export function normalizar(texto) {
   if (!texto) return '';
   return String(texto).trim().toLowerCase()

@@ -15,7 +15,7 @@
 
 import { esc, marcaForma, seloConfianca, seloStatus, estado, irPara, emp } from '../app.js';
 import { montarVisualizador, recortar } from './viewer.js';
-import { MOTIVOS_PENDENCIA } from '../core/model.js';
+import { MOTIVOS_PENDENCIA, ACOES_PENDENCIA } from '../core/model.js';
 import { provasDe, fluxo, PAPEIS, NIVEIS, niveisDe, ehMemorial, refDoc } from '../core/provas.js';
 
 const ROTULO_MOTOR = {
@@ -24,6 +24,41 @@ const ROTULO_MOTOR = {
   legado_vetorial: 'leitura vetorial',
 };
 const nomeMotor = m => ROTULO_MOTOR[m] || m || '';
+const ROTULO_ORIGEM = {
+  tag: 'tag na planta', hachura: 'hachura', paginacao: 'paginação', texto_prancha: 'texto na prancha',
+  tabela: 'tabela da prancha', legenda_tabela: 'legenda', memorial: 'memorial', manual: 'inserido à mão',
+  obrigatoria: 'linha obrigatória do ambiente',
+};
+
+/* O bloco "o que fazer": a instrução de cada pendência e, uma vez só, os
+   botões que resolvem — inclusive o seletor para mover o item de local. */
+function blocoOQueFazer(e, esp) {
+  if (esp.status === 'confirmado') {
+    const quando = esp.revisadoEm ? new Date(esp.revisadoEm).toLocaleString('pt-BR') : '';
+    return `<section class="o-que-fazer revisado"><div class="cat">Revisado</div>
+      <div style="font-size:13px;line-height:1.5">Item conferido por uma pessoa${quando ? ` em ${esc(quando)}` : ''}: confiança alta e sem pendências. Desmarque “Revisado” para voltar ao estado da leitura.</div></section>`;
+  }
+  const motivos = (esp.motivos || []).filter(m => m !== 'conflito' || esp.status !== 'conflito');
+  if (!motivos.length && esp.status !== 'revisar') return '';
+  const passos = motivos.length ? motivos.map(m => {
+    const a = ACOES_PENDENCIA[m];
+    return `<li><b>${esc(MOTIVOS_PENDENCIA[m] || m)}.</b> ${esc(a ? a.fazer : 'Confira a evidência ao lado e confirme ou corrija o item.')}</li>`;
+  }) : ['<li>Marcado para revisar. Confira a evidência ao lado: confirme se estiver certo, edite se faltar algo, exclua se não for acabamento.</li>'];
+  const botoes = new Set(motivos.flatMap(m => (ACOES_PENDENCIA[m] || {}).botoes || []));
+  if (!motivos.length) { botoes.add('confirmar'); botoes.add('editar'); }
+  const locais = (e.locais || []).filter(l => l.status !== 'excluido' && l.id !== esp.localId)
+    .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+  const acoes = [];
+  if (botoes.has('ver')) acoes.push(`<button class="btn pequeno" data-acao="verNaPrancha" data-id="${esp.id}" data-prova-foco="0">Ver na prancha</button>`);
+  if (botoes.has('local') && locais.length) acoes.push(`<select data-alvo-local="${esp.id}" aria-label="Mover para o local"><option value="">mover para…</option>${locais.map(l => `<option value="${l.id}">${esc(l.nome)}${l.pavimento ? ' · ' + esc(l.pavimento) : ''}</option>`).join('')}</select><button class="btn pequeno" data-acao="atribuirLocal" data-id="${esp.id}">Mover</button>`);
+  if (botoes.has('editar')) acoes.push(`<button class="btn pequeno" data-acao="editarAchado" data-id="${esp.id}">Editar</button>`);
+  if (botoes.has('confirmar')) acoes.push(`<button class="btn pequeno primario" data-acao="confirmarAchado" data-id="${esp.id}">Confirmar</button>`);
+  if (botoes.has('excluir')) acoes.push(`<button class="btn pequeno discreto" data-acao="excluirAchado" data-id="${esp.id}">Excluir</button>`);
+  return `<section class="o-que-fazer"><div class="cat">O que fazer</div>
+    <ol>${passos.join('')}</ol>
+    ${acoes.length ? `<div class="acoes-pendencia">${acoes.join('')}</div>` : ''}
+  </section>`;
+}
 
 let ctx = null;   // { esp, provas, iProva, nivel, visor, chave }
 
@@ -53,23 +88,35 @@ export function abrirGaveta(esp) {
   const legenda = provas.find(p => p.papel === 'legenda');
   const temMemorial = provas.some(p => p.papel === 'memorial');
   const temPrancha = provas.some(p => p.papel !== 'memorial');
-  const motores = [...new Set((esp.evidencias || []).map(ev => (ev.proveniencia || {}).motor_ia).filter(Boolean))];
+  /* a linha obrigatória não foi lida por motor nenhum: o selo de leitura
+     seria mentira */
+  const motores = esp.origemLeitura === 'obrigatoria' ? []
+    : [...new Set((esp.evidencias || []).map(ev => (ev.proveniencia || {}).motor_ia).filter(Boolean))];
 
   g.innerHTML = `
     <header>
       <div style="min-width:0">
-        <h2 style="font-size:14px" title="${esc(esp.descricao || esp.produto || '')}">${esc(esp.descricao || esp.produto || 'Item sem descrição')}</h2>
+        <h2 style="font-size:14px" title="${esc(esp.descricao || esp.produto || '')}">${esc(esp.descricao || esp.produto
+          || (esp.origemLeitura === 'obrigatoria' ? `${esp.categoria || 'Categoria'} a preencher` : 'Item sem descrição'))}</h2>
       </div>
       <button class="btn discreto pequeno" data-acao="fecharGaveta" style="margin-left:auto;flex:none" aria-label="Fechar"><i class="ico-fechar" aria-hidden="true"></i><kbd class="so-teclado">Esc</kbd></button>
     </header>
     <div class="corpo">
-      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-        <span class="selo neutro">${esc(esp.categoria || 'sem categoria')}</span>
-        ${marcaForma(esp.forma, esp.numero)}
-        ${seloConfianca(esp.confianca)} ${seloStatus(esp.status)}
-        ${motores.map(m => `<span class="selo neutro" title="motor que leu esta evidência">${esc(nomeMotor(m))}</span>`).join('')}
-        ${(esp.motivos || []).map(m => `<span class="selo atencao">${esc(MOTIVOS_PENDENCIA[m] || m)}</span>`).join('')}
+      <div class="grupos-selos">
+        <div class="grupo-selos"><span class="rotulo-grupo">Categoria</span>
+          <span class="selo neutro">${esc(esp.categoria || 'sem categoria')}</span>${marcaForma(esp.forma, esp.numero)}</div>
+        <div class="grupo-selos"><span class="rotulo-grupo">Revisão</span>
+          ${seloStatus(esp.status)}
+          <button type="button" class="btn pequeno check" data-acao="alternarRevisado" data-id="${esp.id}" aria-pressed="${esp.status === 'confirmado' ? 'true' : 'false'}" title="${esp.status === 'confirmado' ? 'Desmarcar: volta ao estado da leitura' : 'Marcar como revisado: confirma o item e eleva a confiança para alta'}">Revisado</button></div>
+        <div class="grupo-selos"><span class="rotulo-grupo">Confiança</span>${seloConfianca(esp.confianca)}</div>
+        <div class="grupo-selos"><span class="rotulo-grupo">Leitura</span>
+          ${esp.origemLeitura ? `<span class="selo apagado" title="como este item foi lido">${esc(ROTULO_ORIGEM[esp.origemLeitura] || esp.origemLeitura)}</span>` : ''}
+          ${motores.map(m => `<span class="selo apagado" title="motor que leu esta evidência">${esc(nomeMotor(m))}</span>`).join('')}</div>
+        ${(esp.motivos || []).length ? `<div class="grupo-selos pendencias"><span class="rotulo-grupo">Pendências</span>
+          ${(esp.motivos || []).map(m => `<span class="selo atencao">${esc(MOTIVOS_PENDENCIA[m] || m)}</span>`).join('')}</div>` : ''}
       </div>
+
+      ${blocoOQueFazer(e, esp)}
 
       ${esp.status === 'conflito' ? `<div class="aviso-faixa critico"><span class="ico-aviso" aria-hidden="true">!</span><div><b>Conflito documental.</b> Duas fontes descrevem este item de formas diferentes — nenhuma foi descartada.
         <div style="margin-top:6px">${(esp.divergencias || []).map(d => `<div>• ${esc(d.documento)} p.${esc(d.pagina)}: ${esc(d.descricao)}</div>`).join('')}</div>
@@ -127,11 +174,13 @@ export function abrirGaveta(esp) {
       </section>` : ''}
 
       <section>
-        <div class="cat" style="color:var(--ink-3);margin-bottom:8px">Cadeia da informação</div>
+        <div class="cat" style="color:var(--ink-3);margin-bottom:4px">Cadeia da informação</div>
+        <p class="nota-prova" style="margin:0 0 8px">De onde o dado saiu até a linha que ele vira na planilha, na ordem em que aconteceu. “Ver” abre a evidência daquele passo.</p>
         <div class="cadeia">
           ${cadeia.map((el, i) => `<div class="elo">
             <div class="marcador"><span class="ponto"${el.papel ? ` style="background:${PAPEIS[el.papel].cor};border-color:${PAPEIS[el.papel].cor}"` : ''}></span>${i < cadeia.length - 1 ? '<span class="fio"></span>' : ''}</div>
-            <div class="texto"><div class="rotulo">${esc(el.rotulo)}</div>${esc(el.valor)}</div>
+            <div class="texto"><div class="rotulo"><span class="num">${i + 1}</span>${esc(el.rotulo)}</div>
+              <div class="frase">${esc(el.frase || el.valor)}${el.prova && provas.some(p => p.papel === el.prova) ? `<button type="button" class="btn discreto pequeno" data-ir-papel="${el.prova}">Ver</button>` : ''}</div></div>
           </div>`).join('')}
         </div>
         <button class="btn pequeno" style="margin-top:10px" data-acao="abrirRastro" data-id="${esp.id}">Rastreabilidade completa</button>

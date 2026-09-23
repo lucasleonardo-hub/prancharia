@@ -455,6 +455,30 @@ details > summary:hover { color: var(--ink); }
 .cadeia .fio { width: 1px; flex: 1; background: var(--line-strong); min-height: 12px; }
 .cadeia .texto { padding-bottom: 10px; min-width: 0; }
 .cadeia .rotulo { margin-bottom: 1px; }
+.cadeia .frase { line-height: 1.45; }
+.cadeia .frase .btn { margin-left: 6px; vertical-align: middle; }
+.cadeia .num { font-size: 10.5px; color: var(--ink-3); font-variant-numeric: tabular-nums; margin-right: 4px; }
+
+/* selos do inspetor em grupos nomeados: categoria, revisão, confiança,
+   leitura e pendências — cada coisa no seu lugar, em vez de uma fila só */
+.grupos-selos { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: flex-start; }
+.grupo-selos { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.grupo-selos > .rotulo-grupo { font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-3); margin-right: 2px; }
+.grupo-selos.pendencias { flex-basis: 100%; }
+.btn.check[aria-pressed="true"] { background: var(--bom-soft); color: var(--bom); border-color: color-mix(in srgb, var(--bom) 35%, transparent); }
+.btn.check::before { content: "☐"; margin-right: 5px; font-size: 13px; line-height: 1; }
+.btn.check[aria-pressed="true"]::before { content: "☑"; }
+
+/* o que fazer com a pendência: instrução por motivo e as ações à mão */
+.o-que-fazer { padding: 10px 12px; border-radius: var(--raio); background: var(--atencao-soft); border: 1px solid color-mix(in srgb, var(--atencao) 25%, transparent); }
+.o-que-fazer .cat { color: var(--atencao); margin-bottom: 6px; }
+.o-que-fazer ol { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.5; color: var(--ink); }
+.o-que-fazer li { margin-bottom: 6px; }
+.o-que-fazer li:last-child { margin-bottom: 0; }
+.o-que-fazer .acoes-pendencia { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+.o-que-fazer select { height: 24px; font-size: 12px; padding: 0 6px; border-radius: var(--raio-s); border: 1px solid var(--borda); background: var(--surface); color: var(--ink); max-width: 220px; }
+.o-que-fazer.revisado { background: var(--bom-soft); border-color: color-mix(in srgb, var(--bom) 25%, transparent); }
+.o-que-fazer.revisado .cat { color: var(--bom); }
 .recorte { border-radius: var(--raio); background: var(--surface-3); overflow: hidden; border: 1px solid var(--line); }
 .recorte canvas, .recorte img { display: block; width: 100%; height: auto; max-height: 460px; object-fit: contain; background: #fff; }
 .legenda-recorte { padding: 6px 10px; font-size: 11px; color: var(--ink-3); font-family: var(--mono); border-top: 1px solid var(--line); }
