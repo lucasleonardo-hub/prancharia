@@ -12,6 +12,7 @@ import { gerarXlsx, gerarCsv } from './xlsx.js';
 import { CONFIANCA, STATUS, MOTIVOS_PENDENCIA, todasEspecificacoes } from './model.js';
 import { LAYOUT, COLUNAS_COPIA, CATEGORIAS } from './vocab.js';
 import { temAreasComuns } from './tipos.js';
+import { completarObrigatorias } from './ambiente.js';
 
 const vivo = a => a && a.status !== 'excluido';
 const rot = (m, k) => (m[k] ? m[k].rotulo : (k || ''));
@@ -233,6 +234,10 @@ export function separarPorManual(emp) {
 }
 
 export function pastaDeAbas(emp) {
+  /* a planilha sai com as linhas obrigatórias dos ambientes (piso, paredes,
+     teto de todo ambiente fechado; rejunte de todo cerâmico) mesmo vazias —
+     é a única mutação da árvore que a exportação faz, e é idempotente */
+  completarObrigatorias(emp);
   const { mc, mp } = separarPorManual(emp);
   const abas = [{ nome: 'Copiar', linhas: tabelaCopia(emp, especificacoesDe(emp)) }];
   const tips = [...new Set(mp.map(a => a.tipologia || ''))];

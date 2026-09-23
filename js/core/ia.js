@@ -41,6 +41,9 @@ export const IA = {
      memorial.js detecta que a extração normal veio quase vazia. */
   rotaOcr: '/api/pdf/ocr',
   timeoutOcrMs: 120000,
+  /* disciplina do documento: a primeira página em resolução baixa, uma
+     chamada curta por PDF, só quando o nome e o carimbo não bastaram */
+  rotaDisciplina: '/api/vision/classify-document',
   timeoutMs: 60000,
   /* a leitura ampla devolve dezenas de linhas de uma vez: é a chamada mais
      demorada, e a mais rentável — um quadro de acabamentos traz o levantamento
@@ -68,7 +71,7 @@ export const IA = {
 };
 
 const CHAVE_CONFIG = 'prancharia.ia';
-const DURAVEIS = ['provedor', 'bff', 'rota', 'rotaFolha', 'rotaMemorial', 'rotaOcr',
+const DURAVEIS = ['provedor', 'bff', 'rota', 'rotaFolha', 'rotaMemorial', 'rotaOcr', 'rotaDisciplina',
   'timeoutMs', 'timeoutQuadroMs', 'timeoutMemorialMs', 'timeoutOcrMs',
   'lerLocaisSemTag', 'lerQuadrosComIA', 'maxRegioesPorFolha', 'paralelas'];
 

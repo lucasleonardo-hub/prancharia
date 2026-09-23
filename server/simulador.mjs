@@ -22,7 +22,7 @@
    tanto para testar quanto para uma máquina de escritório sem compilador. */
 
 import http from 'node:http';
-import { sanear, sanearMemorial, sanearQuadro, CATEGORIAS, blocoDeEmpresa } from './prompt.js';
+import { sanear, sanearMemorial, sanearQuadro, sanearDisciplina, disciplinaSimulada, CATEGORIAS, blocoDeEmpresa } from './prompt.js';
 import * as banco from './db.js';
 import armazenamento, { lerMultipart } from './armazenamento.js';
 
@@ -357,6 +357,33 @@ const servidor = http.createServer((req, res) => {
         + `${itens.length} itens | ${kb} KB | recusadas ${JSON.stringify(recusadas)}`);
       res.writeHead(200, CABECA);
       res.end(JSON.stringify({ ok: true, motor: 'multimodal_gemini', modelo: 'simulado', ms: Date.now() - t0, recusadas, itens }));
+    });
+    return;
+  }
+
+  if (req.method === 'POST' && req.url.startsWith('/api/vision/classify-document')) {
+    const pedacos = [];
+    req.on('data', c => pedacos.push(c));
+    req.on('end', async () => {
+      const t0 = Date.now();
+      let corpo = {};
+      try { corpo = JSON.parse(Buffer.concat(pedacos).toString('utf8') || '{}'); } catch { /* corpo inválido */ }
+      const { documento = '', imagem = null, heuristica = null } = corpo;
+      if (LENTO) await new Promise(r => setTimeout(r, LENTO));
+      if (FALHAR) {
+        res.writeHead(502, CABECA);
+        console.log('ERR  disciplina · falha simulada');
+        return res.end(JSON.stringify({ ok: false, erro: 'falha simulada', disciplina: null }));
+      }
+      if (!imagem) {
+        res.writeHead(400, CABECA);
+        console.log('ERR  disciplina · nenhuma imagem');
+        return res.end(JSON.stringify({ ok: false, erro: 'nenhuma imagem enviada', disciplina: null }));
+      }
+      const r = sanearDisciplina(disciplinaSimulada({ documento, heuristica }));
+      console.log(`ok   ${String(Date.now() - t0).padStart(5)}ms | disciplina ${documento} → ${r.disciplina} (${r.tipoDocumento})`);
+      res.writeHead(200, CABECA);
+      res.end(JSON.stringify({ ok: true, motor: 'multimodal_gemini', modelo: 'simulado', ms: Date.now() - t0, ...r }));
     });
     return;
   }

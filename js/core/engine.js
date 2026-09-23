@@ -4,6 +4,7 @@
 
 import { openPdf, walkPaths, readText, isRed, naFilaDeRender } from './pdfdoc.js';
 import { coletorDeFormas, montarTags, FORMAS } from './shapes.js';
+import { coletorDeSegmentos, filtrarSimbolosDeDesenho, seguirChamada } from './simbolos.js';
 import { lerAmbientes, lerPavimentos, lerTipologias, atribuirTipologias, criarMascara, vincularTags, janelasDePlanta } from './rooms.js';
 import { ladoDaFolha } from './areas.js';
 import { classificarArea, lerTipologia, partesDoNome, familiaDoNome, mesmoCerne } from './areas.js';
@@ -77,13 +78,18 @@ export async function analisarFolha(doc, numero, docMeta, aoProgredir = () => {}
 
   const formas = coletorDeFormas(isRed);
   const fios = coletorDeFios();
+  const segmentos = coletorDeSegmentos();
   const mascara = criarMascara(vp.width, vp.height, 0.6);
-  await walkPaths(page, p => { formas.visit(p); fios.visit(p); mascara.visit(p); });
+  await walkPaths(page, p => { formas.visit(p); fios.visit(p); segmentos.visit(p); mascara.visit(p); });
   const mask = mascara.finalizar();
   const textos = await readText(page);
   await aoProgredir('lendo tags e legendas', 0.5);
 
-  const tags = montarTags(formas.resultado, textos);
+  /* símbolo de corte, bolha de detalhe e seta não são tag, por mais que
+     tragam um número dentro de um círculo (js/core/simbolos.js) */
+  const { aceitos: candidatos, descartados: simbolosDeDesenho } = filtrarSimbolosDeDesenho(formas.resultado, textos, segmentos.resultado);
+  if (simbolosDeDesenho.length) console.info(`[vetor] p.${numero}: ${simbolosDeDesenho.length} símbolo(s) de corte/detalhe descartado(s): ${[...new Set(simbolosDeDesenho.map(d => d.motivo))].join('; ')}`);
+  const tags = montarTags(candidatos, textos);
   const usadas = new Set(tags.map(t => Math.round(t.x) + ':' + Math.round(t.y)));
   const semNumero = formas.resultado.filter(c => !usadas.has(Math.round(c.cx) + ':' + Math.round(c.cy)));
   const legendas = lerLegendas(semNumero, textos);
@@ -101,6 +107,28 @@ export async function analisarFolha(doc, numero, docMeta, aoProgredir = () => {}
   const vinculos = ambientes.length
     ? vincularTags(mask, ambientes, tags, [0, 0, vp.width, vp.height])
     : tags.map(t => ({ tag: t, ambiente: null, folga: Infinity }));
+
+  /* Tag fora das paredes com LINHA DE CHAMADA: a ponta da linha diz o
+     cômodo. Uma tag-fantasma na ponta passa pelo mesmo vínculo por dentro
+     das paredes — e o vínculo sai com confiança média, não baixa, porque a
+     linha é uma indicação do projetista, não um palpite nosso. */
+  const soltas = vinculos.filter(v => !v.ambiente && ambientes.length);
+  if (soltas.length) {
+    const pontas = soltas.map(v => ({ v, ponta: seguirChamada(v.tag, segmentos.resultado) })).filter(p => p.ponta);
+    if (pontas.length) {
+      const fantasmas = pontas.map(p => ({ ...p.v.tag, x: p.ponta.x, y: p.ponta.y }));
+      const porChamada = vincularTags(mask, ambientes, fantasmas, [0, 0, vp.width, vp.height]);
+      porChamada.forEach((r, i) => {
+        if (!r.ambiente) return;
+        Object.assign(pontas[i].v, {
+          ambiente: r.ambiente, distancia: r.distancia, segundo: r.segundo, distancia2: r.distancia2, folga: r.folga,
+          porChamada: true, chamada: pontas[i].ponta.tracado,
+        });
+      });
+      const ligadas = porChamada.filter(r => r.ambiente).length;
+      if (ligadas) console.info(`[vetor] p.${numero}: ${ligadas} tag(s) ligada(s) ao ambiente pela linha de chamada`);
+    }
+  }
 
   /* Em ambiente pequeno o projetista desenha o bloco de tags do lado de fora,
      e a leitura por dentro das paredes não alcança. Nesses casos o vínculo é
@@ -415,7 +443,8 @@ export function lacunasDeCobertura(emp, essenciais = ['Piso', 'Paredes', 'Teto']
   const vivo = x => x && x.status !== 'excluido';
   const out = [];
   for (const l of (emp.locais || []).filter(vivo)) {
-    const tem = new Set((l.especificacoes || []).filter(vivo).map(e => e.categoria));
+    /* a linha obrigatória vazia não conta como cobertura: a IA ainda procura */
+    const tem = new Set((l.especificacoes || []).filter(e => vivo(e) && e.origemLeitura !== 'obrigatoria').map(e => e.categoria));
     const falta = essenciais.filter(c => !tem.has(c));
     if (falta.length) out.push(`${l.nome}: falta ${falta.join(', ')}`);
   }
@@ -488,7 +517,7 @@ export function pacoteVetorialDoLocal(vetorial = [], local = null) {
   const vivo = x => x && x.status !== 'excluido';
   const tem = new Set([
     ...vetorial.map(e => e.categoria),
-    ...((local && local.especificacoes) || []).filter(vivo).map(e => e.categoria),
+    ...((local && local.especificacoes) || []).filter(e => vivo(e) && e.origemLeitura !== 'obrigatoria').map(e => e.categoria),
   ].filter(Boolean));
   const lacunas = ESSENCIAIS.filter(c => !tem.has(c));
   return { especificacoes, lacunas };
@@ -513,7 +542,8 @@ async function lerComMultimodal(base64Local, base64Legenda, dados, vetorial = []
       tags: itens.map(({ tag, vinculo }) => ({
         forma: tag.forma, numero: tag.numero,
         vinculo: !vinculo || !vinculo.ambiente ? 'sem ambiente'
-          : vinculo.porProximidade ? 'vínculo proposto por proximidade' : 'dentro do ambiente',
+          : vinculo.porProximidade ? 'vínculo proposto por proximidade'
+          : vinculo.porChamada ? 'ligada ao ambiente por linha de chamada' : 'dentro do ambiente',
       })),
       legenda: linhasDaLegenda(legendas),
       codigos,
@@ -677,6 +707,7 @@ function leituraVetorial({ itens = [], legendas = {}, local = null, docMeta = {}
     if (!item) { confianca = 'baixa'; motivos.push('legenda_ausente'); }
     if (!local) { confianca = 'baixa'; motivos.push('tag_sem_ambiente'); }
     else if (v.porProximidade) { confianca = 'baixa'; motivos.push('vinculo_por_proximidade'); }
+    else if (v.porChamada) { motivos.push('vinculo_por_chamada'); }   // média: a linha é do projetista
     else if (!folgaOk) { confianca = 'baixa'; motivos.push('baixa_confianca'); }
     else if (local.confianca === 'baixa') { confianca = 'baixa'; motivos.push('ambiente_proposto'); }
 
@@ -881,12 +912,20 @@ function ladoDoRotulo(emp, a, folha) {
   if (vocab === 'comum') return true;
   if (vocab === 'privativa') return false;
   if (folha && (folha.tipologias || []).length) return true;   // folha com unidades marcadas: fora delas é comum
+  /* o lado que o DOCUMENTO declara ("PLANTA BAIXA TÉRREO — ÁREAS COMUNS",
+     "PAVIMENTO TIPO"; ver js/core/disciplina.js). Com boa confiança vale
+     antes da maioria da folha: o apartamento do zelador não faz do térreo
+     uma planta de unidade. Com confiança baixa, só desempata no fim. */
+  const doDoc = (folha && folha.ladoDocumento) || '';
+  const docForte = doDoc && folha.ladoDocumentoConfianca !== 'baixa';
+  if (docForte) return doDoc === 'comum';
   /* nome que sozinho não decide (CIRCULAÇÃO, WC, LAVANDERIA, DEPÓSITO): a
      maioria da folha decide — é o que impede a planta de cada pavimento de
      criar um WC novo por andar */
   const lado = a.ladoFolha || (folha && folha.ladoFolha) || '';
   if (lado === 'privativa') return false;
   if (lado === 'comum') return true;
+  if (doDoc) return doDoc === 'comum';
   return temAreasComuns(emp) ? undefined : false;
 }
 
@@ -1027,6 +1066,8 @@ function obterOuCriarLocal(emp, a, docMeta, folha, porChave = null) {
 /** Cria ou reencontra o Local de cada rótulo lido na folha. */
 function casarLocais(emp, folha, docMeta) {
   folha.ladoFolha = ladoDaFolha((folha.ambientes || []).map(x => x.nome));
+  folha.ladoDocumento = docMeta && (docMeta.lado === 'comum' || docMeta.lado === 'privativa') ? docMeta.lado : '';
+  folha.ladoDocumentoConfianca = (docMeta && docMeta.ladoConfianca) || 'baixa';
   const porChave = new Map(emp.locais.map(l => [chaveDoLocal(l), l]));
   const criados = [];
   for (const a of folha.ambientes) {

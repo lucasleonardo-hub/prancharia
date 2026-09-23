@@ -27,6 +27,32 @@ A IA nunca faz o trabalho pesado do zero. A ordem é fixa, em `engine.js`:
 | 3. revisão pela IA | `server/prompt.js` | o prompt diz: *"aqui estão os dados que já extraí vetorialmente; analise a imagem apenas para VERIFICAR se falta algo e PREENCHER as lacunas"*. Cada item volta com `acao`: `confirmar`, `completar` ou `novo`. |
 | 4. mesclar | `mesclarLeituras` | confirmação e complemento se anexam ao item do vetor (que nunca é substituído); só o `novo` vira linha própria. `confirmar` sem item correspondente é descartado — não tem evidência própria. |
 
+Três noções de prancha que o leitor vetorial aplica antes da IA, e que o
+prompt repete para ela (R15, R16, R4 / Q15, Q16 em `server/prompt.js`):
+
+- **Símbolo de corte e bolha de detalhe não são tag** (`js/core/simbolos.js`).
+  O círculo com uma linha longa presa (a linha de corte), o círculo com seta
+  ou triângulo colado, o círculo dividido ao meio e a bolha com dois textos
+  (número do detalhe em cima, folha embaixo) saem da lista de candidatos
+  antes de virar tag — "corte 1" nunca é traduzido como "piso 01". O console
+  diz quantos símbolos a folha descartou.
+- **Linha de chamada** (`seguirChamada`). Tag desenhada fora das paredes com
+  uma linha (reta ou quebrada) ligando-a ao cômodo é vinculada ao ambiente
+  onde a ponta da linha termina, com confiança média e o motivo
+  `vinculo_por_chamada`. Só depois disso a proximidade entra como último
+  recurso, com confiança baixa.
+- **O que um ambiente precisa ter** (`js/core/ambiente.js`). Todo ambiente
+  fechado tem Piso, Paredes e Teto; ambiente aberto (piscina, deck, quadra)
+  só Piso; jardim, telhado e muro, nada. Porcelanato e cerâmica pedem
+  rejunte, no piso e na parede. O que nenhum documento trouxe vira uma
+  **linha obrigatória vazia** na árvore e na planilha — origem
+  `obrigatoria`, status a revisar, confiança baixa, motivo escrito — e some
+  sozinha quando um documento traz o item de verdade
+  (`completarObrigatorias`, chamada depois de cada processamento e antes de
+  exportar). Nenhum dado é inventado: a linha existe para a equipe
+  preencher ou apontar a fonte, e a IA continua procurando a categoria como
+  lacuna.
+
 A Regra de Ouro continua imposta em código, não só pedida no prompt: no
 servidor, item da IA **sem `justificativa`** (de onde saiu, na imagem) é
 descartado antes de chegar ao frontend (`sanear`, R11 / `sanearQuadro`, Q11), e
@@ -72,7 +98,7 @@ aberto:
 
 | menu | rota | o que é |
 |---|---|---|
-| Documentos | `#/documentos` | envio (botão, arrastar e soltar, Google Drive), processamento e o visor da prancha |
+| Documentos | `#/documentos` | envio (botão, arrastar e soltar, Google Drive), triagem por disciplina, processamento e o visor da prancha |
 | Locais | `#/locais` | a grade de locais com busca e filtros; a ficha de cada um (`#/locais/<id>`) concentra acabamentos, esquadrias, pendências e evidências; a fila de triagem dos itens sem local |
 | Produtos | `#/produtos` | cada material distinto, com edição global; leva a Marcas e fornecedores (`#/fornecedores`) |
 | Revisão | `#/pendencias` | o que a leitura não decidiu sozinha, agrupado por problema, com ações em lote |
@@ -147,7 +173,53 @@ POST http://localhost:3000/api/vision/process-local      (a prancha, por imagem)
 POST http://localhost:3000/api/text/process-memorial     (o memorial, por sentido)
   { documento, paginas: [{ pagina, texto }], locais: [{ id, nome, especificacoes }] }
 → { ok, motor, modelo, ms, lotes, recusadas, atualizacoes: [ ...Atualizacao ] }
+
+POST http://localhost:3000/api/vision/classify-document  (a disciplina, pela primeira página)
+  { documento, caminho, texto, imagem, heuristica }
+→ { ok, motor, modelo, ms, disciplina, tipoDocumento, titulo, confianca, justificativa }
 ```
+
+### Triagem por disciplina
+
+A pasta de um projeto traz tudo junto — arquitetura, estrutura, hidráulica,
+elétrica, ar-condicionado, modificações de unidade — e só a arquitetura e o
+memorial interessam ao levantamento. Antes de ler qualquer PDF, o sistema
+descobre a disciplina dele (`js/core/disciplina.js`), nesta ordem:
+
+1. **pastas e nome do arquivo** — o caminho vem junto no Drive
+   (`PARADISO/HIDRÁULICO/…`) e siglas como `-FOR-`, `-HID-`, `-ELE-`, `ARQ`;
+2. **texto da primeira página** — numa planta raster só o carimbo tem texto,
+   e é no carimbo que está escrito "PROJETO ESTRUTURAL";
+3. **IA**, só com o BFF ligado e só quando as duas anteriores não deram
+   certeza: a primeira página vai em resolução baixa para
+   `/api/vision/classify-document`, e a resposta só vale com `justificativa`
+   (`sanearDisciplina`). Sem servidor, os passos 1 e 2 continuam funcionando.
+
+O nome da pasta é pista, não veredito: num projeto real a pasta "EXECUTIVO"
+guardava pranchas de fôrma, e foi a sigla do arquivo (`-FOR-PE-`) que decidiu.
+
+O PDF "de acabamento" — caderno, tabela, quadro de acabamentos, paginação,
+planta de piso ou de forro — é identificado como **Acabamentos** e lido como
+prancha ou como texto, conforme o tamanho da página.
+
+Junto com a disciplina o sistema lê o **lado** do documento: áreas comuns ou
+unidades privativas, pelas mesmas fontes ("ÁREAS COMUNS", "PAVIMENTO TIPO",
+"APTO TIPO 1" na pasta, no nome ou no carimbo; a IA responde `lado`). O lado
+do documento não substitui o que o nome do cômodo já diz (HALL é comum, SUÍTE
+é privativa): ele desempata os nomes que sozinhos não decidem (CIRCULAÇÃO,
+WC, DEPÓSITO) — antes da maioria da folha quando a confiança é boa, depois
+dela quando é baixa — e é o grupo inicial de um memorial que não traz os
+marcadores "ÁREAS COMUNS" / "ÁREAS PRIVATIVAS" dentro. Em empreendimentos
+com áreas comuns, a tela Documentos mostra o seletor de lado ao lado do de
+disciplina; a troca vale para a próxima leitura do documento.
+
+Estrutura, instalações, paisagismo e modificação de unidade ficam na lista
+como **fora do escopo** e não são lidos — nada é apagado. Na tela Documentos
+cada linha tem o seletor de disciplina (a evidência aparece ao passar o mouse)
+e o botão **Ler mesmo assim**; trocar a disciplina de um documento não lido
+devolve-o à fila de "Processar pendentes". "Não identificada" é lida como
+sempre foi: pular uma prancha de arquitetura custa mais que ler uma folha à
+toa.
 
 ### Fusão semântica do memorial
 
@@ -439,8 +511,11 @@ O `/api/backup` existe por causa do disco efêmero: **Configurações › Dados 
 Baixar backup do servidor** guarda o levantamento inteiro num arquivo (sem os
 PDFs, que são identificados pelo SHA-256 e podem ser reenviados).
 
-As três rotas do Gemini aceitam `companyId` no corpo **ou** `X-Empresa-Id` no
-cabeçalho. Empresa inexistente não é erro: a chamada segue sem contexto.
+As três rotas de leitura do Gemini aceitam `companyId` no corpo **ou**
+`X-Empresa-Id` no cabeçalho. Empresa inexistente não é erro: a chamada segue
+sem contexto. A rota de disciplina (`/api/vision/classify-document`) não usa
+o contexto da empresa: vocabulário e fornecedores não ajudam a dizer se a
+folha é de fôrma ou de arquitetura.
 
 ### O nível Empresa
 
@@ -485,10 +560,17 @@ JSON** e importar; o servidor deduplica PDFs pelo SHA-256.
 
 Na tela **Documentos** o botão **Google Drive** abre o
 seletor do Google (Picker): dá para marcar vários PDFs ou **uma pasta inteira**
-(subpastas incluídas, até 4 níveis). Os arquivos são baixados para a memória do
+(subpastas incluídas, até 4 níveis). O Picker tem a aba **Compartilhados
+comigo** para a pasta que a construtora compartilhou de outra conta — e não
+aceita link na busca. Para isso existe o botão **Colar link**: cole a URL da
+pasta (ou de um PDF) e ela é varrida direto pela Drive API, sem passar pelo
+seletor. Só precisa que a conta logada consiga abrir a pasta. Os arquivos são baixados para a memória do
 navegador e entram no mesmo caminho do "Enviar arquivos" — IndexedDB, upload
 para o servidor do Prancharia (se houver) e processamento. Nada do Drive passa
-pelo BFF; o token OAuth vive só na aba.
+pelo BFF; o token OAuth vive só na aba. O caminho das pastas viaja junto com
+cada PDF e é a primeira pista da triagem por disciplina (ver acima): pode
+marcar a pasta raiz do empreendimento, com ELÉTRICO, HIDRÁULICO e ESTRUTURA
+dentro, que só a arquitetura e o memorial serão lidos.
 
 Tudo mora em `js/core/drive.js`. As credenciais entram de um destes jeitos:
 

@@ -16,6 +16,7 @@
      MODELO    POST /api/vision/process-local
                POST /api/vision/process-sheet
                POST /api/text/process-memorial
+               POST /api/vision/classify-document   (disciplina do documento)
 
    SEM AUTENTICAÇÃO, POR DECISÃO. Quem alcança a porta, lê e escreve tudo.
    Isso é aceitável atrás de VPN ou numa rede de escritório, e é inaceitável
@@ -50,6 +51,7 @@ import {
   INSTRUCAO, SCHEMA, contexto, sanear, CATEGORIAS,
   INSTRUCAO_MEMORIAL, SCHEMA_MEMORIAL, contextoMemorial, sanearMemorial, lotesDePaginas,
   INSTRUCAO_QUADRO, SCHEMA_QUADRO, contextoQuadro, sanearQuadro,
+  INSTRUCAO_DISCIPLINA, SCHEMA_DISCIPLINA, contextoDisciplina, sanearDisciplina, disciplinaSimulada,
   blocoDeEmpresa, assinaturaDeEmpresa,
 } from './prompt.js';
 import { gerarComCadeia, PROVEDORES_CONFIGURADOS } from './provedores.js';
@@ -122,11 +124,11 @@ function registrar(info) {
 /* o cliente do modelo                                                 */
 /* ------------------------------------------------------------------ */
 
-const INSTRUCAO_DO_MODO = { memorial: INSTRUCAO_MEMORIAL, quadro: INSTRUCAO_QUADRO, visao: INSTRUCAO };
-const SCHEMA_DO_MODO = { memorial: SCHEMA_MEMORIAL, quadro: SCHEMA_QUADRO, visao: SCHEMA };
+const INSTRUCAO_DO_MODO = { memorial: INSTRUCAO_MEMORIAL, quadro: INSTRUCAO_QUADRO, visao: INSTRUCAO, disciplina: INSTRUCAO_DISCIPLINA };
+const SCHEMA_DO_MODO = { memorial: SCHEMA_MEMORIAL, quadro: SCHEMA_QUADRO, visao: SCHEMA, disciplina: SCHEMA_DISCIPLINA };
 /* Como cada modo embrulha o array quando quem responde é Groq/Cohere/HF (ver
    provedores.js) — a mesma chave que prompt.js/sanear() já sabe ler. */
-const CHAVE_ENVOLTORIA_DO_MODO = { memorial: 'atualizacoes', quadro: 'itens', visao: 'especificacoes' };
+const CHAVE_ENVOLTORIA_DO_MODO = { memorial: 'atualizacoes', quadro: 'itens', visao: 'especificacoes', disciplina: 'classificacoes' };
 
 /* Lê a empresa pedida pela requisição. Nunca lança: empresa inexistente ou
    banco fora do ar devolvem null, e a chamada segue sem contexto — perder o
@@ -307,7 +309,7 @@ app.get('/api/health', async (_req, res) => {
       'GET/POST /api/companies', 'GET/POST /api/projects', 'GET/POST /api/glossary',
       'POST /api/upload', 'GET /api/files/:id', 'GET /api/backup',
       'POST /api/vision/process-local', 'POST /api/vision/process-sheet', 'POST /api/text/process-memorial',
-      'POST /api/pdf/ocr',
+      'POST /api/vision/classify-document', 'POST /api/pdf/ocr',
     ],
     categorias: CATEGORIAS.length,
   });
@@ -573,6 +575,65 @@ app.post('/api/vision/process-sheet', async (req, res) => {
     const estourou = /tempo limite/.test(msg);
     registrar({ ok: false, ms, local: rotulo, erro: msg });
     res.status(estourou ? 504 : 502).json({ ok: false, erro: msg, motor: 'multimodal_gemini', ms, itens: [] });
+  }
+});
+
+/* Disciplina do documento: a primeira página em resolução baixa mais o que o
+   frontend já sabe pelo nome. Uma chamada curta por PDF, só quando o nome e
+   o carimbo não bastaram. Devolve { disciplina: null } quando o modelo não
+   sustentou a resposta com justificativa — o frontend fica com a heurística. */
+app.post('/api/vision/classify-document', async (req, res) => {
+  const t0 = agora();
+  const { documento = '', caminho = '', texto = '', imagem = null, heuristica = null } = req.body || {};
+  const rotulo = `disciplina ${documento || '(sem nome)'}`;
+
+  if (!imagem) {
+    const ms = agora() - t0;
+    registrar({ ok: false, ms, local: rotulo, erro: 'nenhuma imagem enviada' });
+    return res.status(400).json({ ok: false, erro: 'nenhuma imagem enviada', disciplina: null });
+  }
+
+  if (SIMULAR) {
+    const r = sanearDisciplina(disciplinaSimulada({ documento, heuristica }));
+    const ms = agora() - t0;
+    registrar({ ok: true, ms, local: rotulo, itens: 1, erro: 'modo simulado' });
+    return res.json({ ok: true, motor: 'multimodal_gemini', modelo: 'simulado', ms, ...r });
+  }
+
+  if (!ALGUM_PROVEDOR) {
+    const ms = agora() - t0;
+    registrar({ ok: false, ms, local: rotulo, erro: 'nenhum provedor de IA configurado' });
+    return res.status(503).json({ ok: false, erro: 'nenhuma chave de IA configurada no servidor', disciplina: null });
+  }
+
+  let partes;
+  try {
+    partes = [
+      { text: 'IMAGEM 1 — primeira página do documento, em resolução reduzida:' },
+      paraInline(imagem, 'imagem'),
+      { text: contextoDisciplina({ documento, caminho, texto, heuristica }) },
+    ];
+  } catch (err) {
+    const ms = agora() - t0;
+    registrar({ ok: false, ms, local: rotulo, erro: err.message });
+    return res.status(400).json({ ok: false, erro: err.message, disciplina: null });
+  }
+
+  try {
+    /* sem bloco de empresa: vocabulário e fornecedores não ajudam a dizer
+       se a folha é de fôrma ou de arquitetura */
+    const { bruto, tokens, modelo, provedor } = await gerar('disciplina', partes, TEMPO_LIMITE, null);
+    const r = sanearDisciplina(bruto);
+    const ms = agora() - t0;
+    registrar({ ok: true, ms, local: rotulo, itens: r ? 1 : 0, tokens,
+      erro: r ? `${r.disciplina} (${r.confianca}, ${r.tipoDocumento || 'tipo?'})` : 'sem justificativa — descartada' });
+    res.json({ ok: true, motor: 'multimodal_gemini', provedor, modelo, ms, tokens: tokens || null,
+      ...(r || { disciplina: null, motivo: 'resposta sem justificativa' }) });
+  } catch (err) {
+    const ms = agora() - t0;
+    const msg = err.message || String(err);
+    registrar({ ok: false, ms, local: rotulo, erro: msg });
+    res.status(/tempo limite/.test(msg) ? 504 : 502).json({ ok: false, erro: msg, motor: 'multimodal_gemini', ms, disciplina: null });
   }
 });
 

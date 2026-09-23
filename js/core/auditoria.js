@@ -45,7 +45,9 @@ export function analisarEmpreendimento(emp) {
   /* Lê a árvore: cada Especificação avaliada no contexto do seu Local, mais
      os itens que ainda não têm local. */
   const locais = locaisDe(emp);
-  const achados = especificacoesDe(emp);
+  /* a linha obrigatória do ambiente (js/core/ambiente.js) já é uma pendência
+     por si: não ganha ocorrência de "sem sistema" nem de "sem descrição" */
+  const achados = especificacoesDe(emp).filter(a => a.origemLeitura !== 'obrigatoria');
   const ambientes = locais;
   const porLocal = new Map(locais.map(l => [l.id, l]));
   const nomeAmb = id => (porLocal.get(id) || {}).nome || '';
@@ -280,6 +282,8 @@ export function analisarEmpreendimento(emp) {
     if (!its.length) continue;
     for (const cat of ESSENCIAIS) {
       if (its.some(x => x.categoria === cat)) continue;
+      /* a linha obrigatória vazia já mostra a falta na árvore e na planilha */
+      if ((a.especificacoes || []).some(x => x.origemLeitura === 'obrigatoria' && x.categoria === cat && x.status !== 'excluido')) continue;
       out.push(oc({
         regra: 'sem_' + normalizar(cat), grupo: `Local sem ${cat.toLowerCase()} identificado`, classe: 'revisar',
         alvo: 'ambiente', alvoId: a.id, ambiente: a.nome,

@@ -4,7 +4,7 @@ import {
   abrirModal, fecharModal, empreendimentoVazio, hidratar, recarregarLista, sincronizarComNuvem,
   perguntar, confirmar, ICONES,
 } from '../app.js';
-import { importarDoDrive, driveConfigurado } from '../core/drive.js';
+import { importarDoDrive, driveConfigurado, idDoLink } from '../core/drive.js';
 import { classificarArea } from '../core/areas.js';
 import { OBSIDIAN, configurarObsidian, testarObsidian, enviarParaObsidian, zipDoCofre, notasDoEmpreendimento } from '../core/obsidian.js';
 import { TIPOS, TIPO_POR_ID, ORDEM_NIVEIS, tipoDe, niveisDe, temNivel, rotuloNivel, temAreasComuns, cadeiaDe } from '../core/tipos.js';
@@ -12,12 +12,14 @@ import { SISTEMAS, NOMES_SISTEMAS, SISTEMA_POR_NOME } from '../core/vocab.js';
 import { REGRAS_BASE } from '../core/glossario.js';
 import { analisarMemorial, pareceMemorial, cruzarComPranchas, fundirComMemorial, precisaDeOcr } from '../core/memorial.js';
 import { ocrPdf, anotarFalha } from '../core/ia.js';
+import { identificarDisciplina, textoDoCarimbo, emEscopo, nomeDisciplina, DISCIPLINAS } from '../core/disciplina.js';
+import { completarObrigatorias } from '../core/ambiente.js';
 import {
   CATEGORIAS, STATUS, CONFIANCA, MOTIVOS_PENDENCIA, registrarHistorico, normalizar,
   semearPavimentos, sincronizar,
   criarLocal, criarEspecificacao, criarEvidencia, novoId as novoIdModelo,
 } from '../core/model.js';
-import { analisarFolha, consolidar, incorporarEspecificacaoSolta, IA, configurarIA, saudeDaIA, iaLigada } from '../core/engine.js';
+import { analisarFolha, consolidar, incorporarEspecificacaoSolta, recorteBase64, IA, configurarIA, saudeDaIA, iaLigada } from '../core/engine.js';
 import { openPdf } from '../core/pdfdoc.js';
 import { pendencias, pastaDeAbas, exportarXlsx, exportarCsv, exportarJson, relatorioAuditoria, tipologiasComDados, tabelaCopia, ordenarEspecificacoes, locaisDe, especificacoesDe } from '../core/exporter.js';
 import { auditar, lerXlsx, lerCsv, textoDePdf } from '../core/audit.js';
@@ -370,8 +372,22 @@ const documentos = {
     const linhas = e.documentos.map(d => {
       const fusao = d.motorFusao === 'multimodal_gemini' ? '<span class="selo bom">fusão semântica</span>'
         : d.tipo === 'memorial' && d.processadoEm ? '<span class="selo neutro">cruzamento por texto</span>' : '';
+      const evidencia = (d.disciplinaEvidencia || []).join('\n');
+      const seletor = `<select class="sel-disciplina" data-id="${d.id}" aria-label="Disciplina de ${esc(d.nome)}" title="${esc(evidencia || 'Disciplina do documento')}">
+        ${d.disciplina ? '' : '<option value="" selected>disciplina?</option>'}
+        ${DISCIPLINAS.map(x => `<option value="${x.id}"${x.id === d.disciplina ? ' selected' : ''}>${esc(x.nome)}${x.escopo ? '' : ' · fora do escopo'}</option>`).join('')}
+      </select>`;
+      const ladoEvidencia = (d.ladoEvidencia || []).join('\n');
+      const seletorLado = !temAreasComuns(e) ? '' : `<select class="sel-lado" data-id="${d.id}" aria-label="Lado de ${esc(d.nome)}" title="${esc(ladoEvidencia || 'Áreas comuns ou unidades privativas — desempata o que o nome do cômodo não decide')}">
+        <option value=""${!d.lado ? ' selected' : ''}>lado: pelo cômodo</option>
+        <option value="comum"${d.lado === 'comum' ? ' selected' : ''}>áreas comuns</option>
+        <option value="privativa"${d.lado === 'privativa' ? ' selected' : ''}>unidades privativas</option>
+      </select>`;
       const sub = [
         d.tipo === 'memorial' ? 'memorial' : 'prancha',
+        d.pasta ? d.pasta.replace(/\/$/, '') : '',
+        d.disciplinaOrigem === 'ia' ? 'disciplina pela IA' : d.disciplinaOrigem === 'manual' ? 'disciplina ajustada' : '',
+        d.lado && temAreasComuns(e) ? (d.lado === 'comum' ? 'áreas comuns' : 'unidades') + (d.ladoOrigem === 'ia' ? ' (IA)' : d.ladoOrigem === 'manual' ? ' (ajustado)' : '') : '',
         `${d.paginas || 1} pág.`,
         `${(d.bytes / 1048576).toFixed(1)} MB`,
         d.revisao ? 'revisão ' + d.revisao : '',
@@ -380,22 +396,27 @@ const documentos = {
       ].filter(Boolean).join(' · ');
       return `<tr>
       <td class="celula-doc"><button class="btn discreto link-doc" data-acao="verDoc" data-id="${d.id}" title="${esc(d.nome)}">${esc(d.nome)}</button>
-        <div class="sub">${esc(sub)}</div></td>
+        <div class="sub">${esc(sub)}</div>
+        <div class="sub" style="display:flex;gap:6px;flex-wrap:wrap">${seletor}${seletorLado}</div></td>
       <td class="num">${d.tipo === 'memorial' ? (d.itens || 0) : (d.tags || 0)}</td>
       <td class="num">${d.locaisLidos ?? d.ambientes ?? 0}</td>
-      <td><div class="selos">${d.processadoEm ? `<span class="selo bom">processado</span>` : '<span class="selo atencao">aguardando</span>'}${fusao}</div></td>
+      <td><div class="selos">${d.foraDoEscopo
+        ? `<span class="selo neutro" title="${esc(evidencia)}">fora do escopo</span>`
+        : d.processadoEm ? `<span class="selo bom">processado</span>` : '<span class="selo atencao">aguardando</span>'}${fusao}</div></td>
       <td style="white-space:nowrap;text-align:right">
+        ${d.foraDoEscopo ? `<button class="btn pequeno" data-acao="lerMesmoAssim" data-id="${d.id}" title="Lê este documento como se fosse de arquitetura">Ler mesmo assim</button>` : ''}
         <button class="btn pequeno" data-acao="verDoc" data-id="${d.id}">Abrir</button>
         <button class="btn pequeno discreto" data-acao="removerDoc" data-id="${d.id}">Remover</button></td></tr>`;
     }).join('');
     return `
-      <div class="cabeca"><div><h1>Documentos</h1><p class="desc">Pranchas, memoriais e cadernos do empreendimento. Das pranchas o sistema lê tags, legendas e tabelas; dos memoriais lê o texto corrido, marca e modelo. Envie as pranchas antes dos memoriais para que os trechos encontrem o local certo.</p></div>
+      <div class="cabeca"><div><h1>Documentos</h1><p class="desc">Pranchas, memoriais e cadernos do empreendimento. Pode mandar a pasta inteira do projeto: o sistema identifica a disciplina de cada arquivo e deixa de lado estrutura, instalações e modificações de unidade. Das pranchas de arquitetura lê tags, legendas e tabelas; dos memoriais lê o texto corrido, marca e modelo. Envie as pranchas antes dos memoriais para que os trechos encontrem o local certo.</p></div>
         <div class="acoes">
           <input id="entradaDocs" type="file" accept="application/pdf" multiple hidden>
           <button class="btn" id="importarDrive" type="button" title="${driveConfigurado() ? 'Escolher PDFs ou uma pasta no seu Google Drive' : 'Preencha CLIENT_ID e API_KEY em js/core/drive.js para ligar'}">
             <svg class="ico" viewBox="0 0 24 24" aria-hidden="true" stroke-linejoin="round"><path d="M8.5 3.5h7l6 10.5-3.5 6h-12L2.5 14z"/><path d="M8.5 3.5 2.5 14M15.5 3.5l-7 12.5M21.5 14h-13"/></svg>
             Google Drive</button>
-          ${e.documentos.some(d => !d.processadoEm) ? '<button class="btn" data-acao="processarTudo">Processar pendentes</button>' : ''}
+          <button class="btn" id="importarDriveLink" type="button" title="Colar o link de uma pasta ou PDF do Drive — serve para a pasta compartilhada que o seletor não mostra">Colar link</button>
+          ${e.documentos.some(d => !d.processadoEm && !d.foraDoEscopo) ? '<button class="btn" data-acao="processarTudo">Processar pendentes</button>' : ''}
           ${e.documentos.some(d => d.tipo === 'memorial') ? '<button class="btn" data-acao="reprocessarMemoriais">Recruzar memoriais</button>' : ''}
           <label class="btn primario" for="entradaDocs"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" stroke-linecap="round" stroke-linejoin="round">${ICONES.upload}</svg>Enviar arquivos</label>
         </div></div>
@@ -419,6 +440,14 @@ const documentos = {
     if (inp) inp.addEventListener('change', ev => receberArquivos([...ev.target.files]));
     const drive = alvo.querySelector('#importarDrive');
     if (drive) drive.addEventListener('click', () => receberDoDrive());
+    const driveLink = alvo.querySelector('#importarDriveLink');
+    if (driveLink) driveLink.addEventListener('click', () => receberDoDrive({ porLink: true }));
+    for (const s of alvo.querySelectorAll('select.sel-disciplina')) {
+      s.addEventListener('change', ev => documentos.acoes.mudarDisciplina({ id: s.dataset.id, valor: ev.target.value }));
+    }
+    for (const s of alvo.querySelectorAll('select.sel-lado')) {
+      s.addEventListener('change', ev => documentos.acoes.mudarLado({ id: s.dataset.id, valor: ev.target.value }));
+    }
     /* arrastar e soltar em qualquer ponto da tela de Documentos; a faixa é
        recriada a cada render, então os ouvintes não se acumulam */
     const faixa = alvo.firstElementChild;
@@ -473,9 +502,59 @@ const documentos = {
       await salvar({ texto: 'Documento removido', tipo: 'documento' });
       render(); aviso('Documento removido.');
     },
+    /* a pessoa sabe mais que o nome da pasta: a troca vale na hora, e um
+       documento que entra no escopo volta para a fila de pendentes */
+    async mudarDisciplina({ id, valor }) {
+      const e = emp();
+      const d = e.documentos.find(x => x.id === id);
+      if (!d || !valor || valor === d.disciplina) return;
+      const antes = d.disciplina ? nomeDisciplina(d.disciplina) : 'não identificada';
+      d.disciplina = valor;
+      d.disciplinaOrigem = 'manual';
+      d.disciplinaConfianca = 'alta';
+      d.disciplinaEvidencia = [...(d.disciplinaEvidencia || []).slice(0, 6), `ajustado à mão: ${antes} → ${nomeDisciplina(valor)}`];
+      if (!d.processadoEm) {
+        d.tipo = valor === 'memorial' ? 'memorial' : 'prancha';
+        d.foraDoEscopo = !emEscopo(valor);
+      }
+      registrarHistorico(e, { texto: `${d.nome}: disciplina alterada de ${antes} para ${nomeDisciplina(valor)}`, tipo: 'documento' });
+      await salvar();
+      render();
+      if (!d.processadoEm && emEscopo(valor)) aviso(`${d.nome} agora entra na leitura — use “Processar pendentes”.`);
+    },
+    /* o lado vale para a PRÓXIMA leitura: os locais que já existem não
+       mudam de manual sozinhos — isso é a triagem de Locais decidir */
+    async mudarLado({ id, valor }) {
+      const e = emp();
+      const d = e.documentos.find(x => x.id === id);
+      if (!d || valor === (d.lado || '')) return;
+      const nomeLado = v => v === 'comum' ? 'áreas comuns' : v === 'privativa' ? 'unidades privativas' : 'pelo cômodo';
+      const antes = nomeLado(d.lado);
+      d.lado = valor;
+      d.ladoOrigem = 'manual';
+      d.ladoConfianca = 'alta';
+      d.ladoEvidencia = [...(d.ladoEvidencia || []).slice(0, 6), `ajustado à mão: ${antes} → ${nomeLado(valor)}`];
+      registrarHistorico(e, { texto: `${d.nome}: lado alterado de ${antes} para ${nomeLado(valor)}`, tipo: 'documento' });
+      await salvar();
+      render();
+      if (d.processadoEm) aviso(`Lado guardado. Vale para a próxima leitura deste documento; os locais já criados ficam como estão.`);
+    },
+    async lerMesmoAssim({ id }) {
+      const e = emp();
+      const d = e.documentos.find(x => x.id === id);
+      if (!d) return;
+      if (estado.processando) { aviso('Espere o processamento atual terminar.'); return; }
+      d.lerMesmoAssim = true;
+      d.foraDoEscopo = false;
+      await processarDocumento(d);
+      const aud = await auditarNoProcessamento(e);
+      await salvar();
+      render();
+      aviso(`${d.nome} lido. ${aud.r.abertas} pendência(s) para revisão.`);
+    },
     async processarTudo() {
       const e = emp();
-      const fila = e.documentos.filter(x => !x.processadoEm);
+      const fila = e.documentos.filter(x => !x.processadoEm && !x.foraDoEscopo);
       for (let i = 0; i < fila.length; i++) await processarDocumento(fila[i], { i, n: fila.length });
       const aud = await auditarNoProcessamento(e);
       await salvar();
@@ -499,18 +578,32 @@ const documentos = {
 /* "Importar do Google Drive": login → Picker → download → o mesmo caminho do
    <input type="file">. A barra de progresso mostra o download; depois cada
    PDF é processado como se tivesse vindo do disco. */
-async function receberDoDrive() {
+async function receberDoDrive({ porLink = false } = {}) {
   if (estado.processando) { aviso('Espere o processamento atual terminar.'); return; }
   if (!driveConfigurado()) {
     aviso('Google Drive ainda não configurado: preencha CLIENT_ID e API_KEY em js/core/drive.js (passo a passo no LEIA-ME).');
     return;
+  }
+  /* o Picker não busca por link e não mostra a pasta que outra conta
+     compartilhou fora da aba certa: colar o link resolve os dois casos */
+  let link = '';
+  if (porLink) {
+    const r = await perguntar({
+      titulo: 'Importar pelo link do Drive',
+      texto: 'Cole o link da pasta (ou de um PDF) do Google Drive. A pasta é varrida inteira, subpastas incluídas.',
+      campos: [{ id: 'link', rotulo: 'Link', placeholder: 'https://drive.google.com/drive/folders/…', ajuda: 'Precisa ser uma pasta ou arquivo que a sua conta Google consegue abrir.' }],
+      ok: 'Importar',
+    });
+    if (!r || !r.link) return;
+    if (!idDoLink(r.link)) { aviso('Não reconheci um link do Google Drive nesse texto.'); return; }
+    link = r.link;
   }
   LOTE.i = 0; LOTE.n = 1;
   try {
     const r = await importarDoDrive((texto, pct) => {
       if (!estado.processando) { estado.processando = { texto, pct: 0 }; render(); }
       return atualizarProgresso(texto, pct);
-    });
+    }, { link });
     estado.processando = null;
     if (r.cancelado) { render(); return; }
     if (r.pulados.length) {
@@ -546,6 +639,8 @@ async function receberArquivos(arquivos) {
     const meta = {
       id: novoId('doc'), nome: f.name, bytes: f.size, enviadoEm: new Date().toISOString(),
       revisao: rev ? 'R' + rev[1] : '', paginas: 0, tags: 0, locaisLidos: 0, processadoEm: null, anexo: null,
+      /* as pastas de onde veio (Drive, ou pasta arrastada): primeira pista da disciplina */
+      pasta: f.caminhoDrive || (f.webkitRelativePath ? f.webkitRelativePath.split('/').slice(0, -1).join('/') + '/' : ''),
     };
     const anterior = e.documentos.find(d => raiz(d.nome) === raiz(f.name) && d.revisao !== meta.revisao);
     if (anterior) meta.substitui = anterior.id;
@@ -585,6 +680,12 @@ const AUTO_SEGURAS = new Set(['sem_sistema', 'sem_categoria', 'categoria_fora'])
 
 async function auditarNoProcessamento(e) {
   e.revisoes = e.revisoes || {};
+  /* todo ambiente fechado tem piso, paredes e teto; cerâmica tem rejunte. O
+     que nenhum documento trouxe vira linha vazia com motivo, nunca some. */
+  const ob = completarObrigatorias(e);
+  if (ob.criadas || ob.removidas) {
+    registrarHistorico(e, { tipo: 'auditoria', texto: `Linhas obrigatórias dos ambientes: ${ob.criadas} criada(s) vazia(s) para preencher, ${ob.removidas} suprida(s) por documento` });
+  }
   let n = 0;
   for (const o of ocorrencias(e, true)) {
     if (e.revisoes[o.id] || !AUTO_SEGURAS.has(o.regra) || !o.sugerido || !o.campo) continue;
@@ -665,10 +766,56 @@ async function processarDocumento(meta, lote = null) {
     let doc = await openPdf(new Uint8Array(await blob.arrayBuffer()));
     estado.pdfs.set(meta.id, { doc, blob });
     meta.paginas = doc.numPages;
+    const pagina1 = await doc.getPage(1);
     if (!meta.tipo) {
-      const vp = (await doc.getPage(1)).getViewport({ scale: 1 });
+      const vp = pagina1.getViewport({ scale: 1 });
       meta.tipo = Math.max(vp.width, vp.height) < 1200 ? 'memorial' : 'prancha';
     }
+    /* Que documento é este? Pasta, nome e carimbo primeiro; a IA olha a
+       primeira página só quando sobra dúvida. Estrutura, instalações e
+       modificação de unidade ficam na lista sem ser lidas — a pessoa muda a
+       disciplina ou manda ler mesmo assim. */
+    if (!meta.disciplina) {
+      await atualizarProgresso(`identificando a disciplina de ${meta.nome}`, 0.01);
+      const vp = pagina1.getViewport({ scale: 1 });
+      let carimbo = '';
+      try {
+        const tc = await pagina1.getTextContent();
+        /* prancha: só o carimbo (o texto da folha inteira cita todas as
+           disciplinas); memorial: a capa inteira, que é onde está o título */
+        carimbo = meta.tipo === 'prancha' ? textoDoCarimbo(tc, vp) : tc.items.map(i => i.str).join(' ');
+      } catch { /* sem camada de texto */ }
+      const d = await identificarDisciplina({
+        nome: meta.nome, caminho: meta.pasta || '', carimbo, tipo: meta.tipo, ia: iaLigada(),
+        imagem: () => recorteBase64(pagina1, [0, 0, vp.width, vp.height], { largura: 1600, qualidade: 0.6 }),
+      });
+      meta.disciplina = d.disciplina;
+      meta.disciplinaConfianca = d.confianca;
+      meta.disciplinaOrigem = d.origem;
+      meta.disciplinaEvidencia = d.evidencia.slice(0, 12);
+      if (d.titulo) meta.titulo = d.titulo;
+      /* o lado (área comum × unidade) que o documento declara: o motor usa
+         como desempate, o memorial como grupo inicial */
+      if (!meta.ladoOrigem || meta.ladoOrigem !== 'manual') {
+        meta.lado = d.lado || '';
+        meta.ladoConfianca = d.ladoConfianca || 'baixa';
+        meta.ladoOrigem = d.ladoOrigem || '';
+        meta.ladoEvidencia = (d.ladoEvidencia || []).slice(0, 8);
+      }
+      /* a IA viu a folha: o que ela diz do tipo vale mais que o tamanho da página */
+      if (d.tipoDocumento === 'prancha' || d.tipoDocumento === 'memorial') meta.tipo = d.tipoDocumento;
+      else if (meta.disciplina === 'memorial') meta.tipo = 'memorial';
+    }
+    if (!emEscopo(meta.disciplina) && !meta.lerMesmoAssim) {
+      meta.foraDoEscopo = true;
+      registrarHistorico(e, {
+        texto: `${meta.nome} identificado como ${nomeDisciplina(meta.disciplina)} (${meta.disciplinaOrigem === 'ia' ? 'pela IA' : 'pelo nome e pelo carimbo'}) — fora do escopo do levantamento, não foi lido`,
+        tipo: 'processamento',
+      });
+      estado.processando = null; await salvar(); render();
+      return;
+    }
+    meta.foraDoEscopo = false;
     if (meta.tipo === 'memorial') {
       /* memorial escaneado (sem camada de texto) quase não tem texto
          extraível: manda pro OCR antes de tentar ler. Só faz sentido com o

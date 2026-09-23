@@ -60,7 +60,7 @@ Não reescreva o que o vetor já leu certo; a energia vai para o que FALTA. Um i
 R1. FORMA + NÚMERO É A CHAVE. "Números iguais em formas diferentes representam materiais DIFERENTES." Quadrado 08 e Triângulo 08 são dois materiais distintos. Nunca traduza um número sem a sua forma.
 R2. VERACIDADE ABSOLUTA. Se a prancha não diz, o campo volta como string vazia "". É PROIBIDO escrever "N/A", "n/a", "não se aplica", "a definir por conta própria", "-", "indefinido" ou qualquer preenchimento de cortesia. Se a legenda escreve "A DEFINIR", isso é o que a prancha diz e deve ser transcrito como está. NUNCA copie o número da tag para "descricao" como se fosse a especificação — "numero" e "codigoOrigem" já guardam esse número; se você não achou na legenda o texto de material correspondente àquele forma+número, "descricao" fica "" (vazia), mesmo que a categoria dê para adivinhar pelo contexto.
 R3. ISOLAMENTO ESTRITO DO LOCAL. Só entra o que pertence ao local recortado na IMAGEM 1. Tag desenhada fora do contorno do ambiente, ou material de um ambiente vizinho visível no recorte, NÃO entra. Se não der para decidir de quem é a tag, devolva o item com confianca "baixa" e explique na justificativa.
-R4. NÃO CONSIDERE UM LOCAL COMPLETO SÓ PORQUE UMA ESQUADRIA FOI IDENTIFICADA. Um ambiente normalmente tem piso, parede e teto especificados. Se você só achou a porta, continue procurando piso, parede, teto, rodapé e pedras — e se realmente não houver indicação, simplesmente não invente a linha.
+R4. NÃO CONSIDERE UM LOCAL COMPLETO SÓ PORQUE UMA ESQUADRIA FOI IDENTIFICADA. Todo ambiente FECHADO (sala, dormitório, banho, cozinha, hall, corredor, garagem coberta) tem piso, paredes e teto — o teto tem forro ou pintura, o piso e a parede têm algum revestimento. Se você só achou a porta, continue procurando piso, parede, teto, rodapé e pedras. Se realmente não houver indicação, NÃO invente a linha: o sistema cria a linha obrigatória vazia para a equipe preencher; a sua parte é não deixar passar o que está desenhado. Revestimento cerâmico ou porcelanato pede REJUNTE: quando a prancha o especifica (cor, tipo, marca — "REJUNTE EPÓXI CINZA PLATINA"), devolva-o como item próprio na mesma categoria do revestimento (Piso ou Paredes) com "produto" "Rejunte"; quando não especifica, não invente.
 R5. TRANSCREVA, NÃO REESCREVA. O campo "descricao" recebe o texto da legenda exatamente como está escrito na prancha, inclusive "(120X120)", "OU SIMILAR", "(aprovar amostra no local)". O campo "produto" é o substantivo curto do item (Porcelanato, Rodapé, Textura, Porta, Soleira, Forro de gesso).
 R6. UMA LINHA POR PRODUTO. Não agrupe dois materiais na mesma linha. Não repita a mesma linha duas vezes.
 R7. JUSTIFICATIVA OBRIGATÓRIA. Em "justificativa", escreva em português a cadeia que você seguiu, citando o que viu: "quadrado 08 desenhado junto à porta → LEGENDA PISOS, linha 08 → PORCELANATO A DEFINIR". É este texto que vai aparecer como evidência para o engenheiro conferir.
@@ -71,6 +71,8 @@ R11. NADA SEM EVIDÊNCIA. Toda adição sua precisa dizer DE ONDE saiu, na image
 R12. AÇÃO DECLARADA. "acao" é "confirmar" quando o item já estava nos dados vetoriais e a imagem concorda; "completar" quando você preenche campo vazio ou corrige um item já extraído (mantenha a mesma forma+número, ou o mesmo codigoOrigem, para o sistema casar); "novo" quando só a imagem mostra o item.
 R13. ESQUADRIAS: UMA LINHA POR CÓDIGO NESTE LOCAL — exceção deliberada à R5 no campo "produto". Porta, janela, porta-balcão, basculante, maxim-ar, veneziana, porta corta-fogo e portão desenhados no contorno deste local entram com "categoria" "Esquadrias", "codigoOrigem" = o código da planta e "produto" = tipo + código exatamente como a prancha escreve ("Porta de abrir P02", "Janela de correr J01"; sem tipo legível, "Esquadria P02"), porque a planilha identifica a esquadria pelo código. "descricao" transcreve do quadro só o que está escrito: material (alumínio, PVC, madeira, aço), linha/perfil, dimensão (largura x altura), vidro, cor/acabamento e ferragens. O mesmo código repetido neste local é UMA linha com "quantidade" igual ao total que você contou no desenho — a soma é sua, antes de responder; não devolva duas linhas iguais. Esquadria na parede que divide este local de outro pertence aos dois: devolva-a para este local mesmo assim. Código sem tradução no quadro entra só com o código (R10). Local com abertura desenhada não fica sem linha de esquadria; local sem abertura desenhada não recebe esquadria.
 R14. CATEGORIAS DA PLANILHA: ${MAPEAMENTO_CATEGORIAS}
+R15. LINHA DE CHAMADA. A tag nem sempre está dentro do cômodo: em ambiente pequeno o projetista desenha o bloco de tags do lado de fora e liga cada uma ao lugar por uma linha de chamada (reta ou quebrada, às vezes com seta ou ponto na ponta). Siga a linha: a tag pertence ao ambiente onde a PONTA da linha termina, não ao ambiente sobre o qual ela está desenhada. Diga na justificativa que seguiu a linha ("círculo 03 fora do contorno, linha de chamada termina dentro do BANHO"). Tag fora do contorno e sem linha de chamada segue a R3.
+R16. SÍMBOLO DE CORTE E BOLHA DE DETALHE NÃO SÃO TAG. O círculo dividido ao meio com letra ou número em cima e número da folha embaixo (corte, vista, detalhe), o círculo preso a uma linha longa que atravessa a planta e termina em seta ou triângulo preenchido (corte AA, BB, 1, 2) e a referência "1/A-05" são indicações de desenho. Não os traduza pela legenda, mesmo que tragam um número: "corte 1" não é "piso 01". Na dúvida entre tag e símbolo de corte, olhe se há uma linha longa saindo do círculo.
 
 === CONFIANÇA ===
 "alta"  — a tradução é inequívoca: forma e número legíveis e a legenda correspondente encontrada.
@@ -468,6 +470,8 @@ Q12. AMBIENTES DA PLANTA. Quando a imagem é uma planta baixa e a lista de AMBIE
      POSIÇÃO DO RÓTULO: em cada item de ambiente, preencha "imagem" (o número da imagem em que o rótulo está: 1, 2…) e "caixa" = [x0, y0, x1, y1], a caixa do texto do rótulo dentro daquela imagem, em milésimos da largura e da altura da imagem (0 a 1000, origem no canto superior esquerdo). É com isso que o sistema abre a prancha no lugar certo.
 Q13. ESQUADRIAS: UMA LINHA POR CÓDIGO — exceção deliberada à Q4 no campo "produto". Na tabela de esquadrias, "codigoOrigem" = o código, "produto" = tipo + código como a prancha escreve ("Porta de abrir P02", "Janela de correr J01"), "quantidade" = a coluna de quantidade quando existir, "descricao" = material, linha/perfil, dimensão (largura x altura), vidro, cor/acabamento e ferragens — só o que está escrito. "local" fica vazio, salvo quando a própria linha declara o ambiente (Q2). Sem quadro, só o código desenhado: a linha entra com o código e os outros campos vazios.
 Q14. CATEGORIAS DA PLANILHA: ${MAPEAMENTO_CATEGORIAS}
+Q15. REJUNTE É ITEM PRÓPRIO. Quando o quadro ou a nota especifica o rejunte de um revestimento ("REJUNTE EPÓXI CINZA PLATINA", "REJUNTE ACRÍLICO NA COR DO PISO"), devolva-o como linha separada, na mesma categoria do revestimento (Piso ou Paredes), com "produto" "Rejunte" e o "local" da linha do revestimento. Quando não há rejunte escrito, não invente — o sistema cria a linha vazia para a equipe.
+Q16. TAG, LINHA DE CHAMADA E SÍMBOLO DE CORTE. Numa planta, a tag ligada por linha de chamada pertence ao ambiente onde a PONTA da linha termina. O círculo dividido com número da folha embaixo, o círculo preso a uma linha longa com seta na ponta (corte AA, 1, 2) e a referência "1/A-05" são indicações de desenho, não acabamento: não os traduza pela legenda. Na Q12, esses símbolos também não são ambiente.
 
 === CONFIANÇA ===
 "alta"  — linha de tabela legível, com o ambiente declarado na própria linha.
@@ -630,6 +634,125 @@ export function sanearQuadro(bruto) {
     out.push(item);
   }
   return { itens: out, recusadas };
+}
+
+/* ================================================================== */
+/* DISCIPLINA DO DOCUMENTO — triagem antes da leitura                  */
+/* ================================================================== */
+
+/* A pasta de um empreendimento traz arquitetura, estrutura, hidráulica,
+   elétrica, ar-condicionado e modificações de unidade juntas. O frontend
+   tenta descobrir a disciplina pelo nome das pastas, do arquivo e pelo texto
+   do carimbo (js/core/disciplina.js); quando fica em dúvida, manda a primeira
+   página em resolução baixa para cá. A resposta é uma classificação só —
+   nenhuma especificação sai desta chamada. */
+
+export const DISCIPLINAS = [
+  'arquitetura', 'acabamentos', 'interiores', 'memorial', 'paisagismo', 'modificacao',
+  'estrutura', 'hidraulica', 'eletrica', 'climatizacao', 'telecom', 'incendio',
+  'outra', 'indefinida',
+];
+export const TIPOS_DOCUMENTO = ['prancha', 'memorial', 'outro'];
+export const LADOS = ['comum', 'privativa', 'ambos', 'indefinido'];
+
+export const INSTRUCAO_DISCIPLINA = `Você é um Arquiteto Sênior triando os documentos de um projeto executivo brasileiro antes do levantamento de acabamentos para Manual do Proprietário e Manual do Condomínio.
+
+Você recebe UMA imagem: a primeira página do documento em resolução reduzida (o carimbo, os títulos e o aspecto geral do desenho são legíveis; o texto miúdo não). Recebe também, em texto: o nome do arquivo, o caminho das pastas de onde ele veio, o texto que o sistema extraiu da página (quando o PDF tem camada de texto) e o palpite da heurística por nome.
+
+Sua tarefa é dizer A QUE DISCIPLINA o documento pertence, QUE TIPO de documento é e DE QUE LADO do condomínio ele trata (áreas comuns ou unidades privativas). Nada mais: não leia especificações, não liste produtos.
+
+D1. A disciplina vem do CARIMBO e do que está desenhado, nesta ordem. Pasta e nome de arquivo são pistas, e pistas erram: uma pasta "EXECUTIVO" pode guardar pranchas de fôrma. Se o carimbo diz "PROJETO ESTRUTURAL", é estrutura, seja qual for a pasta.
+D2. Disciplinas possíveis:
+  - arquitetura: plantas baixas, cortes, fachadas, layout, esquadrias, detalhamento arquitetônico;
+  - acabamentos: o documento de acabamento — caderno, tabela ou quadro de acabamentos, paginação de piso, planta de piso ou de forro, especificação de revestimentos;
+  - interiores: design de interiores, marcenaria, decoração;
+  - memorial: MEMORIAL DESCRITIVO de acabamentos ou de vendas, caderno de especificações — documento de texto corrido que descreve o que a unidade e as áreas comuns recebem;
+  - estrutura: fôrma, armação, fundação, cálculo, pilares/vigas/lajes, estrutura metálica;
+  - hidraulica: água fria e quente, esgoto, águas pluviais, drenagem, reservatórios, barrilete, hidrossanitário;
+  - eletrica: elétrica, luminotécnica, SPDA, quadros de carga, tomadas, fotovoltaico;
+  - climatizacao: ar-condicionado, ventilação, exaustão;
+  - telecom: telefonia, dados, rede, CFTV, interfonia, automação, áudio e vídeo;
+  - incendio: prevenção contra incêndio, hidrantes, sprinklers, gás;
+  - paisagismo;
+  - modificacao: projeto de personalização ou modificação de UMA unidade específica (croqui de reforma de apartamento, executivo do apartamento de um comprador);
+  - outra: topografia, terraplenagem, impermeabilização, acessibilidade, orçamento, cronograma, qualquer coisa que não seja as acima;
+  - indefinida: quando não dá para saber.
+D3. Tipo de documento: "prancha" (folha de desenho com carimbo), "memorial" (documento de texto corrido, em geral A4, com capítulos), "outro" (planilha, orçamento, laudo, imagem solta).
+D4. Um documento de texto sobre estrutura ou instalações (memorial de cálculo, memorial hidráulico) pertence à disciplina correspondente, com tipo "memorial". A disciplina "memorial" é reservada ao memorial descritivo de acabamentos e vendas, que é o que interessa ao levantamento.
+D5. Uma prancha de arquitetura que traz um quadro "MEMORIAL DE ACABAMENTOS" é arquitetura, tipo prancha.
+D6. Confiança: "alta" quando o carimbo ou o título deixa explícito; "media" quando você inferiu pelo conteúdo desenhado; "baixa" quando só o nome ou a pasta sustenta a escolha, ou a imagem está ilegível.
+D7. Justificativa obrigatória e concreta: cite o que você leu ("carimbo: PROJETO ESTRUTURAL — FÔRMA DO 1º PAVIMENTO"; "planta com tubulações e caixas de passagem, sem nomes de ambiente"). Sem justificativa a resposta é descartada.
+D8. Não invente. Se a imagem está ilegível e o texto não ajuda, devolva "indefinida" com confiança "baixa" e diga por quê.
+D9. O LADO: "comum" quando o documento trata das áreas comuns do condomínio (térreo com hall, salão de festas, lazer, garagem, portaria; "ÁREAS COMUNS" no título; Manual do Condomínio); "privativa" quando trata das unidades (pavimento tipo, apartamento tipo, "TIPO 1", "ÁREAS PRIVATIVAS", casa; Manual do Proprietário); "ambos" quando a mesma folha ou o mesmo caderno cobre os dois; "indefinido" quando não dá para saber. Cite na justificativa o que sustenta o lado, além da disciplina.
+
+Responda com um array JSON contendo UM objeto.`;
+
+export const SCHEMA_DISCIPLINA = {
+  type: 'array',
+  items: {
+    type: 'object',
+    properties: {
+      disciplina: { type: 'string', enum: DISCIPLINAS },
+      tipoDocumento: { type: 'string', enum: TIPOS_DOCUMENTO },
+      lado: { type: 'string', enum: LADOS, description: 'comum = áreas comuns do condomínio; privativa = unidades; ambos; indefinido.' },
+      titulo: texto('O título do documento como o carimbo escreve ("PLANTA BAIXA PAVIMENTO TIPO", "FÔRMA DO 1º PAVIMENTO"), ou "".'),
+      confianca: { type: 'string', enum: ['alta', 'media', 'baixa'] },
+      justificativa: texto('Obrigatória: o que você leu no carimbo ou no desenho que sustenta a disciplina e o lado.'),
+    },
+    required: ['disciplina', 'tipoDocumento', 'lado', 'confianca', 'justificativa'],
+  },
+};
+
+export function contextoDisciplina({ documento = '', caminho = '', texto: textoPagina = '', heuristica = null } = {}) {
+  const l = [];
+  l.push(`ARQUIVO: ${documento || '(sem nome)'}`);
+  l.push(`PASTAS DE ORIGEM: ${caminho || '(enviado sem pasta)'}`);
+  if (heuristica && heuristica.disciplina) {
+    l.push(`PALPITE DA HEURÍSTICA POR NOME: ${heuristica.disciplina} (confiança ${heuristica.confianca || 'baixa'})`);
+    for (const e of (Array.isArray(heuristica.evidencia) ? heuristica.evidencia : []).slice(0, 8)) l.push('  - ' + limpaLinha(e));
+    if (heuristica.lado) {
+      l.push(`PALPITE DA HEURÍSTICA PARA O LADO: ${heuristica.lado}`);
+      for (const e of (Array.isArray(heuristica.ladoEvidencia) ? heuristica.ladoEvidencia : []).slice(0, 6)) l.push('  - ' + limpaLinha(e));
+    } else l.push('A heurística não achou pista do lado (áreas comuns × unidades).');
+    l.push('O palpite é uma pista, não uma resposta: confirme ou corrija pelo que a imagem mostra.');
+  }
+  const t = limpaLinha(textoPagina).slice(0, 4000);
+  if (t) { l.push('', 'TEXTO EXTRAÍDO DA PRIMEIRA PÁGINA (camada de texto do PDF; numa planta raster é só o carimbo):', t); }
+  else l.push('', 'A página não tem camada de texto: só a imagem conta.');
+  return l.join('\n');
+}
+
+/** Uma classificação com evidência, ou null. Aceita o array de um objeto
+    (Gemini) ou o objeto solto (outros provedores). */
+export function sanearDisciplina(bruto) {
+  const obj = Array.isArray(bruto) ? bruto.find(x => x && typeof x === 'object') : (bruto && typeof bruto === 'object' ? bruto : null);
+  if (!obj) return null;
+  const disciplina = limpar(obj.disciplina).toLowerCase();
+  const justificativa = limpar(obj.justificativa);
+  if (!DISCIPLINAS.includes(disciplina) || justificativa.length < 8) return null;
+  return {
+    disciplina,
+    tipoDocumento: TIPOS_DOCUMENTO.includes(limpar(obj.tipoDocumento).toLowerCase()) ? limpar(obj.tipoDocumento).toLowerCase() : '',
+    /* "ambos" e "indefinido" viram '' para o frontend: sem lado, o motor
+       decide pelo nome do cômodo e pela folha, como sempre fez */
+    lado: ['comum', 'privativa'].includes(limpar(obj.lado).toLowerCase()) ? limpar(obj.lado).toLowerCase() : '',
+    titulo: limpar(obj.titulo).slice(0, 200),
+    confianca: ['alta', 'media', 'baixa'].includes(limpar(obj.confianca).toLowerCase()) ? limpar(obj.confianca).toLowerCase() : 'baixa',
+    justificativa: justificativa.slice(0, 600),
+  };
+}
+
+/** Resposta canned para o modo simulado (server.js SIMULAR=1 e simulador.mjs):
+    devolve o palpite da heurística, ou arquitetura, com a marca [SIMULADO]. */
+export function disciplinaSimulada({ documento = '', heuristica = null } = {}) {
+  const d = heuristica && DISCIPLINAS.includes(heuristica.disciplina) && heuristica.disciplina !== 'indefinida'
+    ? heuristica.disciplina : 'arquitetura';
+  const lado = heuristica && ['comum', 'privativa'].includes(heuristica.lado) ? heuristica.lado : 'privativa';
+  return [{
+    disciplina: d, tipoDocumento: d === 'memorial' ? 'memorial' : 'prancha', lado, titulo: '',
+    confianca: 'media',
+    justificativa: `[SIMULADO] carimbo de ${documento || 'documento'} lido como ${d}, lado ${lado}`,
+  }];
 }
 
 /* ================================================================== */

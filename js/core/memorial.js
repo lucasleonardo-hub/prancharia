@@ -269,11 +269,15 @@ function montarSecoes(linhas, docMeta, conhecidos, { areasComuns }) {
   const arvore = [...conhecidos];                   // cresce com o que é criado aqui
   const marcadores = linhas.filter(l => l.tipo === 'marcador').map(l => l.grupo);
   const temC = marcadores.includes('comum'), temP = marcadores.includes('privativa');
+  /* o lado que o próprio documento declara (nome, pasta, carimbo ou IA —
+     js/core/disciplina.js): "MEMORIAL DESCRITIVO ÁREAS COMUNS.pdf" sem os
+     marcadores dentro é um memorial de área comum do começo ao fim */
+  const ladoDoc = docMeta && (docMeta.lado === 'comum' || docMeta.lado === 'privativa') ? docMeta.lado : '';
   const automatico = areasComuns === 'auto';
-  if (automatico) areasComuns = temC || temP;
+  if (automatico) areasComuns = temC || temP || ladoDoc === 'comum';
   /* antes do primeiro marcador: um memorial que só marca onde começam as
      privativas está dizendo que tudo antes é comum — e vice-versa */
-  let grupo = !areasComuns ? 'privativa' : (temP && !temC) ? 'comum' : (temC && !temP) ? 'privativa' : '';
+  let grupo = !areasComuns ? 'privativa' : (temP && !temC) ? 'comum' : (temC && !temP) ? 'privativa' : ladoDoc;
   let alvos = [];
   let casados = 0;
 

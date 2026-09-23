@@ -170,6 +170,16 @@ async function escolherNoDrive(tokenAcesso) {
       .setEnableDrives(true)
       .setMode(P.DocsViewMode.LIST)
       .setLabel('PDFs');
+    /* a pasta da construtora costuma ser de OUTRA conta, compartilhada com a
+       nossa: sem esta vista ela não aparece em lugar nenhum do Picker, e a
+       busca do Picker não aceita link — para isso existe `importarPorLink` */
+    const compartilhados = new P.DocsView(P.ViewId.DOCS)
+      .setOwnedByMe(false)
+      .setIncludeFolders(true)
+      .setSelectFolderEnabled(true)
+      .setEnableDrives(true)
+      .setMode(P.DocsViewMode.LIST)
+      .setLabel('Compartilhados comigo');
     const b = new P.PickerBuilder()
       .setOAuthToken(tokenAcesso)
       .setDeveloperKey(GOOGLE.API_KEY)
@@ -178,6 +188,7 @@ async function escolherNoDrive(tokenAcesso) {
       .enableFeature(P.Feature.MULTISELECT_ENABLED)
       .enableFeature(P.Feature.SUPPORT_DRIVES)
       .addView(tudo)
+      .addView(compartilhados)
       .addView(pastas)
       .addView(pdfs)
       .setCallback((d) => {
@@ -270,7 +281,11 @@ async function baixarPdf(arq, tokenAcesso) {
   const r = await drive(`/files/${encodeURIComponent(arq.id)}`, tokenAcesso, { alt: 'media' });
   const blob = await r.blob();
   const nome = /\.pdf$/i.test(arq.name) ? arq.name : arq.name + '.pdf';
-  return new File([blob], nome, { type: MIME_PDF, lastModified: Date.now() });
+  const f = new File([blob], nome, { type: MIME_PDF, lastModified: Date.now() });
+  /* as pastas de onde veio ("PARADISO/HIDRÁULICO/") viajam com o arquivo: é
+     a primeira pista da disciplina do documento (js/core/disciplina.js) */
+  f.caminhoDrive = arq.caminho || '';
+  return f;
 }
 
 /* ------------------------------------------------------------------ */
@@ -278,17 +293,45 @@ async function baixarPdf(arq, tokenAcesso) {
 /* ------------------------------------------------------------------ */
 
 /**
+ * O id que um link do Drive carrega — pasta (`/folders/<id>`), arquivo
+ * (`/file/d/<id>`), `?id=<id>` — ou o próprio id colado sem link. '' se não
+ * reconhecer.
+ */
+export function idDoLink(texto) {
+  const s = String(texto || '').trim();
+  if (!s) return '';
+  const m = /\/folders\/([A-Za-z0-9_-]{10,})/.exec(s)
+    || /\/file\/d\/([A-Za-z0-9_-]{10,})/.exec(s)
+    || /[?&]id=([A-Za-z0-9_-]{10,})/.exec(s)
+    || (/^[A-Za-z0-9_-]{10,}$/.test(s) ? [null, s] : null);
+  return m ? m[1] : '';
+}
+
+/**
  * Login → Picker → (pastas viram PDFs) → download. Devolve os `File`s prontos
  * para `receberArquivos()`, mais o que foi pulado e por quê.
  *
+ * `link`, quando dado, pula o Picker: o id sai do link e a Drive API diz o
+ * que ele é (pasta, atalho ou arquivo). É o caminho para a pasta que o Picker
+ * não mostra — a compartilhada por outra conta, ou a que a busca não acha.
+ *
  * `aoProgredir(texto, fracao)` é chamado ao longo do download, para a barra.
  * Lança só quando nada pôde ser feito (sem configuração, login recusado,
- * scripts bloqueados); a falha de um arquivo específico vai para `pulados`.
+ * scripts bloqueados, link sem acesso); a falha de um arquivo específico vai
+ * para `pulados`.
  */
-export async function importarDoDrive(aoProgredir = () => {}) {
+export async function importarDoDrive(aoProgredir = () => {}, { link = '' } = {}) {
   await prepararGoogle();
   const tk = await obterToken();
-  const escolhidos = await escolherNoDrive(tk);
+  let escolhidos;
+  if (link) {
+    const id = idDoLink(link);
+    if (!id) throw new Error('não reconheci um link do Google Drive nesse texto');
+    const meta = await (await drive(`/files/${encodeURIComponent(id)}`, tk, { fields: 'id,name,mimeType,shortcutDetails' })).json();
+    escolhidos = [{ id: meta.id, name: meta.name, mimeType: meta.mimeType || '', shortcutDetails: meta.shortcutDetails }];
+  } else {
+    escolhidos = await escolherNoDrive(tk);
+  }
   if (!escolhidos.length) return { arquivos: [], pulados: [], cancelado: true };
 
   aoProgredir('listando o que foi escolhido no Drive', 0);
