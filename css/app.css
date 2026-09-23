@@ -478,6 +478,10 @@ details > summary:hover { color: var(--ink); }
 .o-que-fazer .acoes-pendencia { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
 .o-que-fazer select { height: 24px; font-size: 12px; padding: 0 6px; border-radius: var(--raio-s); border: 1px solid var(--borda); background: var(--surface); color: var(--ink); max-width: 220px; }
 .o-que-fazer.revisado { background: var(--bom-soft); border-color: color-mix(in srgb, var(--bom) 25%, transparent); }
+
+/* triagem do Drive: o arquivo fora do escopo continua na lista, apagado */
+tr.apagada td { color: var(--ink-3); }
+tr.apagada .sub { color: var(--ink-3); }
 .o-que-fazer.revisado .cat { color: var(--bom); }
 .recorte { border-radius: var(--raio); background: var(--surface-3); overflow: hidden; border: 1px solid var(--line); }
 .recorte canvas, .recorte img { display: block; width: 100%; height: auto; max-height: 460px; object-fit: contain; background: #fff; }

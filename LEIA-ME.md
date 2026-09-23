@@ -586,10 +586,33 @@ pasta (ou de um PDF) e ela é varrida direto pela Drive API, sem passar pelo
 seletor. Só precisa que a conta logada consiga abrir a pasta. Os arquivos são baixados para a memória do
 navegador e entram no mesmo caminho do "Enviar arquivos" — IndexedDB, upload
 para o servidor do Prancharia (se houver) e processamento. Nada do Drive passa
-pelo BFF; o token OAuth vive só na aba. O caminho das pastas viaja junto com
-cada PDF e é a primeira pista da triagem por disciplina (ver acima): pode
-marcar a pasta raiz do empreendimento, com ELÉTRICO, HIDRÁULICO e ESTRUTURA
-dentro, que só a arquitetura e o memorial serão lidos.
+pelo BFF.
+
+**Lista antes, baixa depois.** A pasta é apenas listada (nome, caminho,
+tamanho e revisão de cada PDF — sem baixar um byte), a lista passa pela
+triagem por disciplina pelo nome e pela pasta (`triarLista` em
+`js/core/disciplina.js`) e um diálogo mostra o que entra: arquitetura,
+acabamentos e memorial vêm marcados; estrutura, instalações e modificação de
+unidade vêm desmarcados e apagados. Só o que está marcado é baixado. Pode
+marcar a pasta raiz do empreendimento inteira, com ELÉTRICO, HIDRÁULICO e
+ESTRUTURA dentro: uma pasta de 60 arquivos vira uma dúzia de downloads.
+
+**O PDF pode morar no Drive.** No mesmo diálogo, "Deixar os PDFs no Drive"
+(padrão, lembrado no navegador) faz o documento guardar só o id e a revisão
+do arquivo no Drive (`meta.drive`); o servidor não recebe cópia. O
+navegador que importou tem o arquivo em cache; outra máquina busca no Drive
+pelo id, com o login Google, na hora de abrir a evidência (`blobDe` em
+`js/ui/viewer.js`). Se o arquivo mudou no Drive desde a leitura (revisão ou
+md5 diferentes), o documento fica marcado "mudou no Drive desde a leitura" —
+as coordenadas das evidências podem não bater com a nova versão. Desmarque
+a opção para manter também a cópia no servidor, como antes.
+
+**Login lembrado.** O token do Google vale uma hora e fica no `localStorage`
+do navegador: recarregar a página não pede login. Depois disso a renovação é
+silenciosa para quem já autorizou o app e continua logado no Google (o
+popup abre e fecha sozinho). "Trocar conta", no diálogo de triagem, esquece
+o token. Renovação sem popup nenhum exigiria refresh token no servidor —
+fica para quando o BFF passar a falar com o Drive.
 
 Tudo mora em `js/core/drive.js`. As credenciais entram de um destes jeitos:
 

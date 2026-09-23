@@ -137,6 +137,7 @@ export function classificarPorNome({ nome = '', caminho = '', carimbo = '', tipo
     carimbo: norm(carimbo).slice(0, 6000),
   };
   const pontos = {};
+  const porFonte = { pasta: {}, arquivo: {}, carimbo: {} };
   const evidencia = [];
   for (const [fonte, texto] of Object.entries(fontes)) {
     if (!texto) continue;
@@ -150,6 +151,7 @@ export function classificarPorNome({ nome = '', caminho = '', carimbo = '', tipo
     }
     for (const [disc, { peso, trecho }] of Object.entries(melhor)) {
       pontos[disc] = (pontos[disc] || 0) + peso * PESO_FONTE[fonte];
+      porFonte[fonte][disc] = peso * PESO_FONTE[fonte];
       evidencia.push(`${fonte}: «${trecho}» → ${nomeDisciplina(disc)}`);
     }
   }
@@ -166,12 +168,43 @@ export function classificarPorNome({ nome = '', caminho = '', carimbo = '', tipo
       evidencia.push(`empate entre ${nomeDisciplina(top)} e ${nomeDisciplina(ordem[1][0])}`);
     }
   }
+  /* dentro da família da arquitetura, o nome do ARQUIVO é mais específico que
+     o da pasta: "CADERNO DE ACABAMENTOS" na pasta "ARQUITETÔNICO" é
+     acabamentos, não arquitetura (o carimbo, quando há, vale o mesmo) */
+  const FAMILIA = ['arquitetura', 'acabamentos', 'interiores'];
+  if (FAMILIA.includes(disciplina)) {
+    const especifico = ['arquivo', 'carimbo'].flatMap(f => FAMILIA.filter(d => d !== 'arquitetura' && (porFonte[f][d] || 0) >= 3).map(d => [d, porFonte[f][d]]))
+      .sort((a, b) => b[1] - a[1])[0];
+    if (especifico && especifico[0] !== disciplina) { disciplina = especifico[0]; evidencia.push(`nome do arquivo decide dentro da arquitetura: ${nomeDisciplina(disciplina)}`); }
+  }
   /* o tamanho da página desempata o que o nome confunde: uma folha grande
      chamada "memorial de acabamentos" é uma prancha de arquitetura; um
      documento de texto sobre arquitetura é o memorial */
   if (tipo === 'prancha' && disciplina === 'memorial') disciplina = 'arquitetura';
   if (tipo === 'memorial' && (disciplina === 'arquitetura' || disciplina === 'interiores' || disciplina === 'indefinida')) disciplina = 'memorial';
   return { disciplina, confianca, evidencia, pontos };
+}
+
+/**
+ * Triagem de uma LISTA de arquivos antes de baixar qualquer um: só o nome e
+ * as pastas (é o que a listagem do Drive traz de graça). Cada item volta com
+ * disciplina, confiança, lado e `escopo`; o resumo conta o que entra.
+ *
+ * itens: [{ id, name, caminho, size }]
+ */
+export function triarLista(itens = []) {
+  const triados = itens.map(it => {
+    const d = classificarPorNome({ nome: it.name || it.nome || '', caminho: it.caminho || '' });
+    const l = ladoDoDocumento({ nome: it.name || it.nome || '', caminho: it.caminho || '' });
+    return { ...it, disciplina: d.disciplina, confianca: d.confianca, evidencia: d.evidencia, lado: l.lado, escopo: emEscopo(d.disciplina) };
+  });
+  const resumo = { total: triados.length, noEscopo: 0, foraDoEscopo: 0, indefinidos: 0, bytesNoEscopo: 0, porDisciplina: {} };
+  for (const t of triados) {
+    if (t.escopo) { resumo.noEscopo++; resumo.bytesNoEscopo += Number(t.size) || 0; } else resumo.foraDoEscopo++;
+    if (t.disciplina === 'indefinida') resumo.indefinidos++;
+    resumo.porDisciplina[t.disciplina] = (resumo.porDisciplina[t.disciplina] || 0) + 1;
+  }
+  return { itens: triados, resumo };
 }
 
 /* ------------------------------------------------------------------ */

@@ -4,7 +4,7 @@ import {
   abrirModal, fecharModal, empreendimentoVazio, hidratar, recarregarLista, sincronizarComNuvem,
   perguntar, confirmar, ICONES,
 } from '../app.js';
-import { importarDoDrive, driveConfigurado, idDoLink } from '../core/drive.js';
+import { listarDoDrive, baixarDoDrive, driveConfigurado, idDoLink, sairDoGoogle, contaLembrada, linkDoDrive } from '../core/drive.js';
 import { classificarArea } from '../core/areas.js';
 import { OBSIDIAN, configurarObsidian, testarObsidian, enviarParaObsidian, zipDoCofre, notasDoEmpreendimento } from '../core/obsidian.js';
 import { TIPOS, TIPO_POR_ID, ORDEM_NIVEIS, tipoDe, niveisDe, temNivel, rotuloNivel, temAreasComuns, cadeiaDe } from '../core/tipos.js';
@@ -12,7 +12,7 @@ import { SISTEMAS, NOMES_SISTEMAS, SISTEMA_POR_NOME } from '../core/vocab.js';
 import { REGRAS_BASE } from '../core/glossario.js';
 import { analisarMemorial, pareceMemorial, cruzarComPranchas, fundirComMemorial, precisaDeOcr } from '../core/memorial.js';
 import { ocrPdf, anotarFalha } from '../core/ia.js';
-import { identificarDisciplina, textoDoCarimbo, emEscopo, nomeDisciplina, DISCIPLINAS } from '../core/disciplina.js';
+import { identificarDisciplina, textoDoCarimbo, emEscopo, nomeDisciplina, DISCIPLINAS, triarLista } from '../core/disciplina.js';
 import { completarObrigatorias } from '../core/ambiente.js';
 import {
   CATEGORIAS, STATUS, CONFIANCA, MOTIVOS_PENDENCIA, registrarHistorico, normalizar,
@@ -26,7 +26,7 @@ import { auditar, lerXlsx, lerCsv, textoDePdf } from '../core/audit.js';
 import { CLASSES, analisarEmpreendimento, analisarArquivos, agrupar, resumo } from '../core/auditoria.js';
 import { provasDe, rastreio, fluxo, PAPEIS, NIVEIS, refDoc, nomeDoc, paginaDoc, idDoc, refsDe, motorDe, ehMemorial } from '../core/provas.js';
 import { abrirGaveta, irVerNaPrancha, irVerNaPranchaLocal, fecharGaveta } from './drawer.js';
-import { montarVisualizador, recortar } from './viewer.js';
+import { montarVisualizador, recortar, blobDe } from './viewer.js';
 
 const vivo = a => a && a.status !== 'excluido';
 
@@ -386,6 +386,8 @@ const documentos = {
       const sub = [
         d.tipo === 'memorial' ? 'memorial' : 'prancha',
         d.pasta ? d.pasta.replace(/\/$/, '') : '',
+        d.fonte === 'drive' ? 'no Drive' : '',
+        d.driveMudou ? 'mudou no Drive desde a leitura' : '',
         d.disciplinaOrigem === 'ia' ? 'disciplina pela IA' : d.disciplinaOrigem === 'manual' ? 'disciplina ajustada' : '',
         d.lado && temAreasComuns(e) ? (d.lado === 'comum' ? 'áreas comuns' : 'unidades') + (d.ladoOrigem === 'ia' ? ' (IA)' : d.ladoOrigem === 'manual' ? ' (ajustado)' : '') : '',
         `${d.paginas || 1} pág.`,
@@ -599,27 +601,40 @@ async function receberDoDrive({ porLink = false } = {}) {
     link = r.link;
   }
   LOTE.i = 0; LOTE.n = 1;
+  const progresso = (texto, pct) => {
+    if (!estado.processando) { estado.processando = { texto, pct: 0 }; render(); }
+    return atualizarProgresso(texto, pct);
+  };
   try {
-    const r = await importarDoDrive((texto, pct) => {
-      if (!estado.processando) { estado.processando = { texto, pct: 0 }; render(); }
-      return atualizarProgresso(texto, pct);
-    }, { link });
+    /* 1) só a lista: nome, pasta, tamanho — sem baixar nada */
+    const l = await listarDoDrive(progresso, { link });
     estado.processando = null;
-    if (r.cancelado) { render(); return; }
-    if (r.pulados.length) {
-      console.warn('[drive] arquivos não baixados:', r.pulados);
-      aviso(`${r.pulados.length} arquivo(s) do Drive não puderam ser baixados — veja o console.`);
-    }
-    if (!r.arquivos.length) {
+    if (l.cancelado) { render(); return; }
+    if (!l.itens.length) {
       render();
-      const s = r.resumo || {};
+      const s = l.resumo || {};
       aviso(s.itens
         ? `Nenhum PDF: ${s.pastas} pasta(s) varrida(s), ${s.itens} arquivo(s) vistos, nenhum é PDF (ex.: ${(s.outros || []).slice(0, 3).join(', ') || 'tipos não-PDF'}). Detalhes no console.`
         : `Nenhum PDF: a pasta escolhida está vazia ou o Drive não deixou listá-la (${s.pastas || 0} pasta(s) varrida(s)). Detalhes no console.`);
       return;
     }
-    aviso(`${r.arquivos.length} PDF(s) baixados do Drive${r.resumo && r.resumo.pastas ? ` (${r.resumo.pastas} pasta(s) varrida(s))` : ''}. Processando…`);
-    await receberArquivos(r.arquivos);
+    render();
+    /* 2) triagem pelo nome e pela pasta, antes do download: estrutura,
+          instalações e modificação nem chegam ao navegador */
+    const escolha = await escolherDoDrive(triarLista(l.itens));
+    if (!escolha) return;
+    const selecionados = l.itens.filter(it => escolha.ids.has(it.id));
+    if (!selecionados.length) { aviso('Nenhum arquivo selecionado.'); return; }
+    /* 3) baixa só o que entra */
+    const r = await baixarDoDrive(selecionados, progresso);
+    estado.processando = null;
+    if (r.pulados.length) {
+      console.warn('[drive] arquivos não baixados:', r.pulados);
+      aviso(`${r.pulados.length} arquivo(s) do Drive não puderam ser baixados — veja o console.`);
+    }
+    if (!r.arquivos.length) { render(); return; }
+    aviso(`${r.arquivos.length} de ${l.itens.length} PDF(s) baixados do Drive${escolha.noDrive ? ' — ficam no Drive, sem cópia no servidor' : ''}. Processando…`);
+    await receberArquivos(r.arquivos, { noDrive: escolha.noDrive });
   } catch (err) {
     estado.processando = null;
     console.error(err);
@@ -628,7 +643,69 @@ async function receberDoDrive({ porLink = false } = {}) {
   }
 }
 
-async function receberArquivos(arquivos) {
+const CHAVE_NO_DRIVE = 'prancharia.drive.fonte';
+const lembrarNoDrive = () => { try { return localStorage.getItem(CHAVE_NO_DRIVE) !== 'servidor'; } catch { return true; } };
+
+/**
+ * A triagem da lista do Drive: cada arquivo com a disciplina que o nome e a
+ * pasta revelam, marcado para baixar quando entra no escopo. A pessoa ajusta
+ * a marcação e escolhe onde o arquivo vai morar (Drive ou servidor).
+ * Resolve com { ids: Set, noDrive: boolean } ou null.
+ */
+export function escolherDoDrive({ itens, resumo }) {
+  const mb = b => `${(Number(b || 0) / 1048576).toFixed(1)} MB`;
+  const ordem = [...itens].sort((a, b) => (a.escopo === b.escopo ? 0 : a.escopo ? -1 : 1) || (a.caminho + a.name).localeCompare(b.caminho + b.name, 'pt-BR'));
+  const linhas = ordem.map(it => `<tr class="${it.escopo ? '' : 'apagada'}">
+      <td><input type="checkbox" data-drive-id="${esc(it.id)}"${it.escopo ? ' checked' : ''} aria-label="Baixar ${esc(it.name)}"></td>
+      <td style="max-width:360px"><div title="${esc(it.name)}" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.name)}</div>
+        <div class="sub">${esc((it.caminho || '').replace(/\/$/, ''))}${it.size ? ' · ' + mb(it.size) : ''}</div></td>
+      <td><span class="selo ${it.escopo ? 'bom' : 'neutro'}" title="${esc((it.evidencia || []).join('\n') || 'sem pista no nome')}">${esc(nomeDisciplina(it.disciplina))}</span>${it.lado ? ` <span class="selo apagado">${it.lado === 'comum' ? 'áreas comuns' : 'unidades'}</span>` : ''}</td>
+    </tr>`).join('');
+  const noDrivePadrao = lembrarNoDrive();
+  return new Promise((resolve) => {
+    let resolvido = false;
+    const fim = (v) => { if (resolvido) return; resolvido = true; fecharModal(); resolve(v); };
+    abrirModal(`
+      <header><h2>O que baixar do Drive</h2>
+        <p>${resumo.total} PDF(s) na pasta: <b>${resumo.noEscopo}</b> de arquitetura, acabamentos ou memorial (${mb(resumo.bytesNoEscopo)}) e ${resumo.foraDoEscopo} de outras disciplinas, que ficam de fora. A disciplina vem do nome e da pasta; o carimbo e a IA confirmam depois do download.</p></header>
+      <div class="corpo" style="max-height:min(52vh,520px);overflow:auto">
+        <div style="display:flex;gap:8px;margin-bottom:8px">
+          <button type="button" class="btn pequeno" data-marcar="escopo">Só o escopo</button>
+          <button type="button" class="btn pequeno" data-marcar="todos">Todos</button>
+          <button type="button" class="btn pequeno" data-marcar="nenhum">Nenhum</button>
+        </div>
+        ${tabela([{ nome: '' }, { nome: 'Arquivo' }, { nome: 'Disciplina' }], [linhas])}
+        <label style="display:flex;gap:8px;align-items:flex-start;margin-top:12px;font-size:13px;line-height:1.45">
+          <input type="checkbox" data-no-drive${noDrivePadrao ? ' checked' : ''} style="margin-top:3px">
+          <span><b>Deixar os PDFs no Drive</b>, sem enviar cópia ao servidor. Outra máquina abre a evidência buscando no Drive com o login Google. Desmarque para guardar uma cópia no servidor também.</span></label>
+        ${contaLembrada() ? '<p class="nota-prova">Conta Google lembrada nesta máquina. <button type="button" class="btn discreto pequeno" data-trocar-conta>Trocar conta</button></p>' : ''}
+      </div>
+      <footer>
+        <button type="button" class="btn discreto" data-dlg-cancelar>Cancelar</button>
+        <button type="button" class="btn primario" data-baixar>Baixar selecionados</button>
+      </footer>`, (m) => {
+      m.querySelector('.modal-caixa').classList.add('modal-pergunta');
+      const caixas = () => [...m.querySelectorAll('[data-drive-id]')];
+      const contar = () => { const n = caixas().filter(c => c.checked).length; m.querySelector('[data-baixar]').textContent = n ? `Baixar ${n} selecionado(s)` : 'Baixar selecionados'; };
+      m.querySelectorAll('[data-marcar]').forEach(b => b.addEventListener('click', () => {
+        const modo = b.dataset.marcar;
+        for (const c of caixas()) c.checked = modo === 'todos' ? true : modo === 'nenhum' ? false : itens.find(it => it.id === c.dataset.driveId)?.escopo;
+        contar();
+      }));
+      m.addEventListener('change', contar);
+      contar();
+      m.querySelector('[data-dlg-cancelar]').addEventListener('click', () => fim(null));
+      m.querySelector('[data-trocar-conta]')?.addEventListener('click', () => { sairDoGoogle(); fim(null); aviso('Conta Google esquecida: o próximo acesso ao Drive pede login.'); });
+      m.querySelector('[data-baixar]').addEventListener('click', () => {
+        const noDrive = !!m.querySelector('[data-no-drive]')?.checked;
+        try { localStorage.setItem(CHAVE_NO_DRIVE, noDrive ? 'drive' : 'servidor'); } catch { /* ok */ }
+        fim({ ids: new Set(caixas().filter(c => c.checked).map(c => c.dataset.driveId)), noDrive });
+      });
+    });
+  });
+}
+
+async function receberArquivos(arquivos, { noDrive = false } = {}) {
   const e = emp();
   const validos = arquivos.filter(f => /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name));
   for (const f of arquivos) if (!validos.includes(f)) aviso('Só PDF por enquanto: ' + f.name);
@@ -644,12 +721,18 @@ async function receberArquivos(arquivos) {
     };
     const anterior = e.documentos.find(d => raiz(d.nome) === raiz(f.name) && d.revisao !== meta.revisao);
     if (anterior) meta.substitui = anterior.id;
+    /* a identidade do arquivo no Drive: id e revisão. Com `noDrive` ele mora
+       lá — só o navegador guarda cache, e o servidor não recebe cópia */
+    if (f.drive && f.drive.id) { meta.drive = { ...f.drive }; meta.driveLink = linkDoDrive(f.drive.id); }
+    const moraNoDrive = noDrive && !!meta.drive;
     e.documentos.push(meta);
     estado.pdfs.set(meta.id, { blob: f });
     /* o projeto e o nome viajam junto: é o que liga a prancha ao levantamento
        do lado do servidor, e o que faz a lista de arquivos do projeto existir */
-    const guardado = await store.guardarArquivo(meta.id, f, { projetoId: e.id, nome: f.name });
-    if (guardado && guardado.url) {
+    const guardado = await store.guardarArquivo(meta.id, f, { projetoId: e.id, nome: f.name }, { soLocal: moraNoDrive });
+    if (moraNoDrive) {
+      meta.fonte = 'drive';
+    } else if (guardado && guardado.url) {
       /* na nuvem o próprio upload já devolve o endereço: chamar `enviarAnexo`
          aqui subiria os mesmos 3 MB uma segunda vez, por nada. */
       meta.anexo = store.NUVEM.base + guardado.url;
@@ -762,7 +845,8 @@ async function processarDocumento(meta, lote = null) {
   render();
   await atualizarProgresso('abrindo ' + meta.nome, 0);
   try {
-    const blob = estado.pdfs.get(meta.id)?.blob || await store.lerArquivo(meta.id);
+    const blob = await blobDe(meta);
+    if (!blob) throw new Error('arquivo não encontrado nesta máquina, no Drive nem no servidor');
     let doc = await openPdf(new Uint8Array(await blob.arrayBuffer()));
     estado.pdfs.set(meta.id, { doc, blob });
     meta.paginas = doc.numPages;

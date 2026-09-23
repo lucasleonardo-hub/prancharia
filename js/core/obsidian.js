@@ -184,7 +184,7 @@ export function notasDoEmpreendimento(emp, pastaRaiz = OBSIDIAN.pasta) {
     }));
     t.push(`# ${nomeDeNota(d.nome)}\n`);
     t.push(`Empreendimento: ${link('', nomeEmp, nomeEmp)} · ${d.tipo || 'documento'} · ${d.paginas || '?'} página(s) · ${d.processadoEm ? 'processado em ' + data(d.processadoEm) : 'aguardando processamento'}\n`);
-    if (d.anexo) t.push(`Arquivo: ${d.anexo}\n`);
+    if (d.anexo || d.driveLink) t.push(`Arquivo: ${d.anexo || d.driveLink}\n`);
     const lidos = locais.filter(l => (l.evidencias || []).some(ev => (ev.documentoOrigem || {}).docId === d.id)
       || (l.especificacoes || []).some(e => (e.evidencias || []).some(ev => (ev.documentoOrigem || {}).docId === d.id)));
     t.push('## Locais lidos neste documento\n');

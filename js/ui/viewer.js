@@ -4,22 +4,53 @@
 
 import { estado } from '../app.js';
 import { openPdf, naFilaDeRender } from '../core/pdfdoc.js';
-import { lerArquivo } from '../core/storage.js';
+import { lerArquivo, guardarNoNavegador } from '../core/storage.js';
 
 const CORES = { circulo: '#2f6baf', triangulo: '#8c3e96', quadrado: '#2e7350', pentagono: '#b4671a' };
 const escTxt = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+/**
+ * Os bytes de um documento, de onde estiverem: esta máquina (IndexedDB),
+ * o Drive (quando o documento mora lá — `meta.drive`), o servidor, ou o
+ * anexo. O que vem de fora fica guardado aqui para a próxima vez.
+ *
+ * Do Drive, confere a revisão: se o arquivo mudou desde a leitura, as
+ * coordenadas das evidências podem não bater mais — o documento fica
+ * marcado (`driveMudou`) e o visor avisa em vez de mostrar o recorte errado.
+ */
+export async function blobDe(meta) {
+  if (!meta) return null;
+  const cache = estado.pdfs.get(meta.id);
+  if (cache?.blob) return cache.blob;
+  let blob = await lerArquivo(meta.id);
+  if (!blob && meta.drive && meta.drive.id) {
+    try {
+      const d = await import('../core/drive.js');
+      const atual = await d.metadadosDoDrive(meta.drive.id).catch(() => null);
+      if (atual && ((meta.drive.md5 && atual.md5 && atual.md5 !== meta.drive.md5) || (meta.drive.modifiedTime && atual.modifiedTime && atual.modifiedTime !== meta.drive.modifiedTime))) {
+        meta.driveMudou = { modifiedTime: atual.modifiedTime, visto: new Date().toISOString() };
+        console.warn(`[drive] "${meta.nome}" mudou no Drive desde a leitura (${meta.drive.modifiedTime} → ${atual.modifiedTime}): os recortes podem não bater.`);
+      }
+      blob = await d.baixarPorId(meta.drive.id);
+      if (blob) guardarNoNavegador(meta.id, blob);
+    } catch (err) {
+      console.warn('[drive] não consegui buscar o arquivo no Drive:', err.message);
+      blob = null;
+    }
+  }
+  if (!blob && meta.anexo) {
+    try { blob = await (await fetch(meta.anexo)).blob(); } catch { blob = null; }
+  }
+  if (blob) estado.pdfs.set(meta.id, { ...(cache || {}), blob });
+  return blob;
+}
+
 export async function pdfDe(documentoId) {
   const cache = estado.pdfs.get(documentoId);
   if (cache?.doc) return cache.doc;
-  let blob = cache?.blob || await lerArquivo(documentoId);
-  if (!blob) {
-    const e = estado.emps.find(x => x.documentos.some(d => d.id === documentoId));
-    const meta = e?.documentos.find(d => d.id === documentoId);
-    if (meta?.anexo) {
-      try { blob = await (await fetch(meta.anexo)).blob(); } catch { blob = null; }
-    }
-  }
+  const e = estado.emps.find(x => x.documentos.some(d => d.id === documentoId));
+  const meta = e?.documentos.find(d => d.id === documentoId) || { id: documentoId };
+  const blob = await blobDe(meta);
   if (!blob) return null;
   const doc = await openPdf(new Uint8Array(await blob.arrayBuffer()));
   estado.pdfs.set(documentoId, { doc, blob });

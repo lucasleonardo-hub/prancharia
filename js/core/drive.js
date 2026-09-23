@@ -107,11 +107,31 @@ async function prepararGoogle() {
 /* OAuth: o token de acesso vive na aba, e só nela                     */
 /* ------------------------------------------------------------------ */
 
+/* O token vale uma hora e fica guardado no navegador (localStorage): recarregar
+   a página dentro dessa hora não pede login. Depois disso a renovação tenta
+   ser silenciosa (`prompt: ''`): quem já autorizou o app uma vez e continua
+   logado no Google vê o popup abrir e fechar sozinho, sem escolher conta nem
+   consentir de novo. Só cai no login completo se o Google exigir. Renovação
+   sem popup nenhum exigiria refresh token no servidor — fica para o passo em
+   que o BFF passar a falar com o Drive. */
+const CHAVE_TOKEN = 'prancharia.google.token';
 let token = null;
 let tokenExpira = 0;
+let jaAutorizou = false;
+try {
+  const t = JSON.parse(localStorage.getItem(CHAVE_TOKEN) || 'null');
+  if (t && t.token && Number(t.expira) > Date.now()) { token = t.token; tokenExpira = Number(t.expira); }
+  jaAutorizou = !!(t && t.autorizou);
+} catch { /* sem localStorage */ }
 
-async function obterToken() {
-  if (token && Date.now() < tokenExpira - 60_000) return token;
+function lembrarToken() {
+  try { localStorage.setItem(CHAVE_TOKEN, JSON.stringify({ token, expira: tokenExpira, autorizou: true })); } catch { /* ok */ }
+}
+
+/** Já houve login nesta máquina (mesmo que o token tenha vencido). */
+export const contaLembrada = () => jaAutorizou || !!token;
+
+function pedirToken(prompt) {
   return new Promise((ok, erro) => {
     const cliente = window.google.accounts.oauth2.initTokenClient({
       client_id: GOOGLE.CLIENT_ID,
@@ -120,18 +140,32 @@ async function obterToken() {
         if (!r || r.error) { erro(new Error(r?.error_description || r?.error || 'login recusado')); return; }
         token = r.access_token;
         tokenExpira = Date.now() + (Number(r.expires_in) || 3600) * 1000;
+        jaAutorizou = true;
+        lembrarToken();
         ok(token);
       },
       error_callback: (e) => erro(new Error(e?.type === 'popup_closed' ? 'login cancelado' : (e?.message || e?.type || 'falha no login do Google'))),
     });
-    cliente.requestAccessToken({ prompt: token ? '' : 'consent' });
+    cliente.requestAccessToken({ prompt });
   });
 }
 
-/** Esquece o token (para trocar de conta Google). */
+async function obterToken() {
+  if (token && Date.now() < tokenExpira - 60_000) return token;
+  await prepararGoogle();
+  if (jaAutorizou) {
+    /* renovação silenciosa; se o Google pedir interação, cai no login normal */
+    try { return await pedirToken(''); }
+    catch (e) { if (/cancelado/.test(e.message)) throw e; }
+  }
+  return pedirToken('consent');
+}
+
+/** Esquece o token e a conta (para trocar de conta Google). */
 export function sairDoGoogle() {
   if (token && window.google?.accounts?.oauth2?.revoke) { try { window.google.accounts.oauth2.revoke(token); } catch { /* ok */ } }
-  token = null; tokenExpira = 0;
+  token = null; tokenExpira = 0; jaAutorizou = false;
+  try { localStorage.removeItem(CHAVE_TOKEN); } catch { /* ok */ }
 }
 
 /* ------------------------------------------------------------------ */
@@ -246,7 +280,7 @@ export async function listarPdfsDaPasta(pastaId, tokenAcesso, profundidade = 0, 
   do {
     const r = await drive('/files', tokenAcesso, {
       q: `'${pastaId}' in parents and trashed = false`,
-      fields: 'nextPageToken, files(id, name, mimeType, size, shortcutDetails(targetId, targetMimeType))',
+      fields: 'nextPageToken, files(id, name, mimeType, size, modifiedTime, md5Checksum, version, shortcutDetails(targetId, targetMimeType))',
       pageSize: '1000',
       includeItemsFromAllDrives: 'true',
       corpora: 'allDrives',
@@ -266,7 +300,8 @@ export async function listarPdfsDaPasta(pastaId, tokenAcesso, profundidade = 0, 
         }
       } else if (ehPdf(alvo)) {
         resumo.pdfs++;
-        out.push({ id: alvo.id, name: alvo.name, mimeType: alvo.mimeType, size: Number(f.size) || 0, caminho });
+        out.push({ id: alvo.id, name: alvo.name, mimeType: alvo.mimeType, size: Number(f.size) || 0, caminho,
+          modifiedTime: f.modifiedTime || '', md5: f.md5Checksum || '', versao: f.version || '' });
       } else if (resumo.outros.length < 8) {
         resumo.outros.push(`${f.name} (${alvo.mimeType || 'tipo desconhecido'})`);
       }
@@ -285,8 +320,29 @@ async function baixarPdf(arq, tokenAcesso) {
   /* as pastas de onde veio ("PARADISO/HIDRÁULICO/") viajam com o arquivo: é
      a primeira pista da disciplina do documento (js/core/disciplina.js) */
   f.caminhoDrive = arq.caminho || '';
+  /* e a identidade no Drive: com ela o documento pode viver lá, sem cópia
+     no servidor, e o visor sabe se o arquivo mudou desde a leitura */
+  f.drive = { id: arq.id, nome: arq.name, modifiedTime: arq.modifiedTime || '', md5: arq.md5 || '', versao: arq.versao || '', caminho: arq.caminho || '' };
   return f;
 }
+
+/** Os metadados atuais de um arquivo no Drive — para conferir a revisão. */
+export async function metadadosDoDrive(id) {
+  const tk = await obterToken();
+  const r = await drive(`/files/${encodeURIComponent(id)}`, tk, { fields: 'id,name,mimeType,size,modifiedTime,md5Checksum,version' });
+  const m = await r.json();
+  return { id: m.id, nome: m.name, modifiedTime: m.modifiedTime || '', md5: m.md5Checksum || '', versao: m.version || '', bytes: Number(m.size) || 0 };
+}
+
+/** Os bytes de um arquivo do Drive pelo id (o visor, em outra máquina). */
+export async function baixarPorId(id) {
+  const tk = await obterToken();
+  const r = await drive(`/files/${encodeURIComponent(id)}`, tk, { alt: 'media' });
+  return await r.blob();
+}
+
+/** Link humano para abrir o arquivo no Drive. */
+export const linkDoDrive = id => `https://drive.google.com/file/d/${encodeURIComponent(id)}/view`;
 
 /* ------------------------------------------------------------------ */
 /* a porta de entrada                                                  */
@@ -320,19 +376,32 @@ export function idDoLink(texto) {
  * scripts bloqueados, link sem acesso); a falha de um arquivo específico vai
  * para `pulados`.
  */
-export async function importarDoDrive(aoProgredir = () => {}, { link = '' } = {}) {
+export async function importarDoDrive(aoProgredir = () => {}, opcoes = {}) {
+  const l = await listarDoDrive(aoProgredir, opcoes);
+  if (l.cancelado) return { arquivos: [], pulados: [], cancelado: true, resumo: l.resumo };
+  const b = await baixarDoDrive(l.itens, aoProgredir);
+  return { ...b, cancelado: false, resumo: l.resumo };
+}
+
+/**
+ * Só a LISTAGEM: login → Picker (ou link) → pastas viram a lista de PDFs,
+ * com nome, caminho, tamanho e revisão — sem baixar um byte. É o que permite
+ * triar por disciplina antes do download (js/core/disciplina.js, triarLista)
+ * e baixar só o que entra no levantamento.
+ */
+export async function listarDoDrive(aoProgredir = () => {}, { link = '' } = {}) {
   await prepararGoogle();
   const tk = await obterToken();
   let escolhidos;
   if (link) {
     const id = idDoLink(link);
     if (!id) throw new Error('não reconheci um link do Google Drive nesse texto');
-    const meta = await (await drive(`/files/${encodeURIComponent(id)}`, tk, { fields: 'id,name,mimeType,shortcutDetails' })).json();
-    escolhidos = [{ id: meta.id, name: meta.name, mimeType: meta.mimeType || '', shortcutDetails: meta.shortcutDetails }];
+    const meta = await (await drive(`/files/${encodeURIComponent(id)}`, tk, { fields: 'id,name,mimeType,size,modifiedTime,md5Checksum,version,shortcutDetails' })).json();
+    escolhidos = [{ id: meta.id, name: meta.name, mimeType: meta.mimeType || '', size: meta.size, modifiedTime: meta.modifiedTime, md5: meta.md5Checksum, versao: meta.version, shortcutDetails: meta.shortcutDetails }];
   } else {
     escolhidos = await escolherNoDrive(tk);
   }
-  if (!escolhidos.length) return { arquivos: [], pulados: [], cancelado: true };
+  if (!escolhidos.length) return { itens: [], resumo: { itens: 0, pdfs: 0, pastas: 0, outros: [], ignorados: [] }, cancelado: true };
 
   aoProgredir('listando o que foi escolhido no Drive', 0);
   const fila = [];
@@ -359,18 +428,24 @@ export async function importarDoDrive(aoProgredir = () => {}, { link = '' } = {}
       fila.push(it);
     }
   }
-  console.info(`[drive] escolha: ${escolhidos.length} item(ns) no Picker · ${resumo.pastas} pasta(s) varrida(s), ${resumo.itens} arquivo(s) vistos, ${fila.length} PDF(s) para baixar`
+  console.info(`[drive] escolha: ${escolhidos.length} item(ns) · ${resumo.pastas} pasta(s) varrida(s), ${resumo.itens} arquivo(s) vistos, ${fila.length} PDF(s) listados`
     + (resumo.outros.length ? ` · não-PDF nas pastas: ${resumo.outros.join(', ')}` : '')
     + (resumo.ignorados.length ? ` · ignorados: ${resumo.ignorados.join(', ')}` : ''));
+  return { itens: fila, resumo, cancelado: false };
+}
 
+/** O DOWNLOAD do que passou pela triagem: devolve os `File`s prontos para
+    `receberArquivos()`, cada um com `caminhoDrive` e `drive` (id e revisão). */
+export async function baixarDoDrive(itens, aoProgredir = () => {}) {
+  const tk = await obterToken();
   const arquivos = [];
   const pulados = [];
-  for (let i = 0; i < fila.length; i++) {
-    const it = fila[i];
-    aoProgredir(`baixando do Drive ${i + 1} de ${fila.length}: ${it.name}`, i / Math.max(1, fila.length));
+  for (let i = 0; i < itens.length; i++) {
+    const it = itens[i];
+    aoProgredir(`baixando do Drive ${i + 1} de ${itens.length}: ${it.name}`, i / Math.max(1, itens.length));
     try { arquivos.push(await baixarPdf(it, tk)); }
     catch (e) { pulados.push({ nome: it.name, motivo: e.message }); }
   }
   aoProgredir('download concluído', 1);
-  return { arquivos, pulados, cancelado: false, total: fila.length, resumo };
+  return { arquivos, pulados, total: itens.length };
 }

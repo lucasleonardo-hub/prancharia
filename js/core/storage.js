@@ -309,9 +309,11 @@ async function lerLocalmente(id) {
  * (ninguém processa nada). Quem enviou fica sabendo pelo console e pela
  * ausência do arquivo na lista do projeto.
  */
-export async function guardarArquivo(id, blob, meta = {}) {
+export async function guardarArquivo(id, blob, meta = {}, { soLocal = false } = {}) {
   const local = await guardarLocalmente(id, blob);
-  if (!NUVEM.ligada) return local;
+  /* `soLocal`: o arquivo mora no Drive (js/core/drive.js) e o servidor não
+     recebe cópia — outra máquina busca no Drive pelo id */
+  if (!NUVEM.ligada || soLocal) return local;
   try {
     const fd = new FormData();
     fd.append('arquivoId', id);
@@ -327,6 +329,9 @@ export async function guardarArquivo(id, blob, meta = {}) {
     return local;
   }
 }
+
+/** Guarda só nesta máquina (cache do que veio do Drive ou do servidor). */
+export const guardarNoNavegador = (id, blob) => guardarLocalmente(id, blob);
 
 /** Local primeiro; servidor quando não achar — é o caso da segunda máquina. */
 export async function lerArquivo(id) {
