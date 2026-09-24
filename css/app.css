@@ -479,6 +479,11 @@ details > summary:hover { color: var(--ink); }
 .o-que-fazer select { height: 24px; font-size: 12px; padding: 0 6px; border-radius: var(--raio-s); border: 1px solid var(--borda); background: var(--surface); color: var(--ink); max-width: 220px; }
 .o-que-fazer.revisado { background: var(--bom-soft); border-color: color-mix(in srgb, var(--bom) 25%, transparent); }
 
+/* pré-visualização da planilha: as cores da convenção e a marca de fórmula */
+td.cel-amarelo { background: color-mix(in srgb, #ffff00 28%, var(--surface)); }
+td.cel-rosa { background: color-mix(in srgb, #ff99cc 40%, var(--surface)); }
+td.cel-formula { color: var(--ink-3); font-style: italic; text-align: center; }
+
 /* triagem do Drive: o arquivo fora do escopo continua na lista, apagado */
 tr.apagada td { color: var(--ink-3); }
 tr.apagada .sub { color: var(--ink-3); }

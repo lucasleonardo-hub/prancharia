@@ -8,11 +8,11 @@
 
    Célula sem respaldo no documento sai vazia. Nunca "N/A". */
 
-import { gerarXlsx, gerarCsv } from './xlsx.js';
-import { CONFIANCA, STATUS, MOTIVOS_PENDENCIA, todasEspecificacoes } from './model.js';
+import { gerarXlsx, gerarCsv, celula } from './xlsx.js';
+import { CONFIANCA, STATUS, MOTIVOS_PENDENCIA, todasEspecificacoes, normalizar } from './model.js';
 import { LAYOUT, COLUNAS_COPIA, CATEGORIAS } from './vocab.js';
-import { temAreasComuns } from './tipos.js';
-import { completarObrigatorias } from './ambiente.js';
+import { temAreasComuns, tipoDe } from './tipos.js';
+import { completarObrigatorias, ehObrigatoria, naturezaDaMarca, rotuloFornecedor } from './ambiente.js';
 
 const vivo = a => a && a.status !== 'excluido';
 const rot = (m, k) => (m[k] ? m[k].rotulo : (k || ''));
@@ -50,26 +50,55 @@ export function ordenarEspecificacoes(lista) {
 /* As views ainda chamam pelo nome antigo; é a mesma lista de objetos. */
 export const ordenarAchados = ordenarEspecificacoes;
 
-/* ---------- dados de fornecedor ---------- */
+/** Linhas de dados no formato MP/MC (a partir da coluna Local). */
+/* ---------- as cores da planilha ----------
+   amarelo = dúvida ou informação não encontrada nos documentos: pergunta
+   para a construtora; rosa = decisão interna do time: classificação fora do
+   vocabulário controlado (categoria, sistema construtivo). A célula vazia
+   sem cor é a informação que não existe por natureza (contrapiso sem marca). */
+const CATEGORIAS_OK = new Set(CATEGORIAS);
+const emDuvida = a => a.confianca === 'baixa' || a.status === 'revisar' || a.status === 'conflito';
 
-function fornecedorDe(emp, esp) {
-  const m = emp.marcas.find(x => x.nome && esp.marca && x.nome.toLowerCase() === esp.marca.toLowerCase());
-  const f = emp.fornecedores.find(x => m && x.marca === m.nome) || (m && m.fornecedorDados) || null;
+/** A–F de uma linha: Local, Categoria, Nome do produto, Sistema, Descrição, Marca. */
+function celulasAF(a) {
+  const local = nomeDoLocal(a);
+  const categoria = a.categoria || '';
+  const sistema = a.sistema || '';
+  const descricao = montarDescricao(a);
+  const obrigatoria = ehObrigatoria(a);
+  const natureza = naturezaDaMarca(a);
+  let marca = a.marca || '';
+  let corMarca = '';
+  if (!marca) {
+    if (natureza === 'fornecedor') marca = rotuloFornecedor(a);      // "Fornecedor do forro de gesso"
+    else if (natureza === 'marca') corMarca = 'amarelo';           // tem marca no mundo, o documento não disse
+    /* 'nenhuma': contrapiso, reboco — em branco, sem cor */
+  }
   return [
-    esp.fornecedor || (m ? m.fornecedor : '') || '',
-    (f && f.cnpj) || '', (f && f.uf) || '', (f && f.cidade) || '', (f && f.cep) || '',
-    (f && f.endereco) || '', (f && f.site) || '', (f && f.vendedor) || '', (f && f.email) || '', (f && f.telefone) || '',
+    celula(local, local ? '' : 'amarelo'),
+    celula(categoria, CATEGORIAS_OK.has(categoria) ? '' : 'rosa'),
+    celula(a.produto || '', a.produto ? '' : 'amarelo'),
+    celula(sistema, sistema ? '' : 'rosa'),
+    celula(descricao, (!descricao || obrigatoria || emDuvida(a)) ? 'amarelo' : ''),
+    celula(marca, obrigatoria ? 'amarelo' : corMarca),
   ];
 }
 
-/** Linhas de dados no formato MP/MC (a partir da coluna Local). */
-export function linhasPlanilha(emp, especs, comExtras = false) {
-  return ordenarEspecificacoes(especs.filter(vivo)).map(a => {
-    const base = [
-      nomeDoLocal(a), a.categoria || '', a.produto || '', a.sistema || '',
-      montarDescricao(a), a.marca || '', ...fornecedorDe(emp, a),
-    ];
-    return comExtras ? base.concat(['', '', '', a.produto || '', a.modelo || '']) : base;
+/* G em diante são fórmulas que puxam da aba "Forn." pela Marca (F) —
+   nunca valor estático. A coluna k da Forn. (2 = Fornecedor … 11 = Telefone)
+   vira PROCV pela marca; sem marca, a célula fica vazia. */
+const NOME_FORN = 'Forn.';
+const formulaForn = (linha, k) => celula('', '', `IFERROR(VLOOKUP($F${linha},'${NOME_FORN}'!$A:$K,${k},FALSE),"")`);
+
+/** Linhas de dados de MP/MC/SALA COMERCIAL. `primeiraLinha` é o número, no
+    Excel, da primeira linha de dados (as fórmulas apontam para a própria
+    linha). MC tem ainda NF, data, link, tipo e modelo — que não vêm da
+    Forn. e não são preenchidos aqui. */
+export function linhasPlanilha(emp, especs, comExtras = false, primeiraLinha = 6) {
+  return ordenarEspecificacoes(especs.filter(vivo)).map((a, i) => {
+    const r = primeiraLinha + i;
+    const base = [...celulasAF(a), ...[2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map(k => formulaForn(r, k))];
+    return comExtras ? base.concat(['', '', '', '', '']) : base;
   });
 }
 
@@ -86,26 +115,44 @@ function montarDescricao(a) {
   return partes.filter(Boolean).join(' — ');
 }
 
+/** As linhas de cabeçalho do layout (códigos de importação, nota, exemplos,
+    títulos) — os dados começam logo depois. */
+const cabecalho = def => [def.codigos, def.nota, ...def.exemplos, def.titulos];
+const primeiraLinhaDeDados = def => cabecalho(def).length + 1;
+
 function moldura(def, dados) {
   const n = def.codigos.length;
   const preencher = l => { const c = l.slice(0, n); while (c.length < n) c.push(''); return c; };
-  return [
-    preencher(def.codigos),
-    preencher(def.nota),
-    ...def.exemplos.map(preencher),
-    preencher(def.titulos),
-    ...dados.map(preencher),
-  ];
+  return [...cabecalho(def).map(preencher), ...dados.map(preencher)];
 }
 
-export function abaMP(emp, especs) { return moldura(LAYOUT.MP, linhasPlanilha(emp, especs, false)); }
-export function abaMC(emp, especs) { return moldura(LAYOUT.MC, linhasPlanilha(emp, especs, true)); }
+export function abaMP(emp, especs) { return moldura(LAYOUT.MP, linhasPlanilha(emp, especs, false, primeiraLinhaDeDados(LAYOUT.MP))); }
+export function abaMC(emp, especs) { return moldura(LAYOUT.MC, linhasPlanilha(emp, especs, true, primeiraLinhaDeDados(LAYOUT.MC))); }
 
-export function abaForn(emp) {
-  const dados = emp.marcas.map(m => [
-    m.nome || '', m.fornecedor || '', m.cnpj || '', m.uf || '', m.cidade || '',
-    m.cep || '', m.endereco || '', m.site || '', m.vendedor || '', m.email || '', m.telefone || '',
-  ]);
+/**
+ * A aba Forn.: toda marca usada nas abas de produto existe aqui, inclusive
+ * as "Fornecedor do forro de gesso" que a coluna F recebe quando o produto
+ * não tem marca própria. Dado de fornecedor que falta sai em amarelo; a
+ * linha 1 (chaves de importação) fica oculta.
+ */
+export function abaForn(emp, especs = []) {
+  const marcas = new Map();
+  for (const m of (emp.marcas || [])) if (m.nome) marcas.set(m.nome.toLowerCase(), { ...m });
+  for (const a of especs.filter(vivo)) {
+    const nome = a.marca || (naturezaDaMarca(a) === 'fornecedor' ? rotuloFornecedor(a) : '');
+    if (!nome) continue;
+    const k = nome.toLowerCase();
+    if (!marcas.has(k)) marcas.set(k, { nome, fornecedor: a.fornecedor || '' });
+    else if (a.fornecedor && !marcas.get(k).fornecedor) marcas.get(k).fornecedor = a.fornecedor;
+  }
+  const falta = v => celula(v || '', v ? '' : 'amarelo');
+  const dados = [...marcas.values()].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')).map(m => {
+    const f = (emp.fornecedores || []).find(x => x.marca === m.nome) || m.fornecedorDados || m;
+    return [
+      m.nome || '', falta(m.fornecedor || f.fornecedor), falta(f.cnpj), falta(f.uf), falta(f.cidade),
+      falta(f.cep), falta(f.endereco), falta(f.site), falta(f.vendedor), falta(f.email), falta(f.telefone),
+    ];
+  });
   return moldura(LAYOUT.FORN, dados);
 }
 
@@ -133,17 +180,40 @@ const refsDe = alvo => [...new Set((alvo.evidencias || []).map(refDeEvidencia).f
 const caixaTexto = c => (Array.isArray(c) && c.length === 4)
   ? c.map(v => Math.round(v)).join(', ') : '';
 
-export function abaLocais(emp) {
+/**
+ * O checklist de locais de um manual (MC Locais / MP Locais): TODO local
+ * lido nos documentos aparece, com ou sem item — nenhum fica de fora.
+ * `comum` = true lista as áreas comuns; false, as unidades. Sem áreas
+ * comuns no tipo, tudo é MP.
+ */
+export function abaLocais(emp, comum = null) {
   const linhas = [['Local', 'Tipologia', 'Pavimento', 'Área', 'Itens', 'Manual', 'Origem', 'Status']];
-  for (const l of locaisDe(emp)) {
+  const todos = locaisDe(emp).filter(l => comum === null || !!l.areaComum === comum);
+  const ordenados = [...todos].sort((a, b) => (a.tipologia || '').localeCompare(b.tipologia || '') || (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
+  for (const l of ordenados) {
+    const n = (l.especificacoes || []).filter(vivo).length;
     linhas.push([
-      l.nome || '', l.tipologia || '', l.pavimento || '', l.area || '',
-      (l.especificacoes || []).filter(vivo).length,
-      temAreasComuns(emp) ? (l.areaComum ? 'MC' : 'MP') : '',
+      celula(l.nome || '', l.nome ? '' : 'amarelo'), l.tipologia || '', l.pavimento || '', l.area || '',
+      n,
+      temAreasComuns(emp) ? (l.areaComum ? 'MC' : 'MP') : 'MP',
       refsDe(l), rot(STATUS, l.status),
     ]);
   }
   return linhas;
+}
+
+/**
+ * O nome da aba MP de uma tipologia, como a planilha pede: "Unidade 2, 3, 4
+ * e 5" quando as unidades da tipologia estão cadastradas na estrutura;
+ * senão o nome da tipologia ("MP - TIPO 1").
+ */
+export function nomeAbaTipologia(emp, tip, base = 'MP') {
+  if (!tip) return base;
+  const t = ((emp.estrutura || {}).tipologia || []).find(x => normalizar(x.nome) === normalizar(tip));
+  const unidades = t ? ((emp.estrutura || {}).unidade || []).filter(u => u.paiId === t.id).map(u => String(u.nome || '').replace(/^\s*(unidade|apto\.?|apartamento|casa|lote|loja|sala)\s*/i, '').trim()).filter(Boolean) : [];
+  if (!unidades.length) return `${base} - ${tip}`;
+  const nome = unidades.length === 1 ? unidades[0] : unidades.slice(0, -1).join(', ') + ' e ' + unidades[unidades.length - 1];
+  return `Unidade ${nome}`;
 }
 
 export function abaEsquadrias(emp) {
@@ -239,13 +309,23 @@ export function pastaDeAbas(emp) {
      é a única mutação da árvore que a exportação faz, e é idempotente */
   completarObrigatorias(emp);
   const { mc, mp } = separarPorManual(emp);
+  /* o manual da unidade privativa tem nome próprio no empreendimento
+     comercial: é o Manual do Espaço Comercial */
+  const comercial = (tipoDe(emp) || {}).id === 'comercial';
+  const base = comercial ? 'SALA COMERCIAL' : 'MP';
   const abas = [{ nome: 'Copiar', linhas: tabelaCopia(emp, especificacoesDe(emp)) }];
   const tips = [...new Set(mp.map(a => a.tipologia || ''))];
-  if (tips.length <= 1) abas.push({ nome: 'MP', linhas: abaMP(emp, mp) });
-  else for (const t of tips) abas.push({ nome: 'MP - ' + (t || 'sem tipologia'), linhas: abaMP(emp, mp.filter(a => (a.tipologia || '') === t)) });
+  if (tips.length <= 1) {
+    /* uma tipologia só: "Unidade 101, 102 e 103" quando as unidades estão
+       cadastradas; senão a aba é simplesmente MP (ou SALA COMERCIAL) */
+    const nome = tips[0] ? nomeAbaTipologia(emp, tips[0], base) : base;
+    abas.push({ nome: nome.startsWith(base + ' - ') ? base : nome, linhas: abaMP(emp, mp) });
+  }
+  else for (const t of tips) abas.push({ nome: t ? nomeAbaTipologia(emp, t, base) : `${base} - sem tipologia`, linhas: abaMP(emp, mp.filter(a => (a.tipologia || '') === t)) });
   if (temAreasComuns(emp)) abas.push({ nome: 'MC', linhas: abaMC(emp, mc) });
-  abas.push({ nome: 'Forn.', linhas: abaForn(emp) });
-  abas.push({ nome: 'Locais', linhas: abaLocais(emp) });
+  abas.push({ nome: NOME_FORN, linhas: abaForn(emp, especificacoesDe(emp)), ocultar: [0] });
+  if (temAreasComuns(emp)) abas.push({ nome: 'MC Locais', linhas: abaLocais(emp, true) });
+  abas.push({ nome: `${base} Locais`, linhas: abaLocais(emp, temAreasComuns(emp) ? false : null) });
   abas.push({ nome: 'Esquadrias', linhas: abaEsquadrias(emp) });
   abas.push({ nome: 'Evidências', linhas: abaEvidencias(emp) });
   abas.push({ nome: 'Pendências', linhas: abaPendencias(emp) });

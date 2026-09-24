@@ -62,21 +62,38 @@ const esc = s => String(s === null || s === undefined ? '' : s)
   .replace(CTRL, '');
 const col = n => { let s = ''; n++; while (n > 0) { const r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = (n - r - 1) / 26; } return s; };
 
-function planilhaXml(linhas) {
+/* Uma célula pode ser um valor simples (texto ou número) ou um objeto
+   { v, f, cor }: `f` é fórmula (Excel calcula ao abrir), `cor` é o fundo —
+   'amarelo' (dúvida ou informação não encontrada: pergunta para a
+   construtora) ou 'rosa' (decisão interna do time). É a convenção da
+   planilha de produtos e fornecedores; o exportador decide, aqui só se pinta. */
+const ESTILO_COR = { amarelo: 2, rosa: 3 };
+export const celula = (v, cor = '', f = '') => ({ v: v === null || v === undefined ? '' : v, cor, f });
+const desmontar = (c) => (c && typeof c === 'object' && !Array.isArray(c)) ? c : { v: c, cor: '', f: '' };
+
+function planilhaXml(linhas, { ocultar = [] } = {}) {
   const out = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
     '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">',
     '<sheetFormatPr defaultRowHeight="15"/>'];
   const larguras = [];
-  linhas.forEach(l => l.forEach((c, i) => { larguras[i] = Math.min(60, Math.max(larguras[i] || 9, String(c === null || c === undefined ? '' : c).length + 2)); }));
+  linhas.forEach(l => l.forEach((c, i) => { const { v } = desmontar(c); larguras[i] = Math.min(60, Math.max(larguras[i] || 9, String(v === null || v === undefined ? '' : v).length + 2)); }));
   if (larguras.length) out.push('<cols>' + larguras.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('') + '</cols>');
   out.push('<sheetData>');
+  const escondidas = new Set(ocultar);
   linhas.forEach((linha, r) => {
-    out.push(`<row r="${r + 1}">`);
-    linha.forEach((v, c) => {
-      if (v === '' || v === null || v === undefined) return;
+    out.push(`<row r="${r + 1}"${escondidas.has(r) ? ' hidden="1"' : ''}>`);
+    linha.forEach((cel, c) => {
+      const { v, cor, f } = desmontar(cel);
+      const vazia = v === '' || v === null || v === undefined;
+      const s = r === 0 ? 1 : (ESTILO_COR[cor] || 0);
+      /* a célula vazia pintada de amarelo É informação (falta este dado):
+         sai sem valor, só com o fundo */
+      if (!f && vazia && !s) return;
       const ref = col(c) + (r + 1);
-      const estilo = r === 0 ? ' s="1"' : '';
-      if (typeof v === 'number' && Number.isFinite(v)) out.push(`<c r="${ref}"${estilo}><v>${v}</v></c>`);
+      const estilo = s ? ` s="${s}"` : '';
+      if (f) out.push(`<c r="${ref}"${estilo}><f>${esc(f)}</f></c>`);
+      else if (vazia) out.push(`<c r="${ref}"${estilo}/>`);
+      else if (typeof v === 'number' && Number.isFinite(v)) out.push(`<c r="${ref}"${estilo}><v>${v}</v></c>`);
       else out.push(`<c r="${ref}"${estilo} t="inlineStr"><is><t xml:space="preserve">${esc(v)}</t></is></c>`);
     });
     out.push('</row>');
@@ -88,9 +105,11 @@ function planilhaXml(linhas) {
 }
 
 const CT = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>';
-const ESTILOS = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF3E4396"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/></cellXfs></styleSheet>';
+const ESTILOS = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font></fonts><fills count="5"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF3E4396"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFFF00"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFF99CC"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="4"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/><xf numFmtId="0" fontId="0" fillId="3" borderId="0" xfId="0" applyFill="1"/><xf numFmtId="0" fontId="0" fillId="4" borderId="0" xfId="0" applyFill="1"/></cellXfs></styleSheet>';
 
-/** abas: [{nome, linhas:[[...]]}] */
+/** abas: [{ nome, linhas: [[...]], ocultar?: [índices de linha] }] — cada
+    célula é um valor ou `celula(v, cor, f)`. As fórmulas são recalculadas
+    ao abrir (`fullCalcOnLoad`). */
 export function gerarXlsx(abas) {
   const nomes = []; const usados = new Set();
   for (const a of abas) {
@@ -101,18 +120,19 @@ export function gerarXlsx(abas) {
   const entradas = [
     { nome: '[Content_Types].xml', dados: CT + abas.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('') + '</Types>' },
     { nome: '_rels/.rels', dados: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>' },
-    { nome: 'xl/workbook.xml', dados: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>' + nomes.map((n, i) => `<sheet name="${esc(n)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('') + '</sheets></workbook>' },
+    { nome: 'xl/workbook.xml', dados: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>' + nomes.map((n, i) => `<sheet name="${esc(n)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('') + '</sheets><calcPr fullCalcOnLoad="1"/></workbook>' },
     { nome: 'xl/_rels/workbook.xml.rels', dados: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + abas.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('') + `<Relationship Id="rId${abas.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>` },
     { nome: 'xl/styles.xml', dados: ESTILOS },
   ];
-  abas.forEach((a, i) => entradas.push({ nome: `xl/worksheets/sheet${i + 1}.xml`, dados: planilhaXml(a.linhas) }));
+  abas.forEach((a, i) => entradas.push({ nome: `xl/worksheets/sheet${i + 1}.xml`, dados: planilhaXml(a.linhas, { ocultar: a.ocultar || [] }) }));
   return new Blob([zip(entradas)], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
 }
 
 export function gerarCsv(linhas) {
   const BOM = '﻿';
-  return BOM + linhas.map(l => l.map(v => {
-    const s = String(v === null || v === undefined ? '' : v);
+  return BOM + linhas.map(l => l.map(cel => {
+    const { v, f } = desmontar(cel);
+    const s = f ? '' : String(v === null || v === undefined ? '' : v);
     return /[";\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   }).join(';')).join('\r\n');
 }

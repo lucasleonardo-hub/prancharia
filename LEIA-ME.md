@@ -711,6 +711,55 @@ recortes e nas chamadas à IA. Onde um conversor faria sentido é o **memorial
 descritivo em .docx/.xlsx** (hoje só PDF): converter no BFF e entrar no fluxo
 de fusão semântica. Fica como próximo passo se houver memoriais nesse formato.
 
+## A Planilha de Produtos e Fornecedores
+
+O XLSX (`js/core/exporter.js`, gravado por `js/core/xlsx.js`) segue as
+regras da planilha da Predialize. O layout de colunas (`LAYOUT` em
+`js/core/vocab.js`) não muda; o que estas regras acrescentam é cor,
+fórmula e as linhas que a planilha espera.
+
+**Abas.** `Copiar` (quadro de conferência), a aba do manual da unidade —
+`MP`, ou uma por tipologia nomeada pelas unidades cadastradas na estrutura
+("Unidade 101, 201 e 301"; sem unidades, "MP - TIPO 1") — ou `SALA
+COMERCIAL` no empreendimento comercial; `MC` quando o tipo tem áreas
+comuns; `Forn.` (linha 1 com as chaves de importação, oculta); `MC Locais`
+e `MP Locais` com **todo** local lido, com ou sem item; `Esquadrias`,
+`Evidências`, `Pendências`.
+
+**Colunas A–F são o levantamento; G em diante são fórmulas.** Local,
+Categoria, Nome do produto, Sistema construtivo, Descrição e Marca saem
+preenchidos. De G em diante cada célula é `PROCV` pela Marca na aba
+`Forn.` (`=IFERROR(VLOOKUP($F6,'Forn.'!$A:$K,k,FALSE),"")`), recalculado
+ao abrir — nunca valor estático. Na MC, NF, data, link, tipo e modelo ficam
+vazios. Toda marca usada existe na `Forn.`, inclusive as "Fornecedor do
+forro de gesso".
+
+**Cores.** Amarelo = dúvida ou informação não encontrada nos documentos,
+pergunta para a construtora: descrição vazia, item com confiança baixa ou
+a revisar, marca que o documento não disse, dado de fornecedor que falta
+na `Forn.`. Rosa = decisão interna do time: categoria fora do vocabulário
+(`CATEGORIAS`) e sistema construtivo em branco. Célula vazia sem cor é a
+informação que não existe por natureza.
+
+**Marca (F).** Produto sem marca própria mas com fornecedor — forro de
+gesso, esquadria, marcenaria, pedra, vidro, serralheria — recebe
+"Fornecedor do forro de gesso" / "Fornecedor da esquadria de alumínio"
+(`rotuloFornecedor` em `js/core/ambiente.js`), e essa marca entra na
+`Forn.` com os dados do fornecedor real (amarelos enquanto faltarem).
+Produto sem marca e sem fornecedor (contrapiso, reboco) fica em branco,
+sem amarelo. O resto, sem marca, é amarelo.
+
+**Itens obrigatórios por ambiente** (`itensEsperados`): além de piso,
+paredes e teto de todo ambiente fechado e do rejunte de todo cerâmico, a
+linha existe mesmo sem especificação — Local, Categoria e Nome preenchidos,
+E e F em amarelo — para o que todo ambiente daquele tipo tem: banho (bacia
+sanitária, cuba, torneira, registro, sifão, bancada), cozinha (pia,
+torneira, sifão, bancada), área de serviço (tanque, torneira), porta em
+todo cômodo fechado que não é circulação, rodapé nos cômodos secos. O
+incerto — rodapé em banho azulejado, soleira, peitoril, janela,
+equipamentos — não vira linha: é decisão da equipe, não da regra. Piso
+vinílico não pede rejunte.
+
 ## Pontos que valem saber antes de mexer
 
 - **Nada de dado sem evidência.** Célula sem respaldo no documento sai vazia,

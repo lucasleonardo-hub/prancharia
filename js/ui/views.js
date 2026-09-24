@@ -2428,7 +2428,13 @@ const planilhas = {
         <thead><tr>${(aba.linhas[0] || []).map(c => `<th${/^[a-z_]+\.[a-z_.]+$|^memorial_systems$/.test(c) ? ' class="num"' : ''}>${esc(c)}</th>`).join('')}</tr></thead>
         <tbody>${aba.linhas.slice(1, 260).map((l, i) => {
           const moldura = i < 4 && aba.nome !== 'Copiar';
-          return `<tr${moldura ? ' style="color:var(--ink-3)"' : ''}>${l.map(c => `<td>${moldura ? esc(c) : celula(c)}</td>`).join('')}</tr>`;
+          /* a célula da planilha pode trazer cor (amarelo: pergunta para a
+             construtora; rosa: decisão do time) ou fórmula (G em diante) */
+          return `<tr${moldura ? ' style="color:var(--ink-3)"' : ''}>${l.map(c => {
+            const cel = (c && typeof c === 'object' && !Array.isArray(c)) ? c : { v: c, cor: '', f: '' };
+            if (cel.f) return '<td class="cel-formula" title="fórmula que traz da aba Forn. pela marca">ƒ</td>';
+            return `<td${cel.cor ? ` class="cel-${cel.cor}"` : ''}>${moldura ? esc(cel.v) : celula(cel.v)}</td>`;
+          }).join('')}</tr>`;
         }).join('')}</tbody>
       </table></div>
       ${aba.linhas.length > 260 ? `<div style="padding:10px 14px;color:var(--ink-3);font-size:12.5px">Pré-visualização de 259 linhas. O arquivo exportado traz todas as ${aba.linhas.length - 1}.</div>` : ''}</div>`;
