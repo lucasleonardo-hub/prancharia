@@ -20,7 +20,7 @@ import {
   criarLocal, criarEspecificacao, criarEvidencia, novoId as novoIdModelo,
 } from '../core/model.js';
 import { analisarFolha, consolidar, incorporarEspecificacaoSolta, recorteBase64, IA, configurarIA, saudeDaIA, iaLigada } from '../core/engine.js';
-import { openPdf } from '../core/pdfdoc.js';
+import { openPdf, abrirDocumento, ehDwgBinario } from '../core/pdfdoc.js';
 import { pendencias, pastaDeAbas, exportarXlsx, exportarCsv, exportarJson, relatorioAuditoria, tipologiasComDados, tabelaCopia, ordenarEspecificacoes, locaisDe, especificacoesDe } from '../core/exporter.js';
 import { auditar, lerXlsx, lerCsv, textoDePdf } from '../core/audit.js';
 import { CLASSES, analisarEmpreendimento, analisarArquivos, agrupar, resumo } from '../core/auditoria.js';
@@ -385,6 +385,7 @@ const documentos = {
       </select>`;
       const sub = [
         d.tipo === 'memorial' ? 'memorial' : 'prancha',
+        d.formato === 'dwg' ? `DWG${d.folhas && d.folhas.length ? ' · ' + d.folhas.slice(0, 4).join(', ') + (d.folhas.length > 4 ? '…' : '') : ''}` : '',
         d.pasta ? d.pasta.replace(/\/$/, '') : '',
         d.fonte === 'drive' ? 'no Drive' : '',
         d.driveMudou ? 'mudou no Drive desde a leitura' : '',
@@ -413,7 +414,7 @@ const documentos = {
     return `
       <div class="cabeca"><div><h1>Documentos</h1><p class="desc">Pranchas, memoriais e cadernos do empreendimento. Pode mandar a pasta inteira do projeto: o sistema identifica a disciplina de cada arquivo e deixa de lado estrutura, instalações e modificações de unidade. Das pranchas de arquitetura lê tags, legendas e tabelas; dos memoriais lê o texto corrido, marca e modelo. Envie as pranchas antes dos memoriais para que os trechos encontrem o local certo.</p></div>
         <div class="acoes">
-          <input id="entradaDocs" type="file" accept="application/pdf" multiple hidden>
+          <input id="entradaDocs" type="file" accept="application/pdf,.pdf,.dwg,image/vnd.dwg,application/acad" multiple hidden>
           <button class="btn" id="importarDrive" type="button" title="${driveConfigurado() ? 'Escolher PDFs ou uma pasta no seu Google Drive' : 'Preencha CLIENT_ID e API_KEY em js/core/drive.js para ligar'}">
             <svg class="ico" viewBox="0 0 24 24" aria-hidden="true" stroke-linejoin="round"><path d="M8.5 3.5h7l6 10.5-3.5 6h-12L2.5 14z"/><path d="M8.5 3.5 2.5 14M15.5 3.5l-7 12.5M21.5 14h-13"/></svg>
             Google Drive</button>
@@ -707,8 +708,8 @@ export function escolherDoDrive({ itens, resumo }) {
 
 async function receberArquivos(arquivos, { noDrive = false } = {}) {
   const e = emp();
-  const validos = arquivos.filter(f => /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name));
-  for (const f of arquivos) if (!validos.includes(f)) aviso('Só PDF por enquanto: ' + f.name);
+  const validos = arquivos.filter(f => /pdf$/i.test(f.type) || /\.(pdf|dwg)$/i.test(f.name));
+  for (const f of arquivos) if (!validos.includes(f)) aviso('Só PDF ou DWG por enquanto (DXF não): ' + f.name);
   let indice = 0;
   for (const f of validos) {
     const lote = { i: indice++, n: validos.length };
@@ -750,7 +751,7 @@ async function receberArquivos(arquivos, { noDrive = false } = {}) {
     ? `${aud.n} correção(ões) aplicada(s) pela auditoria. ${aud.r.abertas} pendência(s) para você revisar.`
     : `Auditoria concluída: ${aud.r.abertas} pendência(s) para revisão.`);
 }
-const raiz = n => n.replace(/\.pdf$/i, '').replace(/[-_ ]?R?\d{2}$/i, '').trim();
+const raiz = n => n.replace(/\.(pdf|dwg)$/i, '').replace(/[-_ ]?R?\d{2}$/i, '').trim();
 
 /* Auditoria interna, disparada pelo processamento.
 
@@ -847,9 +848,13 @@ async function processarDocumento(meta, lote = null) {
   try {
     const blob = await blobDe(meta);
     if (!blob) throw new Error('arquivo não encontrado nesta máquina, no Drive nem no servidor');
-    let doc = await openPdf(new Uint8Array(await blob.arrayBuffer()));
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    /* DWG: o leitor WebAssembly monta uma página por folha (layout) ou o
+       model space inteiro; daí em diante é a mesma leitura da prancha */
+    let doc = await abrirDocumento(bytes, { aoProgredir: t => atualizarProgresso(`${meta.nome} — ${t}`, 0.01) });
     estado.pdfs.set(meta.id, { doc, blob });
     meta.paginas = doc.numPages;
+    if (doc.dwg) { meta.formato = 'dwg'; meta.folhas = doc.paginas.map(p => p.nome); meta.tipo = 'prancha'; }
     const pagina1 = await doc.getPage(1);
     if (!meta.tipo) {
       const vp = pagina1.getViewport({ scale: 1 });

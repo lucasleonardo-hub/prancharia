@@ -575,6 +575,39 @@ IndexedDB. O que existir nos dois lados fica para você decidir no aviso da
 tela de Empreendimentos. O caminho manual continua valendo: **Exportar →
 JSON** e importar; o servidor deduplica PDFs pelo SHA-256.
 
+## Ler DWG
+
+O DWG entra pelo mesmo caminho do PDF — botão, arrastar, Google Drive, "Colar
+link" — e passa pela mesma leitura: o motor vetorial, a triagem por
+disciplina, os recortes para a IA e o "Ver na prancha". Quem faz isso é
+`js/core/dwg.js`: abre o arquivo com o LibreDWG compilado para WebAssembly
+(`vendor/libredwg`, pacote `@mlightcad/libredwg-web`, licença GPL; 9,5 MB,
+carregados só quando chega o primeiro `.dwg`) e monta um documento com a
+mesma interface de página do pdf.js (`getViewport`, `getTextContent`,
+`render`, mais os traçados e textos já em espaço de prancha). O abridor
+único é `abrirDocumento` em `js/core/pdfdoc.js`, que olha os primeiros
+bytes (`%PDF` ou `AC10xx`).
+
+O que vira página: cada **layout** de paper space com carimbo e moldura
+desenhados — o conteúdo do layout mais, por viewport, o pedaço do model
+space que ela mostra, na escala da viewport, em milímetros de papel
+convertidos para pontos. Sem layouts úteis, o **model space** inteiro numa
+página só, e a escala vem do próprio desenho: a altura mediana dos rótulos
+(sem contar o texto das cotas) é levada a ~7 pt, o tamanho de um texto
+plotado, para os limiares do motor valerem como no PDF. Um traço ou bloco
+perdido longe do desenho é descartado pelo miolo dos textos (percentis
+10–90), senão a folha teria metros de vazio.
+
+Cores: toda cor que não é vermelha vira preto, como numa plotagem
+monocromática; no DWG a tag pode estar em qualquer cor, então na página de
+DWG o leitor de formas aceita todas (o número dentro da forma decide).
+MTEXT tem os códigos de formatação removidos; atributos de bloco entram como
+texto; cotas entram desenhadas. Fica de fora: **DXF** (o build do LibreDWG
+para navegador não o lê — o Drive pula), imagens raster embutidas, tabelas
+ACAD_TABLE e multileaders. Na tela Documentos o arquivo aparece com "DWG"
+e o nome das folhas. O `static-server.mjs` serve `.wasm` com o MIME certo;
+a Vercel já o faz.
+
 ## Importar do Google Drive
 
 Na tela **Documentos** o botão **Google Drive** abre o

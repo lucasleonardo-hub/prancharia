@@ -2,7 +2,7 @@
    Entra um PDF, saem ambientes, tags, tabelas e achados — cada um com a
    evidência que o sustenta. Nenhum campo é preenchido sem origem. */
 
-import { openPdf, walkPaths, readText, isRed, naFilaDeRender } from './pdfdoc.js';
+import { abrirDocumento, walkPaths, readText, isRed, naFilaDeRender } from './pdfdoc.js';
 import { coletorDeFormas, montarTags, FORMAS } from './shapes.js';
 import { coletorDeSegmentos, filtrarSimbolosDeDesenho, seguirChamada } from './simbolos.js';
 import { lerAmbientes, lerPavimentos, lerTipologias, atribuirTipologias, criarMascara, vincularTags, janelasDePlanta } from './rooms.js';
@@ -27,7 +27,7 @@ const TITULOS = [
 ];
 
 export async function analisarDocumento(bytes, docMeta, aoProgredir = () => {}) {
-  const doc = await openPdf(bytes);
+  const doc = await abrirDocumento(bytes);
   const folhas = [];
   for (let n = 1; n <= doc.numPages; n++) {
     await aoProgredir(`página ${n} de ${doc.numPages}`, (n - 1) / doc.numPages);
@@ -76,7 +76,9 @@ export async function analisarFolha(doc, numero, docMeta, aoProgredir = () => {}
   const vp = page.getViewport({ scale: 1 });
   await aoProgredir('lendo traçados', 0.1);
 
-  const formas = coletorDeFormas(isRed);
+  /* no PDF a tag é vermelha por convenção de plotagem; no DWG a cor da tag
+     é a da camada, qualquer uma — o número dentro da forma é o que decide */
+  const formas = coletorDeFormas(page.dwg ? (() => true) : isRed);
   const fios = coletorDeFios();
   const segmentos = coletorDeSegmentos();
   const mascara = criarMascara(vp.width, vp.height, 0.6);

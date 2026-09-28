@@ -3,7 +3,7 @@
    foi lida — é o que sustenta o "Ver na prancha". */
 
 import { estado } from '../app.js';
-import { openPdf, naFilaDeRender } from '../core/pdfdoc.js';
+import { abrirDocumento, naFilaDeRender } from '../core/pdfdoc.js';
 import { lerArquivo, guardarNoNavegador } from '../core/storage.js';
 
 const CORES = { circulo: '#2f6baf', triangulo: '#8c3e96', quadrado: '#2e7350', pentagono: '#b4671a' };
@@ -52,7 +52,7 @@ export async function pdfDe(documentoId) {
   const meta = e?.documentos.find(d => d.id === documentoId) || { id: documentoId };
   const blob = await blobDe(meta);
   if (!blob) return null;
-  const doc = await openPdf(new Uint8Array(await blob.arrayBuffer()));
+  const doc = await abrirDocumento(new Uint8Array(await blob.arrayBuffer()));
   estado.pdfs.set(documentoId, { doc, blob });
   return doc;
 }

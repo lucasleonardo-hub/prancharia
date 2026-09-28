@@ -258,7 +258,10 @@ const MIME_ATALHO = 'application/vnd.google-apps.shortcut';
 
 /** É PDF? Pelo MIME ou pelo nome — o Drive nem sempre reconhece o tipo de
     um arquivo enviado do Windows, e aí ele fica como octet-stream. */
-const ehPdf = (f) => /pdf/i.test(f.mimeType || '') || /\.pdf$/i.test(f.name || '');
+/* PDF ou DWG — os dois entram na leitura. DXF fica de fora: o leitor de DWG
+   do navegador não o abre. */
+const ehPdf = (f) => /pdf/i.test(f.mimeType || '') || /\.pdf$/i.test(f.name || '')
+  || /dwg|acad/i.test(f.mimeType || '') || /\.dwg$/i.test(f.name || '');
 
 /**
  * Todos os PDFs de uma pasta, descendo nas subpastas até a profundidade.
@@ -315,8 +318,9 @@ export async function listarPdfsDaPasta(pastaId, tokenAcesso, profundidade = 0, 
 async function baixarPdf(arq, tokenAcesso) {
   const r = await drive(`/files/${encodeURIComponent(arq.id)}`, tokenAcesso, { alt: 'media' });
   const blob = await r.blob();
-  const nome = /\.pdf$/i.test(arq.name) ? arq.name : arq.name + '.pdf';
-  const f = new File([blob], nome, { type: MIME_PDF, lastModified: Date.now() });
+  const dwg = /\.dwg$/i.test(arq.name) || /dwg|acad/i.test(arq.mimeType || '');
+  const nome = /\.(pdf|dwg)$/i.test(arq.name) ? arq.name : arq.name + (dwg ? '.dwg' : '.pdf');
+  const f = new File([blob], nome, { type: dwg ? 'image/vnd.dwg' : MIME_PDF, lastModified: Date.now() });
   /* as pastas de onde veio ("PARADISO/HIDRÁULICO/") viajam com o arquivo: é
      a primeira pista da disciplina do documento (js/core/disciplina.js) */
   f.caminhoDrive = arq.caminho || '';

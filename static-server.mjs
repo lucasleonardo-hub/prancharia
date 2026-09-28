@@ -17,6 +17,10 @@ const tipos = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.woff2': 'font/woff2',
+  /* o leitor de DWG é WebAssembly: com o MIME certo o navegador compila em
+     streaming; com octet-stream ele ainda funciona, só mais devagar */
+  '.wasm': 'application/wasm',
+  '.dwg': 'application/octet-stream',
 };
 
 const servidor = http.createServer((req, res) => {

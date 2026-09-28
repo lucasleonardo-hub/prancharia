@@ -31,4 +31,5 @@ Leia antes de mexer:
 - Hooks em `.claude/settings.json`: escrita em `.env*` é recusada; `node --check` roda após editar `.js`/`.mjs`.
 - MCP em `.mcp.json`: `context7` (docs de Gemini SDK, Express, libsql) e `playwright` (navegar o `local.html`).
 - Sem bundler, sem linter, sem TypeScript. ES modules puros; precisa de servidor estático (`node static-server.mjs 8000`).
+- `vendor/libredwg` é o LibreDWG em WebAssembly (GPL, 9,5 MB), carregado sob demanda por `js/core/dwg.js`; não o importe no carregamento da página. DXF não é lido.
 - Commits em português, no imperativo, uma linha dizendo o efeito para o usuário (ver `git log`).

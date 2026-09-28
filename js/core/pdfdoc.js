@@ -12,6 +12,23 @@ export async function openPdf(source) {
   return pdfjsLib.getDocument({ ...params, isEvalSupported: false }).promise;
 }
 
+const ehPdfBytes = b => b && b.length > 4 && b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46;   // %PDF
+const ehDwgBytes = b => b && b.length > 6 && b[0] === 0x41 && b[1] === 0x43 && b[2] === 0x31;                     // AC1x
+
+/**
+ * Abre um documento pelos bytes, seja PDF ou DWG. O DWG (js/core/dwg.js)
+ * devolve um documento com a mesma interface de página — o motor, o visor e
+ * os recortes para a IA não precisam saber de onde a página veio.
+ */
+export async function abrirDocumento(bytes, { aoProgredir } = {}) {
+  if (ehDwgBytes(bytes) && !ehPdfBytes(bytes)) {
+    const { abrirDwg } = await import('./dwg.js');
+    return abrirDwg(bytes, { aoProgredir });
+  }
+  return openPdf(bytes);
+}
+export const ehDwgBinario = ehDwgBytes;
+
 /** Matriz que leva do espaço de usuário do PDF para o espaço de prancha. */
 export function sheetTransform(page) {
   const vp = page.getViewport({ scale: 1 });
@@ -40,6 +57,8 @@ const P_MOVE = 0, P_LINE = 1, P_CUBIC = 2, P_QUAD = 3, P_CLOSE = 4;
  * visit({ subpaths, hasCurve, closed, stroke, fill, paintOp, lineWidth, bbox })
  */
 export async function walkPaths(page, visit) {
+  /* página de DWG: os traçados já estão em espaço de prancha */
+  if (page.dwg) { for (const p of page.tracados) visit(p); return; }
   const ol = await page.getOperatorList();
   const base = page.getViewport({ scale: 1 }).transform;
   let ctm = base.slice();
@@ -103,6 +122,7 @@ function grayHex(g) {
 
 /** Itens de texto no espaço de prancha, com caixa aproximada. */
 export async function readText(page) {
+  if (page.dwg) return page.textos.map(t => ({ ...t }));
   const tc = await page.getTextContent({ disableNormalization: false });
   const m = page.getViewport({ scale: 1 }).transform;
   const out = [];

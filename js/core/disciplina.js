@@ -131,7 +131,7 @@ export function textoDoCarimbo(textContent, viewport) {
 export function classificarPorNome({ nome = '', caminho = '', carimbo = '', tipo = '' } = {}) {
   const fontes = {
     pasta: norm(caminho),
-    arquivo: norm(nome).replace(/\.PDF$/, ''),
+    arquivo: norm(nome).replace(/\.(PDF|DWG|DXF)$/, ''),
     /* só o começo: o carimbo e os títulos vêm antes do texto miúdo, e uma
        página de memorial tem milhares de caracteres que não dizem nada */
     carimbo: norm(carimbo).slice(0, 6000),
@@ -231,7 +231,7 @@ const REGRAS_LADO = [
  * Mesma mecânica da disciplina: melhor regra por fonte, fontes somadas.
  */
 export function ladoDoDocumento({ nome = '', caminho = '', carimbo = '' } = {}) {
-  const fontes = { pasta: norm(caminho), arquivo: norm(nome).replace(/\.PDF$/, ''), carimbo: norm(carimbo).slice(0, 6000) };
+  const fontes = { pasta: norm(caminho), arquivo: norm(nome).replace(/\.(PDF|DWG|DXF)$/, ''), carimbo: norm(carimbo).slice(0, 6000) };
   const pontos = { comum: 0, privativa: 0 };
   const evidencia = [];
   for (const [fonte, texto] of Object.entries(fontes)) {

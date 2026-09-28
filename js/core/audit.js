@@ -3,7 +3,7 @@
    divergências — sem decidir por ninguém qual dos dois está certo. */
 
 import { normalizar, mesmoAmbienteFlex as mesmoAmbiente } from './model.js';
-import { openPdf } from './pdfdoc.js';
+import { abrirDocumento } from './pdfdoc.js';
 
 /* ---------- leitura de planilha ---------- */
 
@@ -99,7 +99,7 @@ export function lerCsv(texto) {
 }
 
 export async function textoDePdf(bytes) {
-  const doc = await openPdf(bytes);
+  const doc = await abrirDocumento(bytes);
   const partes = [];
   for (let i = 1; i <= doc.numPages; i++) {
     const tc = await (await doc.getPage(i)).getTextContent();
