@@ -22,6 +22,7 @@ import { IA, chamarBff, iaLigada } from './ia.js';
 import { locaisDe, especificacoesDe, pendencias } from './exporter.js';
 import { tipoDe, temAreasComuns } from './tipos.js';
 import { nomeDisciplina } from './disciplina.js';
+import { tituloLimpo } from './areas.js';
 import { criarLocal, criarEspecificacao, criarEvidencia, normalizar, novoId, registrarHistorico } from './model.js';
 import { NOMES_SISTEMAS, CATEGORIAS } from './vocab.js';
 
@@ -238,6 +239,9 @@ export function incorporarMapeamento(emp, linhas, escopo) {
   const r = { itens: 0, locaisNovos: 0, tipologiasNovas: 0, repetidas: 0 };
   const vivo = x => x && x.status !== 'excluido';
   for (const li of linhas) {
+    /* o modelo copia o título do memorial com a numeração ("2.6 – DAS
+       GARAGENS"); o nome do local é GARAGENS, como na leitura vetorial */
+    li.local = tituloLimpo(li.local);
     const tipologia = comum ? '' : (li.opcional ? nomeDoOpcional(li.opcional) : (li.tipologia || ''));
     if (tipologia) {
       let t = emp.estrutura.tipologia.find(x => normalizar(x.nome) === normalizar(tipologia));

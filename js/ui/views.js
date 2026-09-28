@@ -951,6 +951,17 @@ async function processarDocumento(meta, lote = null) {
          com o lado certo do condomínio (área comum ou unidade privativa) */
       e.locais = e.locais || [];
       for (const l of r.locaisNovos) e.locais.push(l);
+      /* "1.2 DO APTO DE COBERTURA" abriu uma tipologia própria no memorial:
+         ela entra na estrutura, para a planilha lhe dar a aba e a tela de
+         Locais o nome */
+      for (const l of r.locaisNovos) {
+        if (!l.tipologia) continue;
+        e.estrutura = e.estrutura || { grupo: [], tipologia: [], unidade: [], pavimento: [] };
+        e.estrutura.tipologia = e.estrutura.tipologia || [];
+        if (!e.estrutura.tipologia.some(t => normalizar(t.nome) === normalizar(l.tipologia))) {
+          e.estrutura.tipologia.push({ id: novoIdModelo('niv'), nome: l.tipologia, descricao: '', origem: 'memorial' });
+        }
+      }
       for (const a of r.especificacoes) incorporarEspecificacaoSolta(e, a);
       /* 2) a fusão com as pranchas: casamento semântico pela IA quando ela
             está ligada, heurística de texto quando não */
@@ -968,7 +979,8 @@ async function processarDocumento(meta, lote = null) {
       const comuns = r.locaisNovos.filter(l => l.areaComum).length;
       const dosLocais = `${r.secoes.length} seção(ões) de local: ${novos} local(is) novo(s)`
         + (temAreasComuns(e) && novos ? ` (${comuns} de área comum, ${novos - comuns} de unidade)` : '')
-        + (r.casados ? `, ${r.casados} local(is) das pranchas receberam itens` : '');
+        + (r.casados ? `, ${r.casados} local(is) das pranchas receberam itens` : '')
+        + ((r.gerais || []).length ? `; ${r.gerais.length} seção(ões) geral(is) (${r.gerais.map(g => g.titulo).join('; ')})` : '');
       registrarHistorico(e, { texto: `${meta.nome} (memorial) lido: ${r.especificacoes.length} trechos · ${dosLocais} · ${comoFoi}`, tipo: 'processamento' });
       estado.processando = null; await salvar(); render();
       if (f.motor === 'multimodal_gemini') {

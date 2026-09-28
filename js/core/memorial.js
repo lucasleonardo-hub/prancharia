@@ -11,9 +11,11 @@ import {
   novoId, normalizar, casarAmbientes,
   criarEspecificacao, criarEvidencia, criarLocal,
 } from './model.js';
-import { classificarArea, marcadorDeGrupo, partesDoNome, pavimentoNoNome, familiaDoNome, mesmoCerne } from './areas.js';
+import { classificarArea, marcadorDeGrupo, partesDoNome, pavimentoNoNome, familiaDoNome, mesmoCerne,
+  separarNumeracao, tituloLimpo, tipologiaDoMarcador, ehTituloDeCategoria, restoDoTituloDeCategoria } from './areas.js';
 import { especificacoesDe } from './exporter.js';
 import { classificar } from './glossario.js';
+import { itensEsperados } from './ambiente.js';
 
 const ROTULOS = [
   { p: /^(piso|pisos|revestimento de piso|pavimenta[çc][ãa]o)\b/i, cat: 'Piso' },
@@ -24,6 +26,7 @@ const ROTULOS = [
   { p: /^(bancadas?|tampos?)\b/i, cat: 'Bancadas' },
   { p: /^(soleiras?|peitoris?|pingadeiras?|pedras?\s+naturais?)\b/i, cat: 'Revestimentos em Pedras Naturais' },
   { p: /^(esquadrias?|portas?|janelas?|portais?|marcos?)\b/i, cat: 'Esquadrias' },
+  { p: /^(guarda[- ]?corpos?|corrim[ãa]os?|gradis?)\b/i, cat: 'Esquadrias' },
   { p: /^(lou[çc]as?|bacia|cuba|lavat[óo]rio|tanque|mict[óo]rio|chuveiro|ducha)\b/i, cat: 'Louças' },
   { p: /^(baguetes?|tentos?|baguete e tento|filetes?)\b/i, cat: 'Revestimentos em Pedras Naturais' },
   { p: /^(acess[óo]rios?|barras? de apoio)\b/i, cat: 'Acessórios' },
@@ -50,6 +53,8 @@ const PRODUTO_POR_ROTULO = {
   forro: 'Forro de gesso', forros: 'Forro de gesso',
   pintura: 'Pintura', textura: 'Textura', rejunte: 'Rejunte',
   porta: 'Porta', portas: 'Porta', janela: 'Janela', janelas: 'Janela', portais: 'Portal', marcos: 'Marco',
+  'guarda-corpo': 'Guarda-corpo', 'guarda corpo': 'Guarda-corpo', guardacorpo: 'Guarda-corpo',
+  'guarda-corpos': 'Guarda-corpo', corrimao: 'Corrimão', corrimaos: 'Corrimão', gradil: 'Gradil',
 };
 
 /** Um PDF sem desenho e com muito texto é um memorial, não uma prancha. */
@@ -151,11 +156,41 @@ export async function analisarMemorial(doc, docMeta, ambientesConhecidos, aoProg
     const corpo = corpos[Math.floor(corpos.length / 2)] || 10;
     for (const l of daPagina) if (l.texto.length >= 3 && !colunaLateral(l)) linhas.push({ ...l, pagina: p, corpo });
   }
-  classificarLinhas(linhas);
+  const uteis = semCabecalhoERodape(linhas, doc.numPages);
+  classificarLinhas(uteis);
   /* areasComuns: true, false, ou 'auto' — no automático o memorial só divide
      comum × privativa se ele mesmo tiver os marcadores de seção */
   const modo = opcoes.areasComuns === undefined ? true : opcoes.areasComuns;
-  return montarSecoes(linhas, docMeta, ambientesConhecidos || [], { areasComuns: modo });
+  return montarSecoes(uteis, docMeta, ambientesConhecidos || [], { areasComuns: modo });
+}
+
+/* Rodapé e cabeçalho da folha — endereço do escritório, telefone, a régua
+   de sublinhados — repetem-se no pé (ou no alto) de página em página. Não
+   são memorial, e no meio de uma seção separam o título dos seus itens:
+   "2.12 – BARRILETE" no fim da página 8 perdia o "Piso: cimentado" do começo
+   da 9. Só sai a linha de borda repetida em metade das páginas (três, no
+   mínimo); a mesma frase no meio do texto fica. */
+const REGUA = /^[\s_\-=.·•*~]{3,}$/;
+function semCabecalhoERodape(linhas, numPaginas) {
+  const porPagina = new Map();
+  for (const l of linhas) { if (!porPagina.has(l.pagina)) porPagina.set(l.pagina, []); porPagina.get(l.pagina).push(l); }
+  const paginasDe = new Map();
+  for (const [p, ls] of porPagina) {
+    for (const l of [...ls.slice(0, 3), ...ls.slice(-3)]) {
+      l.borda = true;
+      const k = normalizar(l.texto);
+      if (k.length < 4) continue;
+      if (!paginasDe.has(k)) paginasDe.set(k, new Set());
+      paginasDe.get(k).add(p);
+    }
+  }
+  const minimo = Math.max(3, Math.ceil(numPaginas / 2));
+  return linhas.filter(l => {
+    if (REGUA.test(l.texto)) return false;
+    if (!l.borda) return true;
+    const s = paginasDe.get(normalizar(l.texto));
+    return !(s && s.size >= minimo);
+  });
 }
 
 /* Código de norma ou de produto em caixa alta ("NBR 9050", "RVI30790") não é
@@ -196,37 +231,101 @@ function classificarLinhas(linhas) {
        ALUMÍNIO: Serão executadas…" tem a mesma forma e não é local. */
     if (l.tipo === 'rotulado') {
       const m = /^([^:]{2,48}):\s*(.+)$/.exec(l.texto);
-      const item = m && classificarArea(m[1]) ? lerItem(m[2]) : null;
-      if (item) { l.tipo = 'local'; l.tituloLocal = m[1].trim(); l.item = item; }
+      const rotulo = m ? tituloLimpo(m[1]) : '';
+      const item = m && classificarArea(rotulo) ? lerItem(m[2]) : null;
+      if (item) { l.tipo = 'local'; l.tituloLocal = rotulo; l.item = item; }
     }
   }
   for (let i = 1; i < linhas.length; i++) {
     const l = linhas[i];
-    if (l.tipo !== 'texto') continue;
+    if (l.tipo === 'absorvida' || l.tipo === 'marcador' || l.tipo === 'local') continue;
     const ant = linhas[i - 1].dono || linhas[i - 1];
-    if (!ant.item || ant.tipo !== 'item' || ant.pagina !== l.pagina || ant.item.descricao.length > 600) continue;
+    if (!ant.item || ant.tipo !== 'item' || ant.pagina !== l.pagina) continue;
+    if (Math.abs(l.altura - ant.altura) > 1.5) continue;
+    /* a margem da lista é a do primeiro item rotulado; os irmãos recuados
+       herdam-na, para o terceiro produto ser medido contra "Louça:" e não
+       contra o segundo */
+    const margem = ant.item.margem ?? ant.caixa[0];
+    const recuo = l.caixa[0] - margem;
+    if (recuo > 30) {
+      /* linha recuada sob um item rotulado — "Louça: Cuba de semiencaixe…"
+         e, abaixo, alinhados com a descrição, "Cuba de apoio…" e "CJ BC+CX…
+         ROCA" — é outro produto da mesma lista: não é a continuação da
+         frase nem um título, mesmo em caixa alta. Vira item irmão, com o
+         rótulo e a categoria do primeiro. */
+      if (recuo > 90 || l.texto.length > 160 || /^[-•–●]/.test(l.texto)) continue;
+      if (l.tipo === 'item') { l.item.margem = margem; continue; }
+      if ((l.tipo === 'texto' || l.tipo === 'titulo') && ant.item.rotulo) {
+        l.item = { categoria: ant.item.categoria, rotulo: ant.item.rotulo, descricao: l.texto.trim(), margem };
+        l.tipo = 'item';
+      }
+      continue;
+    }
+    if (l.tipo !== 'texto' || ant.item.descricao.length > 600) continue;
     /* mesmo corpo de letra e mesma margem: é a frase que continuou. Texto
-       miúdo à direita é o cabeçalho da folha; texto recuado é outra coisa. */
-    if (Math.abs(l.altura - ant.altura) > 1.5 || l.caixa[0] > ant.caixa[0] + 30) continue;
+       miúdo à direita é o cabeçalho da folha. */
     ant.item.descricao = (ant.item.descricao + ' ' + l.texto).replace(/\s+/g, ' ').trim();
     ant.caixa = [Math.min(ant.caixa[0], l.caixa[0]), ant.caixa[1], Math.max(ant.caixa[2], l.caixa[2]), l.caixa[3]];
     l.tipo = 'absorvida'; l.dono = ant;
   }
+  let dentroDeGrupo = false;
   for (let i = 0; i < linhas.length; i++) {
     const l = linhas[i];
     if (l.tipo !== 'titulo') continue;
-    const marcador = marcadorDeGrupo(l.texto);
-    if (marcador) { l.tipo = 'marcador'; l.grupo = marcador; continue; }
+    /* "2.6 – DAS GARAGENS": a numeração e a preposição são do documento; o
+       nome é GARAGENS. O número fica guardado para a evidência. */
+    const { numero, nome } = separarNumeracao(l.texto);
+    l.numero = numero; l.titulo = nome;
+    const marcador = marcadorDeGrupo(nome);
+    if (marcador) {
+      l.tipo = 'marcador'; l.grupo = marcador; dentroDeGrupo = true;
+      /* "APTO DE COBERTURA" abre a parte de uma tipologia só; "APARTAMENTO
+         TIPO" e "UNIDADES AUTÔNOMAS" valem para todas */
+      l.tipologia = marcador === 'privativa' ? tipologiaDoMarcador(nome) : '';
+      continue;
+    }
+    /* "ESQUADRIAS DAS UNIDADES", "PISOS DAS ÁREAS COMUNS": seção sobre um
+       produto para um lado inteiro do condomínio, não sobre um lugar. Os
+       itens dela são gerais — valem para todos os locais daquele lado. */
+    const geral = secaoGeral(nome);
+    if (geral) { l.tipo = 'geral'; l.geral = geral; continue; }
     /* "PORCELANATO PORTOBELLO 60X60" em caixa alta, seguido de linhas de
        especificação, tem a forma de um título de local — e é o nome de um
        produto. Produto, material ou código de catálogo nunca vira local:
        a seção só reinicia o contexto. */
-    if (ehProduto(l.texto)) { l.tipo = 'secao'; continue; }
+    if (ehProduto(nome)) { l.tipo = 'secao'; continue; }
     const seguintes = linhas.slice(i + 1, i + 6).filter(x => x.tipo !== 'absorvida');
     const iItem = seguintes.findIndex(x => x.tipo === 'item');
-    const iTitulo = seguintes.findIndex(x => x.tipo === 'titulo' || x.tipo === 'marcador');
-    l.tipo = iItem >= 0 && iItem <= 1 && (iTitulo < 0 || iItem < iTitulo) ? 'local' : 'secao';
+    const iTitulo = seguintes.findIndex(x => x.tipo === 'titulo' || x.tipo === 'marcador' || x.tipo === 'geral');
+    if (iItem >= 0 && iItem <= 1 && (iTitulo < 0 || iItem < iTitulo)) { l.tipo = 'local'; continue; }
+    /* "PISCINA" seguido de "Conforme projeto de decoração específico…": é
+       um local cujos acabamentos o memorial deixou para outro projeto. O
+       local existe; as linhas dele saem vazias, com esse motivo à vista. Só
+       dentro da parte de acabamentos (depois de um marcador de grupo): no
+       capítulo de sistemas, "GARAGENS — vagas conforme projeto" não é local. */
+    const prox = seguintes[0];
+    if (dentroDeGrupo && prox && prox.tipo === 'texto' && A_DEFINIR.test(prox.texto)) { l.tipo = 'local'; l.aDefinir = prox.texto.trim(); continue; }
+    l.tipo = 'secao';
   }
+}
+
+const A_DEFINIR = /conforme (?:o )?projeto (?:de |da |do )?(?:decora|interiores|arquitet|paisagism|espec[ií]fico de)|acabamentos? (?:conforme|a definir)|\ba definir\b|a ser(?:em)? (?:definid|desenvolvid|detalhad|especificad)/i;
+
+/* Grupo de locais que a seção geral nomeia: "DAS UNIDADES" → privativa,
+   "DAS ÁREAS COMUNS" → comum. Sem nome de grupo, a seção vale para o
+   empreendimento inteiro e os itens ficam sem local, à espera da triagem. */
+const ESCOPO_COMUM = /\b(?:areas? comuns?|condominio|uso comum|areas? condominia\w*|areas? de lazer|areas? sociais|areas? coletivas)\b/;
+const ESCOPO_PRIVATIVA = /\b(?:unidades?|apartamentos?|aptos?|areas? privativas?|casas?)\b/;
+function secaoGeral(titulo) {
+  if (!ehTituloDeCategoria(titulo)) return null;
+  const resto = restoDoTituloDeCategoria(titulo);
+  const escopo = ESCOPO_COMUM.test(resto) ? 'comum' : ESCOPO_PRIVATIVA.test(resto) ? 'privativa' : '';
+  /* "PISO DA GARAGEM" é categoria + lugar, e "FORRO DE GESSO ACARTONADO" é
+     nome de produto: nenhum dos dois é seção geral */
+  if (!escopo && resto && (classificarArea(resto) || ehProduto(resto))) return null;
+  let categoria = '';
+  for (const r of ROTULOS) if (r.p.test(titulo)) { categoria = r.cat; break; }
+  return { categoria, escopo, titulo };
 }
 
 /* Material, produto ou código de catálogo — o que um título de memorial
@@ -237,7 +336,7 @@ const MATERIAL = /\b(porcelanato|cer[âa]mic|azulejo|pastilha|ladrilho|granito|m
 const CODIGO_CATALOGO = /\b[A-Z]{1,4}[-\s]?\d{2,}[A-Z0-9-]*\b/;
 const MEDIDA_NO_NOME = /\d+\s?[xX×]\s?\d+/;
 export function ehProduto(titulo) {
-  const t = String(titulo || '').replace(/[:–—-]\s*$/, '').trim();
+  const t = tituloLimpo(String(titulo || ''));
   if (!t || classificarArea(t)) return false;
   if (MEDIDA_NO_NOME.test(t) || CODIGO_CATALOGO.test(t)) return true;
   if (MATERIAL.test(t)) return true;
@@ -253,7 +352,7 @@ export function ehProduto(titulo) {
  * seção privativa nunca cai numa área comum — a palavra "SALA" está nos dois
  * mundos, e é o grupo que separa.
  */
-function casarTitulo(nome, pavimento, grupo, arvore) {
+function casarTitulo(nome, pavimento, grupo, arvore, tipologia = '') {
   const vivos = arvore.filter(a => a && a.status !== 'excluido');
   const vocab = a => classificarArea(a.nome);
   const deUnidade = a => !!(a.tipologiaId || a.tipologia);
@@ -263,6 +362,11 @@ function casarTitulo(nome, pavimento, grupo, arvore) {
   const temTipologias = vivos.some(deUnidade);
   const compativel = a => {
     if (pavimento && a.pavimento && normalizar(a.pavimento) !== normalizar(pavimento)) return false;
+    /* seção de uma tipologia só ("APTO DE COBERTURA"): só os cômodos dela */
+    if (tipologia && normalizar(a.tipologia || '') !== normalizar(tipologia)) return false;
+    /* dois títulos diferentes do memorial são dois locais: "HALL ELEVADORES
+       (GARAGENS)" não recebe os itens de "HALL ELEVADORES (PAVTO. TIPO)" */
+    if (a.origem === 'memorial' && normalizar(a.nome) !== normalizar(nome)) return false;
     if (grupo === 'comum') return !deUnidade(a) && vocab(a) !== 'privativa'
       && (a.areaComum || a.origem !== 'memorial');
     if (grupo === 'privativa') return !a.areaComum && vocab(a) !== 'comum'
@@ -285,8 +389,30 @@ function casarTitulo(nome, pavimento, grupo, arvore) {
   return [...achados.values()];
 }
 
+const rotuloDoEscopo = escopo => escopo === 'comum' ? 'todas as áreas comuns'
+  : escopo === 'privativa' ? 'todos os cômodos das unidades' : 'todo o empreendimento';
+
+/* O rótulo de seção geral que a regra de ambiente (ambiente.js) sabe
+   distribuir: porta em todo cômodo fechado que tem porta, rodapé em todo
+   cômodo seco. "Portas: porta pronta branca" em "ESQUADRIAS DAS UNIDADES"
+   vira a linha de porta de cada cômodo das unidades — a revisar, com a
+   seção geral como fonte. Janelas, portões e vidros não têm regra que diga
+   em que cômodo estão: ficam sem local, para a triagem. */
+const ESPERADO_POR_ROTULO = { porta: 'Porta', portas: 'Porta', rodape: 'Rodapé', rodapes: 'Rodapé' };
+function destinosGerais(geral, item, arvore, jaLidas) {
+  const produto = ESPERADO_POR_ROTULO[normalizar(item.rotulo).replace(/[^a-z]/g, '')];
+  if (!produto || !geral.escopo) return [];
+  /* a seção do próprio local vence a geral: "ESCADAS — Porta: corta-fogo"
+     não recebe a porta pronta branca das unidades */
+  const temDoLocal = a => jaLidas.some(e => e.localId === a.id && e.produto === produto);
+  return arvore.filter(a => a && a.status !== 'excluido'
+    && (a.areaComum ? 'comum' : 'privativa') === geral.escopo
+    && itensEsperados(a.nome).some(x => x.produto === produto)
+    && !temDoLocal(a));
+}
+
 function montarSecoes(linhas, docMeta, conhecidos, { areasComuns }) {
-  const especificacoes = [], secoes = [], locaisNovos = [];
+  const especificacoes = [], secoes = [], locaisNovos = [], gerais = [];
   const arvore = [...conhecidos];                   // cresce com o que é criado aqui
   const marcadores = linhas.filter(l => l.tipo === 'marcador').map(l => l.grupo);
   const temC = marcadores.includes('comum'), temP = marcadores.includes('privativa');
@@ -300,30 +426,49 @@ function montarSecoes(linhas, docMeta, conhecidos, { areasComuns }) {
      privativas está dizendo que tudo antes é comum — e vice-versa */
   let grupo = !areasComuns ? 'privativa' : (temP && !temC) ? 'comum' : (temC && !temP) ? 'privativa' : ladoDoc;
   let alvos = [];
+  let tipologia = '';       // a tipologia que o marcador privativo abriu ("COBERTURA"); '' = todas
+  let geral = null;         // a seção geral de categoria em curso ("ESQUADRIAS DAS UNIDADES")
   let casados = 0;
 
   for (const l of linhas) {
-    if (l.tipo === 'marcador') { grupo = areasComuns ? l.grupo : 'privativa'; alvos = []; continue; }
-    if (l.tipo === 'secao') { alvos = []; continue; }
+    if (l.tipo === 'marcador') {
+      grupo = areasComuns ? l.grupo : 'privativa';
+      tipologia = grupo === 'privativa' ? (l.tipologia || '') : '';
+      alvos = []; geral = null;
+      continue;
+    }
+    if (l.tipo === 'secao') { alvos = []; geral = null; continue; }
+    if (l.tipo === 'geral') {
+      /* só conta como seção geral quando traz itens: "5.3 – VIDRO" seguido
+         de texto corrido é só um título que reinicia o contexto */
+      alvos = []; geral = { ...l.geral, pagina: l.pagina, registrada: false };
+      continue;
+    }
     if (l.tipo === 'local') {
-      const titulo = (l.tituloLocal || l.texto).replace(/[:–—-]\s*$/, '').trim();
+      geral = null;
+      const titulo = l.tituloLocal || l.titulo || tituloLimpo(l.texto);
       const { nome, pavimento } = pavimentoNoNome(titulo);
       const g = areasComuns ? (grupo || classificarArea(nome)) : '';
-      alvos = casarTitulo(nome, pavimento, g, arvore);
+      const tip = g === 'privativa' ? tipologia : '';
+      alvos = casarTitulo(nome, pavimento, g, arvore, tip);
       if (alvos.length) casados += alvos.length;
       else {
         const novo = criarLocal(nome, '', pavimento);
         novo.origem = 'memorial'; novo.confianca = 'alta'; novo.status = 'identificado';
         novo.areaComum = g === 'comum';
+        if (tip) novo.tipologia = tip;
+        const lado = g === 'comum' ? 'área comum' : g === 'privativa' ? 'unidade privativa' : 'grupo não informado';
         novo.evidencias.push(criarEvidencia({
           documentoOrigem: { docId: docMeta.id, pagina: l.pagina, nomeDoc: docMeta.nome },
           tipo: 'rotulo',
           coordenadas: l.caixa,
           regiao: [l.caixa[0] - 8, l.caixa[1] - 26, l.caixa[2] + 8, l.caixa[3] + 60],
           tituloLegenda: 'Memorial descritivo',
-          texto: titulo,
-          cadeia: [nome, 'Memorial descritivo — página ' + l.pagina, 'título de seção',
-            g === 'comum' ? 'área comum' : g === 'privativa' ? 'unidade privativa' : 'grupo não informado'],
+          texto: l.texto.trim(),
+          cadeia: [nome, 'Memorial descritivo — página ' + l.pagina,
+            l.numero ? `título da seção ${l.numero}: “${l.texto.trim()}”` : 'título de seção',
+            lado + (tip ? ' · ' + tip : ''),
+            ...(l.aDefinir ? [`acabamentos não especificados no memorial: “${l.aDefinir}”`] : [])],
           proveniencia: { motor_ia: 'fallback_vetorial', metodo: 'titulo_memorial', confianca: 'alta' },
         }));
         locaisNovos.push(novo); arvore.push(novo); alvos = [novo];
@@ -331,7 +476,7 @@ function montarSecoes(linhas, docMeta, conhecidos, { areasComuns }) {
       /* o memorial disse de que manual o local é: quem veio da prancha sem
          tipologia (e sem a palavra decidir) herda a resposta */
       if (g) for (const a of alvos) if (!a.tipologiaId && !a.tipologia && !classificarArea(a.nome)) a.areaComum = g === 'comum';
-      secoes.push({ pagina: l.pagina, ambiente: nome, pavimento, grupo: g, y: l.y, alvos: alvos.map(a => a.nome) });
+      secoes.push({ pagina: l.pagina, ambiente: nome, pavimento, grupo: g, tipologia: tip, y: l.y, alvos: alvos.map(a => a.nome), aDefinir: l.aDefinir || '' });
       if (!l.item) continue;
     } else if (l.tipo !== 'item') continue;
 
@@ -344,8 +489,18 @@ function montarSecoes(linhas, docMeta, conhecidos, { areasComuns }) {
       .replace(/[;,\s.]+$/, '').trim();
     const classe = classificar(descricaoLimpa, item.categoria);
     const trecho = `${item.rotulo}: ${descricaoLimpa || item.descricao}`.slice(0, 400);
-    const destinos = alvos.length ? alvos : [acharAmbienteNaFrase(t, arvore)].filter(Boolean);
-    const confianca = destinos.length ? (campos.marca ? 'alta' : 'media') : 'baixa';
+    /* item de seção geral: vai para cada local do lado que a regra de
+       ambiente diz ter aquele produto (porta, rodapé), sempre a revisar; o
+       que a regra não sabe distribuir fica sem local, com o motivo escrito */
+    const emGeral = !!geral && !alvos.length;
+    if (emGeral && !geral.registrada) {
+      geral.registrada = true;
+      gerais.push({ pagina: geral.pagina, titulo: geral.titulo, categoria: geral.categoria, escopo: geral.escopo });
+    }
+    const destinos = alvos.length ? alvos
+      : emGeral ? destinosGerais(geral, item, arvore, especificacoes)
+      : [acharAmbienteNaFrase(t, arvore)].filter(Boolean);
+    const confianca = emGeral ? 'media' : destinos.length ? (campos.marca ? 'alta' : 'media') : 'baixa';
 
     const montar = (alvo) => {
       const esp = criarEspecificacao({
@@ -358,8 +513,8 @@ function montarSecoes(linhas, docMeta, conhecidos, { areasComuns }) {
         fornecedor: campos.fornecedor || '',
         origemLeitura: 'memorial',
         confianca,
-        status: alvo ? 'identificado' : 'revisar',
-        motivos: alvo ? [] : ['incompleto'],
+        status: alvo && !emGeral ? 'identificado' : 'revisar',
+        motivos: emGeral ? ['secao_geral'] : alvo ? [] : ['incompleto'],
         localId: alvo ? alvo.id : null,
         localNome: alvo ? alvo.nome : '',
         pavimento: alvo ? (alvo.pavimento || '') : '',
@@ -373,9 +528,9 @@ function montarSecoes(linhas, docMeta, conhecidos, { areasComuns }) {
         tituloLegenda: 'Memorial descritivo',
         texto: trecho,
         cadeia: [
-          alvo ? alvo.nome : 'local não identificado',
+          alvo ? alvo.nome : emGeral ? rotuloDoEscopo(geral.escopo) : 'local não identificado',
           'Memorial descritivo — página ' + l.pagina,
-          item.rotulo || 'trecho descritivo',
+          emGeral ? `seção geral “${geral.titulo}” · ${item.rotulo || 'trecho descritivo'}` : (item.rotulo || 'trecho descritivo'),
           descricaoLimpa || item.descricao,
           classe?.categoria || item.categoria || 'categoria não mapeada',
         ],
@@ -386,7 +541,7 @@ function montarSecoes(linhas, docMeta, conhecidos, { areasComuns }) {
     if (!destinos.length) especificacoes.push(montar(null));
     else for (const alvo of destinos) especificacoes.push(montar(alvo));
   }
-  return { especificacoes, secoes, locaisNovos, casados, marcadores, areasComunsAtivadas: automatico && areasComuns };
+  return { especificacoes, secoes, gerais, locaisNovos, casados, marcadores, areasComunsAtivadas: automatico && areasComuns };
 }
 
 function limpar(s) {
@@ -406,15 +561,23 @@ function acharAmbienteNaFrase(texto, ambientes) {
   return melhor;
 }
 
+/* "Cuba de Apoio T3 CÓD: A32722N000 – ROCA": o dois-pontos é do código, não
+   de um rótulo. A linha inteira é a descrição. */
+const PSEUDO_ROTULO = /\b(?:c[óo]d(?:igo)?|ref(?:er[êe]ncia)?|modelo|cor|tam(?:anho)?|dim(?:ens[ãa]o)?|medidas?)\.?$/i;
+
 function lerItem(texto) {
   const limpo = texto.replace(/^[-•–●\s]+/, '').trim();
   if (limpo.length < 8) return null;
   const sep = limpo.match(/^([^:]{3,42}):\s*(.+)$/);
-  if (sep) {
+  if (sep && !PSEUDO_ROTULO.test(sep[1].trim())) {
     const rotulo = sep[1].trim();
     for (const r of ROTULOS) if (r.p.test(rotulo)) return { categoria: r.cat, rotulo, descricao: sep[2].trim() };
     return null;
   }
+  /* sem rótulo, a linha inteira só é item quando começa como frase de
+     especificação ("Bancada em granito…"); "parede são previsíveis…", em
+     minúscula, é o meio de um parágrafo */
+  if (!/^[A-ZÀ-Ý]/.test(limpo)) return null;
   for (const r of ROTULOS) {
     if (!r.p.test(limpo)) continue;
     if (limpo.length < 18 || limpo.length > 320) return null;

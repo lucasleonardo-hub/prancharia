@@ -844,8 +844,11 @@ const mesmaEvidencia = (a, b) =>
 export function incorporarEspecificacao(emp, indice, nova) {
   const chave = chaveDaEspec(nova);
   let atual = indice.get(chave);
-  // um trecho de memorial sem código encontra o item que a prancha já criou
-  if (!atual && !nova.codigoOrigem && nova.produto) {
+  /* um trecho de memorial sem código encontra o item que a prancha já criou.
+     O item de seção geral ("ESQUADRIAS DAS UNIDADES — Portas: porta pronta
+     branca") não: ele complementa a porta PM1 da prancha em vez de conflitar
+     com ela, e entra como linha própria, a revisar */
+  if (!atual && !nova.codigoOrigem && nova.produto && !(nova.motivos || []).includes('secao_geral')) {
     atual = todasEspecificacoes(emp).find(x => x.status !== 'excluido'
       && x.localId === nova.localId && x.categoria === nova.categoria && x.produto === nova.produto);
   }

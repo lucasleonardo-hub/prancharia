@@ -281,7 +281,14 @@ trata o título como o nome do local:
 |---|---|
 | já existe na árvore (lido das pranchas) | os itens da seção entram nele. O casamento é por nome, por parte de título composto (`SALA ESTAR / JANTAR` alcança `SALA`) e por família (`DORMITÓRIOS` alcança `DORM.01` e `DORM.02` de **todas** as tipologias; `BANHEIRO` alcança `BANHO`) |
 | não existe | um local novo, `origem: 'memorial'`, com a evidência apontando o título na página |
-| `ÁREAS COMUNS` / `ÁREAS PRIVATIVAS` / `UNIDADES AUTÔNOMAS` | um marcador: tudo o que vem depois é daquele lado do condomínio (`areaComum`). Sem marcador, o vocabulário de `areas.js` decide (portaria, salão, casa de máquinas são comuns; dormitório, suíte, área de serviço são privativos) |
+| `ÁREAS COMUNS` / `ÁREAS PRIVATIVAS` / `UNIDADES AUTÔNOMAS` | um marcador: tudo o que vem depois é daquele lado do condomínio (`areaComum`). Sem marcador, o vocabulário de `areas.js` decide (portaria, salão, casa de máquinas são comuns; dormitório, suíte, área de serviço são privativos). O título tem de **ser** o marcador (com uma palavra de abertura, no máximo: "ACABAMENTOS DAS ÁREAS COMUNS"); "I.S. FEM/MASC. ÁREA DE LAZER" é um sanitário |
+| `1.2 DO APTO DE COBERTURA`, `APARTAMENTOS TIPO 2` | um marcador privativo que abre **uma tipologia só** (`tipologiaDoMarcador`): os locais criados até o próximo marcador nascem com `tipologia: 'COBERTURA'`, a tipologia entra na estrutura e ganha a sua aba MP. "APARTAMENTO TIPO" e "UNIDADES AUTÔNOMAS" valem para todas |
+| `2.6 – DAS GARAGENS`, `1.1.4. QUARTOS`, `VII – ACABAMENTOS` | a numeração de seção e a preposição que sobra não são parte do nome (`separarNumeracao` / `tituloLimpo` em `areas.js`): o local é `GARAGENS`, e a evidência guarda "título da seção 2.6". Um número solto sem separador ("2 DORMITÓRIOS") fica — pode ser contagem |
+| `HALL ELEVADORES (GARAGENS)` e `HALL ELEVADORES (PAVTO. TIPO)` | dois locais: o parêntese curto que distingue fica no nome (`pavimentoNoNome`); "(TÉRREO)" vira o pavimento; o explicativo ("(TÉRREO NO PROJETO LEGAL)") sai. Dois títulos diferentes do memorial nunca caem no mesmo local |
+| `ESQUADRIAS DAS UNIDADES`, `PISOS DAS ÁREAS COMUNS`, `LOUÇAS E METAIS` | uma **seção geral** de categoria, não um local. O item que a regra de ambiente sabe distribuir ("Portas: …" → todo cômodo daquele lado que tem porta; "Rodapé: …" → todo cômodo seco) entra em cada um deles **a revisar**, com o motivo `secao_geral` e a seção como fonte; a seção do próprio local vence a geral, e o item geral nunca funde com a porta lida da prancha (é linha própria). O resto (janelas, portões) fica sem local, para a triagem |
+| `PISCINA` seguido de "Conforme projeto de decoração específico…" | um local sem acabamentos no memorial (só depois de um marcador de grupo): existe na árvore, com a frase na evidência, e a planilha lhe dá as linhas obrigatórias vazias |
+| `Louça: Cuba de semiencaixe…` e, recuadas abaixo, `Cuba de apoio…`, `CJ BC+CX… ROCA` | uma lista: cada linha recuada sob um item rotulado é outro item da mesma categoria (mesmo em caixa alta — não é título). "CÓD:" no meio da linha não é rótulo |
+| rodapé da folha (endereço, telefone, régua de sublinhados) | sai antes da leitura quando se repete na borda de metade das páginas: era o que separava "2.12 – BARRILETE" (fim da página 8) dos seus itens (começo da 9) |
 
 Quando a prancha chega **depois** do memorial, o caminho inverso vale
 (`obterOuCriarLocal` no engine): um rótulo de área comum adota o local que o
@@ -653,7 +660,9 @@ No memorial, um título em caixa alta que é **nome de produto** ("PORCELANATO
 PORTOBELLO 60X60", "FORRO DE GESSO ACARTONADO"), material, medida ou código
 de catálogo não vira local, mesmo seguido de linhas de especificação
 (`ehProduto` em `js/core/memorial.js`); o vocabulário de local tem a última
-palavra.
+palavra. O nome de local que o mapeamento devolve passa pela mesma limpeza
+de numeração do memorial (`tituloLimpo`): "2.6 – DAS GARAGENS" entra como
+`GARAGENS`, igual à leitura vetorial.
 
 ## Ler DWG
 

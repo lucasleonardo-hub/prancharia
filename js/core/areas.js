@@ -70,19 +70,94 @@ export function classificarArea(nome) {
   return '';
 }
 
+/* A numeração de seção do memorial — "1.1.4.", "2.1 –", "2-", "VII –",
+   "a)" — organiza o documento; não é parte do nome do local. Um número
+   solto sem separador ("2 DORMITÓRIOS") fica: pode ser contagem. O
+   algarismo romano só sai quando é seguido de separador e espaço, para
+   "I.S. GUARITA" não perder o I. */
+const NUMERACAO = /^\s*(?:\d{1,3}(?:\.\d{1,3})+\.?|\d{1,3}\.(?=\s)|\d{1,3}(?=\s*[-–—:)])|[IVXLC]{1,6}(?=\s*[-–—:)]\s|\.\s)|[a-zA-Z](?=[.)]\s+[A-Za-zÀ-ÿ]{2}))\s*[-–—:.)]*\s*/;
+const PREPOSICAO_INICIAL = /^(?:d[aoe]s?|d')\s+(?=\S)/i;
+
+/**
+ * Separa a numeração do título: "2.6 – DAS GARAGENS" → { numero: '2.6',
+ * nome: 'GARAGENS' }. A preposição que sobra depois do número ("DAS
+ * GARAGENS", "DO APARTAMENTO TIPO") também sai — o memorial escreve o
+ * título como frase, a árvore guarda o nome.
+ */
+export function separarNumeracao(titulo) {
+  const t = String(titulo || '').replace(/\s+/g, ' ').trim();
+  const m = NUMERACAO.exec(t);
+  let nome = m ? t.slice(m[0].length) : t;
+  const numero = m ? m[0].replace(/[\s\-–—:.)]+$/, '').trim() : '';
+  nome = nome.replace(/[\s:;–—-]+$/, '').trim();
+  const semPreposicao = nome.replace(PREPOSICAO_INICIAL, '');
+  if (semPreposicao.replace(/[^A-Za-zÀ-ÿ]/g, '').length >= 3) nome = semPreposicao;
+  return { numero, nome: nome || t };
+}
+
+/** O nome que o título carrega, sem numeração nem preposição inicial. */
+export function tituloLimpo(titulo) {
+  return separarNumeracao(titulo).nome;
+}
+
+/* Título que começa pelo nome de uma categoria da planilha: "ESQUADRIAS DAS
+   UNIDADES", "PISOS E RODAPÉS", "LOUÇAS E METAIS", "PINTURA". É uma seção
+   sobre o produto, não sobre um lugar. PORTÃO fica de fora de propósito:
+   "PORTÃO DE ENTRADA" é lugar no vocabulário de área comum. */
+const CATEGORIA_LIDER = /^(?:esquadrias?|portas?|janelas?|caixilhos?|pisos?|paredes?|tetos?|forros?|pinturas?|loucas?|metais|bancadas?|tampos?|revestimentos?|luminarias?|iluminacao|mobiliario|marcenaria|vidros?|ferragens?|soleiras?|peitoris|rodapes?|guarda.?corpos?|corrimaos?|impermeabilizac\w*|rejuntes?|acessorios|louca e metais|loucas e metais)\b/;
+
+/** O título é de categoria de produto (e não de local)? */
+export function ehTituloDeCategoria(titulo) {
+  const n = normalizar(tituloLimpo(titulo)).replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  return !!n && CATEGORIA_LIDER.test(n);
+}
+
+/** O que sobra do título de categoria depois do nome da categoria e da
+    preposição: "ESQUADRIAS DAS UNIDADES" → "unidades". */
+export function restoDoTituloDeCategoria(titulo) {
+  const n = normalizar(tituloLimpo(titulo)).replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  return n.replace(CATEGORIA_LIDER, '').replace(/^\s*(?:e|d[aoe]s?|n[ao]s?|em|para|gerais|geral|internas?|externas?)\s+/, '').trim();
+}
+
 /**
  * Título de seção do memorial que muda o grupo de tudo o que vem depois:
- * "ÁREAS COMUNS", "ÁREAS PRIVATIVAS", "UNIDADES AUTÔNOMAS", "APARTAMENTOS".
+ * "ÁREAS COMUNS", "ÁREAS PRIVATIVAS", "UNIDADES AUTÔNOMAS", "APARTAMENTOS",
+ * "1 – DAS UNIDADES AUTÔNOMAS", "1.2 DO APTO DE COBERTURA". O título tem de
+ * SER o marcador: "ESQUADRIAS DAS ÁREAS COMUNS" fala de esquadrias, e é
+ * seção de categoria, não marcador.
  */
 export function marcadorDeGrupo(titulo) {
-  const n = normalizar(titulo).replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
-  if (!n) return null;
-  if (/\b(?:areas?|ambientes?|dependencias?|espacos?)\s+(?:comuns?|condominiais?|coletiv[oa]s?|de uso comum|de lazer)\b/.test(n)
-    || /\buso comum\b/.test(n) || /^(?:condominio|areas? sociais?|lazer)$/.test(n)) return 'comum';
-  if (/\b(?:areas?|unidades?|dependencias?)\s+(?:privativas?|autonomas?|habitacionais?|residenciais?)\b/.test(n)
+  let n = normalizar(tituloLimpo(titulo)).replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!n || CATEGORIA_LIDER.test(n)) return null;
+  /* "ACABAMENTOS DAS ÁREAS COMUNS", "ESPECIFICAÇÃO DE ACABAMENTOS – ÁREAS
+     PRIVATIVAS": a palavra de abertura sai, o marcador tem de vir logo em
+     seguida. "I.S. FEM/MASC. ÁREA DE LAZER" fala de um sanitário, e o
+     marcador no fim do título não o torna marcador. */
+  for (let i = 0; i < 2; i++) n = n.replace(/^(?:acabamentos?|especificac(?:ao|oes)|revestimentos?|memorial(?: descritivo)?|descricao|descritivo|caracteristicas|relacao|quadro|lista)\s+(?:d[aoe]s?\s+)?/, '');
+  const cauda = '(?:\\s+(?:d[aoe]s?\\s+)?\\w+){0,3}$';
+  if (new RegExp('^(?:areas?|ambientes?|dependencias?|espacos?)\\s+(?:comuns?|condominiais?|coletiv[oa]s?|de uso comum|de lazer)' + cauda).test(n)
+    || /^(?:condominio|areas? sociais?|lazer|uso comum)$/.test(n)) return 'comum';
+  if (new RegExp('^(?:areas?|unidades?|dependencias?)\\s+(?:privativas?|autonomas?|habitacionais?|residenciais?)' + cauda).test(n)
     || /^(?:apartamentos?|unidades?|casas?|aptos?|tipologias?)(?:\s+tipo.*)?$/.test(n)
-    || /^(?:apartamentos?|unidades?)\s+(?:tipo|padrao|de \d)/.test(n)) return 'privativa';
+    || /^(?:apartamentos?|unidades?|aptos?)\s+(?:tipo|padrao|de \d)/.test(n)
+    || /^(?:apartamentos?|aptos?|unidades?|casas?)\s+(?:de\s+)?(?:coberturas?|garden|duplex|triplex|studios?|lofts?)\b/.test(n)) return 'privativa';
   return null;
+}
+
+/**
+ * A tipologia que um marcador privativo nomeia, quando nomeia uma: "APTO DE
+ * COBERTURA" → "COBERTURA", "APARTAMENTOS TIPO 2" → "TIPO 2". O marcador
+ * genérico ("APARTAMENTO TIPO", "UNIDADES AUTÔNOMAS") devolve '' — vale
+ * para todas.
+ */
+export function tipologiaDoMarcador(titulo) {
+  const limpo = tituloLimpo(titulo);
+  const n = normalizar(limpo).replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  const m = /^(?:apartamentos?|aptos?|unidades?|casas?)\s+(?:de\s+)?(cobertura|garden|duplex|triplex|studio|loft)s?$/.exec(n);
+  if (m) return m[1].toUpperCase();
+  /* "APARTAMENTOS TIPO 2": o plural do marcador é singular para a regra da
+     prancha, que lê "APTO TIPO 2" */
+  return lerTipologia(limpo.replace(/^(apartamento|apto|unidade|casa)s\b/i, '$1')) || '';
 }
 
 /**
@@ -144,17 +219,35 @@ export function ladoDaFolha(nomes) {
 
 const PAV = /\b(?:do|da|no|na|dos|das|de)\s+((?:\d{1,2}\s*[ºo°]?\s*)?(?:pavimento|pav\.?|andar|subsolo|terreo|atico|cobertura|mezanino|sobreloja)(?:\s+(?:tipo|superior|inferior|\d{1,2}))?)\b/i;
 
+/* Parêntese que explica em vez de distinguir: sai do nome. */
+const EXPLICATIVO = /projeto|conforme|\bver\b|vide|idem|similar|opcional|legal|aprovad|\bou\b|\bex\.?\b|exceto|antig|n[ºo°]\s*\d/i;
+/* Parêntese que é só o pavimento: "(TÉRREO)", "(2º PAVIMENTO)". "(PAVTO.
+   TIPO)" não entra: é o andar-tipo, que são muitos — fica no nome. */
+const PAV_ENTRE_PARENTESES = /^(?:\d{1,2}\s*[ºo°]?\s*)?(?:pavimento|pav\.?|andar|subsolo|terreo|atico|mezanino|sobreloja|cobertura)(?:\s+(?:superior|inferior|\d{1,2}))?$/;
+
 /**
  * O pavimento que o próprio título do memorial nomeia: "TERRAÇO UNIDADES DO
  * 1º PAVIMENTO" → "1º PAVIMENTO"; "WCs PNE DA ÁREA COMUM DO TÉRREO" →
- * "TÉRREO". O parêntese explicativo ("(TÉRREO NO PROJETO LEGAL)") sai do
- * nome e não entra no pavimento — é outra numeração, a do projeto legal.
+ * "TÉRREO"; "HALL (TÉRREO)" → "TÉRREO". O parêntese explicativo ("(TÉRREO
+ * NO PROJETO LEGAL)") sai do nome e não entra no pavimento — é outra
+ * numeração, a do projeto legal. O parêntese curto que distingue dois
+ * lugares — "HALL ELEVADORES (GARAGENS)" e "HALL ELEVADORES (PAVTO. TIPO)"
+ * — fica no nome: são dois locais do memorial, com acabamentos próprios.
  */
 export function pavimentoNoNome(nome) {
-  const semParentese = String(nome || '').replace(/\s*\([^)]*\)\s*/g, ' ').replace(/\s+/g, ' ').trim();
+  const qualificadores = [];
+  let pavDoParentese = '';
+  const semParentese = String(nome || '').replace(/\s*\(([^)]*)\)\s*/g, (_, dentro) => {
+    const d = dentro.replace(/\s+/g, ' ').trim();
+    if (!d || EXPLICATIVO.test(d)) return ' ';
+    if (PAV_ENTRE_PARENTESES.test(normalizar(d))) { if (!pavDoParentese) pavDoParentese = d.toUpperCase(); return ' '; }
+    if (d.split(' ').length <= 3) qualificadores.push(d);
+    return ' ';
+  }).replace(/\s+/g, ' ').trim();
+  const sufixo = qualificadores.length ? ' (' + qualificadores.join(', ') + ')' : '';
   const n = normalizar(semParentese);
   const m = PAV.exec(n);
-  if (!m) return { nome: semParentese, pavimento: '' };
+  if (!m) return { nome: (semParentese + sufixo).trim(), pavimento: pavDoParentese };
   /* devolve o trecho como está escrito no título (acentos e maiúsculas):
      normalizar() preserva o comprimento, então o índice serve nos dois */
   const ini = n.indexOf(m[1]);
@@ -162,7 +255,7 @@ export function pavimentoNoNome(nome) {
   /* o nome fica sem a preposição e o pavimento: "WCs PNE DA ÁREA COMUM" */
   const base = (semParentese.slice(0, m.index) + ' ' + semParentese.slice(m.index + m[0].length))
     .replace(/\s+/g, ' ').replace(/[\s,;:–-]+$/, '').trim();
-  return { nome: base || semParentese, pavimento: original.toUpperCase() };
+  return { nome: (base || semParentese) + sufixo, pavimento: original.toUpperCase() };
 }
 
 const VAZIAS = new Set(['de', 'do', 'da', 'dos', 'das', 'e', 'no', 'na', 'nos', 'nas', 'em', 'a', 'o', 'as', 'os']);
