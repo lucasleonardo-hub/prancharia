@@ -59,7 +59,7 @@ const REGRAS = [
   ['memorial',     /MEMORIAL DESCRITIVO|MEMORIAL DE (ESPECIFICACOES|VENDAS?|INCORPORACAO)|CADERNO DE ESPECIFICACOES|ESPECIFICACOES TECNICAS/, 3],
   ['memorial',     /\bMEMORIAL\b(?! DE (CALCULO|ACABAMENTO))/, 2],
   ['arquitetura',  /PROJETO ARQUITETONICO|ARQUITETURA|ARQUITETONIC|PLANTA BAIXA|PLANTA DE (LAYOUT|COBERTURA)/, 3],
-  ['arquitetura',  /ARQUITET|\bARQ\b|ESQUADRIA|FACHADA|LAYOUT|\bFORRO\b/, 2],
+  ['arquitetura',  /ARQUITET|\bARQ\b|ESQUADRIA|FACHADA|LAYOUT|\bFORRO\b|PLANTA (?:D[OE] )?\d{1,2} ?[ºO°]? ?(?:PAVIMENTO|PAV\b|SUBSOLO|ANDAR)|PAVIMENTO TIPO|PLANTA (?:DO )?T[ÉE]RREO|PLANTA (?:DE )?COBERTURA/, 2],
   ['arquitetura',  /\bCORTES?\b|\bDETALHAMENTO\b|\bPISOS?\b/, 1],
   /* o PDF "de acabamento": caderno, tabela, quadro, paginação, planta de piso
      e forro. É arquitetura no sentido largo, mas é o documento que o

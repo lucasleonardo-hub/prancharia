@@ -78,6 +78,9 @@ export const VOCAB_ELEMENTOS = [
   'p[ée] direito', 'p[ée][\\s-]direito',
   // instalações
   'shaft', 'prumada', 'tubula', 'esgoto', '[áa]gua pluvial', 'ralo', 'grelha', 'caixa d',
+  'duto', 'pressuriz', 'sali[êe]ncia', 'laje t[ée]cnica', 'ventila[çc][ãa]o mec', 'vent\\.? ?mec',
+  'vagas? \\d', 'vaga presa', 'vagas? (?:pne|pcd|idoso|visitante)',   // a vaga numerada não é local; a garagem é
+  'hidrante', 'filtro', 'g[áa]s\\b', 'tel\\.?$', 'elet\\.?$', 'hid\\.?$', 'tub\\.',
   'reservat[óo]rio', 'cisterna', 'medidor', 'padr[ãa]o (?:de )?entrada', 'abrigo',
   // mobiliário e equipamento
   'bancada', 'cuba', 'tanque(?! de lavar)', 'coifa', 'forno', 'cooktop', 'geladeira',
@@ -458,6 +461,39 @@ const GRUPO_NOME = /^(?:TORRE|BLOCO|EDIF[ÍI]CIO|ED\.?|QUADRA|M[ÓO]DULO|SETOR)\
  * nomeia, o grupo (torre, bloco). Sem traço também vale: o carimbo escreve
  * "PLANTA 1º SUBSOLO" e isso é o pavimento.
  */
+/**
+ * Código de esquadria escrito na planta, ao lado da abertura: "EA01 -
+ * 80x80/154" (código, largura x altura, peitoril), "J03 120x120/110",
+ * "PM1", "P401", "PCF". É como o projeto executivo em DWG marca portas e
+ * janelas quando não há quadro de esquadrias na folha — e o quadro, quando
+ * existe, ganha destas linhas a posição de cada código.
+ *
+ * Só prefixos de esquadria entram (P, PM, PA, PE, PJ, PCF, J, JA, JM, E, EA,
+ * EM, EV, V, B, BA, PV): "M1" é viga, "-14/55-" é viga, "1" é eixo.
+ */
+const CODIGO_ESQ = /^((?:PCF|PM|PA|PE|PJ|PV|JA|JM|EA|EM|EV|BA|P|J|E|V|B)\s?-?\s?\d{1,3}[A-Z]?)(?:\s*[-–]?\s*(\d{2,3})\s*[xX×]\s*(\d{2,3})(?:\s*\/\s*(\d{1,3}))?)?$/;
+const SO_PCF = /^PCF$/;
+export function lerCodigosDeEsquadria(textos) {
+  const out = [];
+  for (const t of textos || []) {
+    if (!t || t.cota) continue;
+    const s = limpo(t).toUpperCase().replace(/\s+/g, ' ');
+    let m = CODIGO_ESQ.exec(s);
+    if (!m && SO_PCF.test(s)) m = [s, 'PCF'];
+    if (!m) continue;
+    /* "80x80/154" sozinho, sem código, é medida — não entra */
+    out.push({
+      codigo: m[1].replace(/\s+/g, '').replace(/-/g, ''),
+      dimensao: m[2] && m[3] ? `${m[2]}x${m[3]}` : '',
+      peitoril: m[4] || '',
+      texto: limpo(t),
+      x: centro(t), y: t.y, w: t.w, h: t.h,
+      bbox: [t.x, t.y - t.h, t.x + t.w, t.y + 2],
+    });
+  }
+  return out;
+}
+
 export function lerPavimentos(textos) {
   const out = [];
   for (const t of textos) {
@@ -514,10 +550,24 @@ export function atribuirTipologias(mask, ambientes, tipologias, janela) {
   vinculos.forEach((v, i) => {
     const a = ambientes[i];
     const vocab = classificarArea(a.nome);
-    if (!v.ambiente || v.distancia === null || v.distancia > limite || vocab === 'comum') return;
-    if (v.segundo && v.folga < 1.3 && vocab !== 'privativa') return;
-    a.tipologia = v.ambiente.nome;
-    a.tipologiaFolga = v.folga;
+    if (vocab === 'comum') return;
+    if (v.ambiente && v.distancia !== null && v.distancia <= limite && !(v.segundo && v.folga < 1.3 && vocab !== 'privativa')) {
+      a.tipologia = v.ambiente.nome;
+      a.tipologiaFolga = v.folga;
+      return;
+    }
+    /* o espaço livre não alcançou (porta fechada no desenho, parede sem
+       vão): para um cômodo que só existe dentro de unidade — suíte, banho,
+       closet, cozinha — vale o rótulo de unidade mais próximo em linha reta,
+       desde que o segundo esteja bem mais longe. Fica marcado como proposta. */
+    if (vocab !== 'privativa') return;
+    const raio = (janela[2] - janela[0]) * 0.12;
+    const perto = tipologias.map(t => ({ t, d: Math.hypot(t.x - a.x, t.y - a.y) })).sort((p, q) => p.d - q.d);
+    if (!perto.length || perto[0].d > raio) return;
+    if (perto[1] && perto[1].d / Math.max(1, perto[0].d) < 1.25) return;
+    a.tipologia = perto[0].t.nome;
+    a.tipologiaFolga = perto[1] ? perto[1].d / Math.max(1, perto[0].d) : Infinity;
+    a.tipologiaProposta = true;
   });
 }
 
@@ -539,6 +589,10 @@ export function criarMascara(largura, altura, escala) {
     visit(path) {
       const escuro = isDark(path.stroke) || isDark(path.fill);
       if (!escuro) return;
+      /* o arco de giro da porta vai de batente a batente: desenhado na
+         máscara, ele fecha a passagem e o rótulo do apartamento não alcança
+         os quartos. Curva aberta não é parede — fica de fora. */
+      if (path.hasCurve && !path.closed) return;
       ctx.lineWidth = Math.max(1, (path.lineWidth || 0.5) * escala);
       ctx.beginPath();
       for (const sp of path.subpaths) {

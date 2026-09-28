@@ -108,6 +108,14 @@ export function lerTipologia(texto) {
   const s = String(texto || '').replace(/\s+/g, ' ').trim().toUpperCase()
     .normalize('NFD').replace(/[̀-ͯ]/g, '');
   if (s.length < 5 || s.length > 26) return null;
+  /* "APTO 201", "APARTAMENTO 1203", "UNIDADE 304": numa torre, a unidade
+     leva o número do andar na frente e o FINAL atrás — e o final é a
+     tipologia (todos os "x04" têm a mesma planta). "FINAL 4" e "FINAL 04"
+     são o mesmo. */
+  const un = /^(?:APTO|APTO\.|APARTAMENTO|AP|AP\.|UNIDADE|UNID|UNID\.)\s*(\d{3,4})$/.exec(s);
+  if (un) return `FINAL ${Number(un[1].slice(-2))}`;
+  const fin = /^FINAL\s*[-–:]?\s*(\d{1,2})$/.exec(s);
+  if (fin) return `FINAL ${Number(fin[1])}`;
   const m = /^(?:(?:APTO|APARTAMENTO|AP|UNIDADE|UNID|CASA|LOJA|SALA|QUARTO)\.?\s+)?(?:TIPO|TIPOLOGIA|TP)\.?\s*[-–:]?\s*(?:(PNE|PCD|PCR|PMR|ACESSIVEL)\s*)?[-–]?\s*(\d{1,3}|[A-Z]{1,2}\d?)(?:\s*[-–]?\s*(PNE|PCD|PCR|PMR|ACESSIVEL))?$/.exec(s);
   if (!m) return null;
   const marca = m[1] || m[3] || '';

@@ -588,15 +588,45 @@ mesma interface de página do pdf.js (`getViewport`, `getTextContent`,
 único é `abrirDocumento` em `js/core/pdfdoc.js`, que olha os primeiros
 bytes (`%PDF` ou `AC10xx`).
 
-O que vira página: cada **layout** de paper space com carimbo e moldura
-desenhados — o conteúdo do layout mais, por viewport, o pedaço do model
-space que ela mostra, na escala da viewport, em milímetros de papel
-convertidos para pontos. Sem layouts úteis, o **model space** inteiro numa
-página só, e a escala vem do próprio desenho: a altura mediana dos rótulos
-(sem contar o texto das cotas) é levada a ~7 pt, o tamanho de um texto
-plotado, para os limiares do motor valerem como no PDF. Um traço ou bloco
-perdido longe do desenho é descartado pelo miolo dos textos (percentis
-10–90), senão a folha teria metros de vazio.
+O que vira página, nesta ordem: (1) cada **layout** de paper space com
+carimbo e moldura desenhados — o conteúdo do layout mais, por viewport, o
+pedaço do model space que ela mostra, na escala da viewport; um layout cujo
+texto ficaria com menos de 1 mm no papel é folha-resumo (miniaturas em
+1:500) e é ignorado; (2) as **janelas de plotagem** do model space — o
+projetista que desenha as pranchas lado a lado marca cada uma com um
+retângulo numa camada que não plota (Defpoints), e cada retângulo vira uma
+página, nomeada pelo maior texto dentro dela ("Planta 2º pavimento"); (3)
+sem janelas, as **ilhas de texto** separadas por vazio; (4) o model space
+inteiro. Nos casos 2 a 4 a escala vem do próprio desenho: a altura mediana
+dos rótulos (sem contar o texto das cotas) é levada a ~7 pt, o tamanho de
+um texto plotado, para os limiares do motor valerem como no PDF. Um traço
+ou bloco perdido longe do desenho é descartado (mediana e desvio absoluto
+mediano das posições de texto); blocos miúdos (cabide, tomada: menos de 3
+pt) não são expandidos, e traços invisíveis (menos de 0,6 pt) saem.
+
+A leitura pesada — o WebAssembly e a conversão de centenas de milhares de
+entidades — roda num **Web Worker** (`js/core/dwg.worker.js`); as páginas
+voltam em arrays tipados transferidos. O executivo do projeto de referência
+(32 MB, 203 mil entidades, 16 pranchas no model space) leva cerca de um
+minuto para abrir.
+
+O que o motor aprendeu com o DWG (vale para PDF também): **código de
+esquadria escrito na planta** ao lado da abertura — "EA01 - 80x80/154"
+(código, largura x altura, peitoril), "P401", "PCF" — vira linha de
+Esquadrias do cômodo em que está desenhado, pelo mesmo vínculo espacial das
+tags (`lerCodigosDeEsquadria` em `js/core/rooms.js`, `deCodigosDaPlanta`
+em `js/core/engine.js`; só prefixos de esquadria entram, "M1" é viga);
+**"APTO 201"** e "UNIDADE 1203" viram a tipologia "FINAL 1" / "FINAL 3" —
+numa torre, o final é a planta (`lerTipologia` em `js/core/areas.js`);
+shaft, duto, saliência, laje técnica, vaga numerada e as siglas de
+instalação (HID, ELET, TEL, GÁS) nunca são locais; o **arco de giro da
+porta** fica fora da máscara de paredes (`criarMascara`), senão ele fecha a
+passagem e o rótulo da unidade não alcança os quartos; e quando mesmo
+assim o espaço livre não alcança, um cômodo que só existe dentro de unidade
+(suíte, banho, closet, cozinha) recebe o rótulo de unidade mais próximo em
+linha reta, marcado como proposta (`atribuirTipologias`); uma folha com um
+título de planta só ("Planta 2º pavimento") dá esse pavimento a todos os
+seus ambientes.
 
 Cores: toda cor que não é vermelha vira preto, como numa plotagem
 monocromática; no DWG a tag pode estar em qualquer cor, então na página de

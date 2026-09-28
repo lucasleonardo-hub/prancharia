@@ -5,7 +5,7 @@
 import { abrirDocumento, walkPaths, readText, isRed, naFilaDeRender } from './pdfdoc.js';
 import { coletorDeFormas, montarTags, FORMAS } from './shapes.js';
 import { coletorDeSegmentos, filtrarSimbolosDeDesenho, seguirChamada } from './simbolos.js';
-import { lerAmbientes, lerPavimentos, lerTipologias, atribuirTipologias, criarMascara, vincularTags, janelasDePlanta } from './rooms.js';
+import { lerAmbientes, lerPavimentos, lerTipologias, atribuirTipologias, criarMascara, vincularTags, janelasDePlanta, lerCodigosDeEsquadria } from './rooms.js';
 import { ladoDaFolha } from './areas.js';
 import { classificarArea, lerTipologia, partesDoNome, familiaDoNome, mesmoCerne } from './areas.js';
 import { temAreasComuns, temNivel } from './tipos.js';
@@ -150,12 +150,30 @@ export async function analisarFolha(doc, numero, docMeta, aoProgredir = () => {}
     v.porProximidade = true;
   }
 
-  // pavimento (e torre) de cada ambiente: a legenda de planta mais próxima em x
+  /* Código de esquadria escrito na planta ("EA01 - 80x80/154", "P401",
+     "PCF"): pertence ao cômodo em que está desenhado, pelo mesmo caminho
+     das tags — por dentro das paredes, e por proximidade quando a abertura
+     fica na parede externa e o código cai fora do contorno. */
+  const codigosPlanta = lerCodigosDeEsquadria(textos);
+  if (codigosPlanta.length && ambientes.length) {
+    const vc = vincularTags(mask, ambientes, codigosPlanta.map(c => ({ x: c.x, y: c.y })), [0, 0, vp.width, vp.height]);
+    vc.forEach((r, i) => {
+      const c = codigosPlanta[i];
+      if (r.ambiente) { c.ambiente = r.ambiente; c.folga = r.folga; c.segundo = r.segundo; return; }
+      const perto = ambientes.map(a => ({ a, d: Math.hypot(a.x - c.x, a.y - c.y) })).sort((p, q) => p.d - q.d);
+      if (perto.length && perto[0].d <= 220) { c.ambiente = perto[0].a; c.porProximidade = true; c.segundo = perto[1] ? perto[1].a : null; }
+    });
+  }
+
+  // pavimento (e torre) de cada ambiente: a legenda de planta mais próxima em x —
+  // e, quando a folha tem UM título de planta só, ele vale para a folha inteira
+  // (uma prancha por pavimento, como no DWG partido por janela de plotagem)
   for (const a of ambientes) {
     let melhor = null, d = Infinity;
     for (const p of pavimentos) { const dd = Math.abs(p.x - a.x); if (dd < d) { d = dd; melhor = p; } }
-    a.pavimento = melhor && d < 500 ? melhor.nome : '';
-    a.grupo = melhor && d < 500 ? (melhor.grupo || '') : '';
+    const vale = melhor && (d < 500 || pavimentos.length === 1);
+    a.pavimento = vale ? melhor.nome : '';
+    a.grupo = vale ? (melhor.grupo || '') : '';
   }
   /* tipologia de cada ambiente: o rótulo "TIPO 1" da unidade em que ele está,
      medido pelo espaço livre — a parede entre dois apartamentos separa os dois */
@@ -189,6 +207,7 @@ export async function analisarFolha(doc, numero, docMeta, aoProgredir = () => {}
     largura: vp.width, altura: vp.height,
     page,                       // usada pelo motor de recortes; não é persistida
     ambientes, pavimentos, tipologias, janelas, tags, vinculos, legendas, tabelas, quadros: quadrosNovos,
+    codigosPlanta,
     contagem: { tracos: 0, tags: tags.length, ambientes: ambientes.length },
   };
 }
@@ -1184,6 +1203,12 @@ export async function consolidar(emp, folha, docMeta, aoProgredir = () => {}) {
     }
   }
 
+  // 1b) códigos de esquadria escritos na planta, ao lado das aberturas
+  for (const esp of deCodigosDaPlanta(emp, folha, docMeta)) {
+    const r = incorporarEspecificacao(emp, indice, esp);
+    if (!registrados.includes(r)) registrados.push(r);
+  }
+
   // 2) tabelas desenhadas na prancha
   await aoProgredir('incorporando tabelas e quadros', fimLocais + 0.03);
   for (const tb of folha.tabelas) {
@@ -1814,6 +1839,51 @@ function deEsquadrias(emp, tb, folha, docMeta) {
         cadeia: [a.nome, tb.titulo, cod, desc, 'Esquadrias'],
       }));
     }
+  }
+  return out;
+}
+
+/* O que o prefixo do código diz sobre a esquadria. É o que a planilha usa
+   em "Nome do produto" (R13: tipo + código). */
+const TIPO_POR_PREFIXO = [
+  [/^PCF/, 'Porta corta-fogo', 'porta corta-fogo'], [/^PM/, 'Porta de madeira', 'porta de madeira'],
+  [/^PA/, 'Porta de alumínio', 'porta de alumínio'], [/^PV/, 'Porta de vidro', 'porta de vidro'],
+  [/^PE/, 'Porta', 'porta'], [/^PJ/, 'Porta-janela', 'porta janela'], [/^P/, 'Porta', 'porta'],
+  [/^JA/, 'Janela de alumínio', 'janela de alumínio'], [/^JM/, 'Janela de madeira', 'janela de madeira'], [/^J/, 'Janela', 'janela'],
+  [/^EA/, 'Esquadria de alumínio', 'esquadria de alumínio'], [/^EM/, 'Esquadria de madeira', 'esquadria de madeira'],
+  [/^EV/, 'Esquadria de vidro', 'esquadria de vidro'], [/^E/, 'Esquadria', 'esquadria'],
+  [/^BA/, 'Basculante', 'basculante'], [/^B/, 'Basculante', 'basculante'], [/^V/, 'Vitrô', 'vitrô'],
+];
+
+/** Os códigos de esquadria lidos na planta viram especificações do cômodo. */
+function deCodigosDaPlanta(emp, folha, docMeta) {
+  const out = [];
+  for (const c of (folha.codigosPlanta || [])) {
+    const local = c.ambiente ? c.ambiente.__local : null;
+    const [, tipo, termo] = TIPO_POR_PREFIXO.find(([re]) => re.test(c.codigo)) || [null, 'Esquadria', 'esquadria'];
+    const classe = classificar(termo, 'Esquadrias');
+    const base = {
+      origemLeitura: 'texto_prancha', categoria: 'Esquadrias',
+      produto: `${tipo} ${c.codigo}`, sistema: classe?.sistema || '',
+      descricao: c.texto, codigoOrigem: c.codigo, dimensao: c.dimensao, peitoril: c.peitoril,
+      quantidade: '', marca: '', fornecedor: '',
+      ev: {
+        documentoOrigem: { docId: docMeta.id, nomeDoc: docMeta.nome, pagina: folha.pagina },
+        tipo: 'tag',
+        coordenadas: c.bbox, regiao: [c.bbox[0] - 90, c.bbox[1] - 70, c.bbox[2] + 90, c.bbox[3] + 70],
+        localCoordenadas: local ? (local.poligonoOriginal || null) : null,
+        texto: c.texto, tituloLegenda: 'código escrito na planta',
+        segundoLocal: c.segundo ? c.segundo.nome : '',
+      },
+    };
+    const motivos = c.porProximidade ? ['vinculo_por_proximidade'] : (c.folga !== undefined && c.folga !== Infinity && c.folga < 1.35 ? ['baixa_confianca'] : []);
+    out.push(espDeLinha(base, local, {
+      localNome: local ? local.nome : '',
+      confianca: !local ? 'baixa' : motivos.length ? 'baixa' : 'alta',
+      status: !local || motivos.length ? 'revisar' : 'identificado',
+      motivos: local ? motivos : ['tag_sem_ambiente'],
+      cadeia: [local ? local.nome : 'ambiente não identificado', `código ${c.codigo} escrito na planta`, c.texto, `${tipo}${c.dimensao ? ' ' + c.dimensao : ''}${c.peitoril ? ' / peitoril ' + c.peitoril : ''}`, 'Esquadrias'],
+    }));
   }
   return out;
 }

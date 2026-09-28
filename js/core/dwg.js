@@ -9,15 +9,25 @@
    leitura de tags, legendas, tabelas, ambientes e paredes roda em cima do
    DWG, e a IA recebe os recortes desenhados a partir dele.
 
-   O que vira página:
-     - cada LAYOUT (folha de paper space) com conteúdo próprio: o carimbo e
-       os textos do layout mais, por VIEWPORT, o pedaço do model space que
-       ela mostra, na escala da viewport — é a prancha como seria plotada,
-       em milímetros de papel convertidos para pontos;
-     - sem layouts úteis, o model space inteiro numa página só. A escala vem
-       do próprio desenho: a altura mediana dos textos é levada a ~7 pt, o
-       tamanho de um texto de prancha plotada, para os limiares do motor
-       (tag de 5 a 40 pt, texto, distâncias) valerem como no PDF.
+   O que vira página, nesta ordem de preferência:
+     1. cada LAYOUT (folha de paper space) com carimbo e moldura próprios: o
+        conteúdo do layout mais, por VIEWPORT, o pedaço do model space que ela
+        mostra, na escala da viewport — a prancha como seria plotada;
+     2. sem layouts úteis, as JANELAS DE PLOTAGEM do model space: o
+        projetista que desenha as pranchas lado a lado no model space marca
+        cada uma com um retângulo numa camada que não plota (Defpoints) —
+        cada retângulo grande dessas camadas vira uma página;
+     3. sem janelas, o model space partido pelos VAZIOS: os textos do desenho
+        formam ilhas separadas por espaço em branco, e cada ilha é uma página;
+     4. um desenho só, sem vazios, vira uma página.
+   Nos casos 2 a 4 a escala vem do próprio desenho: a altura mediana dos
+   rótulos (sem contar o texto das cotas) é levada a ~7 pt, o tamanho de um
+   texto plotado, para os limiares do motor (tag de 5 a 40 pt, texto,
+   distâncias) valerem como no PDF.
+
+   A leitura pesada (o WebAssembly e a conversão de 200 mil entidades) roda
+   num Web Worker, para a tela não travar; as páginas voltam empacotadas em
+   arrays tipados. Em Node (testes) tudo roda em linha.
 
    Cores: a prancha impressa é preta com as tags em vermelho; no DWG cada
    camada tem sua cor de tela (amarelo, ciano, branco). Para o motor, toda
@@ -27,20 +37,23 @@
    O que fica de fora: DXF (o build padrão do libredwg-web não o lê),
    imagens raster embutidas, tabelas ACAD_TABLE e multileaders (só a
    geometria simples). Texto em MTEXT tem os códigos de formatação
-   removidos. */
+   removidos; atributos de bloco entram como texto; cotas entram desenhadas
+   e marcadas (`cota: true`) para o motor poder ignorá-las como rótulo. */
 
 const MARGEM = 40;                 // pt em volta do desenho
 const ALTURA_TEXTO_ALVO = 7;       // pt: altura típica de texto numa prancha plotada
 const PT_POR_MM = 72 / 25.4;
 const MAIOR_LADO_MAX = 24000, MAIOR_LADO_MIN = 400;
 const PROFUNDIDADE_MAX = 8;
+const MENOR_TRACO_PT = 0.6;        // abaixo disso não se vê nem se lê: fora
+const MENOR_BLOCO_PT = 3;          // bloco de mobiliário miúdo (cabide, tomada): fora
 
 /* ------------------------------------------------------------------ */
 /* a biblioteca, carregada sob demanda                                  */
 /* ------------------------------------------------------------------ */
 
 let libPromessa = null;
-function biblioteca() {
+export function biblioteca() {
   if (!libPromessa) {
     libPromessa = import('../../vendor/libredwg/dist/libredwg-web.js')
       .then(async m => ({ m, lib: await m.LibreDwg.create() }))
@@ -52,22 +65,51 @@ function biblioteca() {
 /** "AC10xx" nos seis primeiros bytes: é DWG. */
 export const ehDwg = (bytes) => !!bytes && bytes.length > 6 && bytes[0] === 0x41 && bytes[1] === 0x43 && bytes[2] === 0x31;
 
-/**
- * Abre um DWG e devolve o documento no formato de página do pdf.js.
- * `aoProgredir(texto)` recebe as etapas (baixar a biblioteca, ler, montar).
- */
-export async function abrirDwg(bytes, { aoProgredir = () => {} } = {}) {
+/** Lê os bytes com o libredwg e devolve o banco (objetos JS). */
+export async function lerBanco(bytes, aoProgredir = () => {}) {
   aoProgredir('carregando o leitor de DWG');
   const { m, lib } = await biblioteca();
-  aoProgredir('lendo o DWG');
+  aoProgredir('lendo o DWG (pode levar um minuto num arquivo grande)');
   const dados = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   const dwg = lib.dwg_read_data(dados, m.Dwg_File_Type.DWG);
   if (!dwg) throw new Error('o DWG não pôde ser lido (versão não suportada ou arquivo corrompido)');
-  let db;
-  try { db = lib.convert(dwg); }
+  try { return lib.convert(dwg); }
   finally { try { lib.dwg_free(dwg); } catch { /* já liberado */ } }
+}
+
+/**
+ * Abre um DWG e devolve o documento no formato de página do pdf.js.
+ * No navegador a leitura roda num Worker; `aoProgredir(texto)` recebe as
+ * etapas.
+ */
+export async function abrirDwg(bytes, { aoProgredir = () => {} } = {}) {
+  if (typeof Worker !== 'undefined' && typeof window !== 'undefined') {
+    try { return await abrirNoWorker(bytes, aoProgredir); }
+    catch (err) {
+      /* o worker pode não subir (sandbox, CSP): a leitura em linha é o mesmo
+         código, só trava a tela enquanto lê */
+      console.warn('[dwg] worker falhou, lendo em linha:', err.message);
+    }
+  }
+  const db = await lerBanco(bytes, aoProgredir);
   aoProgredir('montando as folhas');
   return montarDocumento(db);
+}
+
+function abrirNoWorker(bytes, aoProgredir) {
+  return new Promise((ok, erro) => {
+    const w = new Worker(new URL('./dwg.worker.js', import.meta.url), { type: 'module' });
+    const fim = () => { try { w.terminate(); } catch { /* ok */ } };
+    w.onmessage = (ev) => {
+      const d = ev.data || {};
+      if (d.progresso) { aoProgredir(d.progresso); return; }
+      if (d.erro) { fim(); erro(new Error(d.erro)); return; }
+      if (d.pacote) { fim(); ok(desempacotar(d.pacote)); }
+    };
+    w.onerror = (e) => { fim(); erro(new Error(e.message || 'falha no worker de DWG')); };
+    const copia = new Uint8Array(bytes);   // o buffer é transferido: o chamador fica com o dele
+    w.postMessage({ bytes: copia.buffer }, [copia.buffer]);
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -91,8 +133,8 @@ export function corAci(i) {
   }
   return [0, 0, 0];
 }
-/** A cor "impressa": vermelho fica vermelho, o resto é preto. */
-const corImpressa = ([r, g, b]) => (r > 140 && g < 110 && b < 110) ? '#e00000' : '#000000';
+/** Vermelho de verdade? (a cor da tag na plotagem) */
+const ehVermelho = ([r, g, b]) => r > 140 && g < 110 && b < 110;
 
 /* ------------------------------------------------------------------ */
 /* geometria                                                           */
@@ -115,7 +157,7 @@ function arco(cx, cy, r, a0, a1, fechado = false) {
   let varre = a1 - a0;
   if (fechado) varre = Math.PI * 2;
   else { while (varre <= 1e-9) varre += Math.PI * 2; while (varre > Math.PI * 2 + 1e-9) varre -= Math.PI * 2; }
-  const n = Math.max(4, Math.min(64, Math.ceil(varre / (Math.PI / 12))));
+  const n = Math.max(4, Math.min(32, Math.ceil(varre / (Math.PI / 8))));
   const pts = [];
   for (let i = 0; i <= n; i++) { const a = a0 + varre * i / n; pts.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]); }
   return pts;
@@ -131,7 +173,7 @@ function bulge(p, q, b) {
   const h = Math.sqrt(Math.max(0, r * r - d * d / 4)) * Math.sign(b);
   const cx = mx - h * dy / d, cy = my + h * dx / d;
   const a0 = Math.atan2(p[1] - cy, p[0] - cx);
-  const n = Math.max(2, Math.min(24, Math.ceil(Math.abs(th) / (Math.PI / 12))));
+  const n = Math.max(2, Math.min(16, Math.ceil(Math.abs(th) / (Math.PI / 8))));
   const out = [];
   for (let i = 1; i <= n; i++) { const a = a0 + th * i / n; out.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]); }
   return out;
@@ -146,7 +188,8 @@ export function linhasDeMtext(s) {
   let t = String(s || '');
   t = t.replace(/\\S([^;^]*)\^([^;]*);/g, '$1/$2');            // fração empilhada
   t = t.replace(/\\U\+([0-9A-Fa-f]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
-  t = t.replace(/\\[fFHWQTACcLlOoKkpX][^;]*;/g, '');            // fonte, altura, largura, cor, alinhamento…
+  t = t.replace(/\\[fFHWQTACcpX][^;]*;/g, '');                 // fonte, altura, largura, cor, alinhamento, parágrafo…
+  t = t.replace(/\\[LlOoKk]/g, '');                            // sublinhado, tachado (sem ponto e vírgula)
   t = t.replace(/\\~/g, ' ').replace(/[{}]/g, '');
   t = t.replace(/%%[cC]/g, 'Ø').replace(/%%[dD]/g, '°').replace(/%%[pP]/g, '±').replace(/%%[uUoO]/g, '');
   return t.split(/\\P|\\n|\r?\n/).map(l => l.trim()).filter(Boolean);
@@ -164,12 +207,16 @@ function contexto(db) {
   for (const l of ((db.tables || {}).LAYER || {}).entries || []) camadas.set(l.name, l);
   const estilos = new Map();
   for (const s of ((db.tables || {}).STYLE || {}).entries || []) estilos.set(s.name, s);
-  return { blocos, blocosPorHandle, camadas, estilos };
+  return { blocos, blocosPorHandle, camadas, estilos, extensao: new Map(), limiteBloco: 0 };
 }
 
+const naoPlota = (ctx, nome) => {
+  const l = ctx.camadas.get(nome);
+  return !!(l && l.plotFlag === 0) || /^defpoints$/i.test(nome || '');
+};
 const ocultaCamada = (ctx, nome) => {
   const l = ctx.camadas.get(nome);
-  return !!(l && (l.off || l.frozen || l.plotFlag === 0)) || /^defpoints$/i.test(nome || '');
+  return !!(l && (l.off || l.frozen)) || naoPlota(ctx, nome);
 };
 
 function corDe(ctx, e, corPai) {
@@ -179,10 +226,45 @@ function corDe(ctx, e, corPai) {
   return corAci(ci);
 }
 
+/** Maior lado da geometria de um bloco (unidades do bloco), com cache. */
+function extensaoDoBloco(ctx, nome, prof = 0) {
+  if (ctx.extensao.has(nome)) return ctx.extensao.get(nome);
+  ctx.extensao.set(nome, Infinity);   // contra recursão
+  const b = ctx.blocos.get(nome);
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  const v = (x, y) => { if (Number.isFinite(x) && Number.isFinite(y)) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; } };
+  for (const e of (b && b.entities) || []) {
+    const ps = pontosDe(e);
+    for (const p of ps) v(p[0], p[1]);
+    if (e.type === 'INSERT' && prof < 4) {
+      const ext = extensaoDoBloco(ctx, e.name, prof + 1);
+      const s = Math.max(Math.abs(e.xScale || 1), Math.abs(e.yScale || 1));
+      if (Number.isFinite(ext) && e.insertionPoint) { v(e.insertionPoint.x - ext * s, e.insertionPoint.y - ext * s); v(e.insertionPoint.x + ext * s, e.insertionPoint.y + ext * s); }
+    }
+  }
+  const ext = Number.isFinite(x0) ? Math.max(x1 - x0, y1 - y0) : 0;
+  ctx.extensao.set(nome, ext);
+  return ext;
+}
+/** Alguns pontos representativos de uma entidade (para caixas). */
+function pontosDe(e) {
+  switch (e.type) {
+    case 'LINE': return [[e.startPoint.x, e.startPoint.y], [e.endPoint.x, e.endPoint.y]];
+    case 'LWPOLYLINE': case 'POLYLINE2D': case 'POLYLINE3D': case 'POLYLINE': return (e.vertices || []).map(v => [v.x, v.y]);
+    case 'CIRCLE': case 'ARC': return [[e.center.x - e.radius, e.center.y - e.radius], [e.center.x + e.radius, e.center.y + e.radius]];
+    case 'TEXT': return e.startPoint ? [[e.startPoint.x, e.startPoint.y]] : [];
+    case 'MTEXT': return e.insertionPoint ? [[e.insertionPoint.x, e.insertionPoint.y]] : [];
+    case 'SOLID': case '3DFACE': return [e.corner1, e.corner2, e.corner3, e.corner4].filter(Boolean).map(p => [p.x, p.y]);
+    case 'ELLIPSE': { const a = e.majorAxisEndPoint || { x: 0, y: 0 }; const r = Math.hypot(a.x, a.y); return [[e.center.x - r, e.center.y - r], [e.center.x + r, e.center.y + r]]; }
+    default: return [];
+  }
+}
+
 /**
  * Percorre as entidades (recursivo nos INSERTs) e empurra em `saida`:
- *   paths: { pts: [[x,y]…][], curva, fechado, cor, preenche, lw }
- *   textos: { str, x, y, h, w, ang }   (x,y = início da linha de base)
+ *   paths: { pts: [[x,y]…], curva, fechado, cor, preenche, solido, lw }
+ *   textos: { str, x, y, h, w, ang, cota }   (x,y = início da linha de base)
+ * `ctx.limiteBloco` (unidades do desenho) descarta blocos menores que isso.
  */
 function coletar(ctx, entidades, m, corPai, saida, prof = 0) {
   if (prof > PROFUNDIDADE_MAX) return;
@@ -209,10 +291,10 @@ function coletar(ctx, entidades, m, corPai, saida, prof = 0) {
       case 'ELLIPSE': {
         const a = e.majorAxisEndPoint || { x: 1, y: 0 }, r = e.axisRatio || 1;
         const bx = -a.y * r, by = a.x * r;
-        let a0 = e.startAngle || 0, a1 = e.endAngle ?? Math.PI * 2;
+        const a0 = e.startAngle || 0, a1 = e.endAngle ?? Math.PI * 2;
         const cheio = Math.abs((a1 - a0) - Math.PI * 2) < 1e-6 || a1 === a0;
         let varre = cheio ? Math.PI * 2 : a1 - a0; while (varre <= 1e-9) varre += Math.PI * 2;
-        const n = Math.max(8, Math.min(64, Math.ceil(varre / (Math.PI / 12))));
+        const n = Math.max(8, Math.min(32, Math.ceil(varre / (Math.PI / 8))));
         const pts = [];
         for (let i = 0; i <= n; i++) { const t = a0 + varre * i / n; pts.push([e.center.x + a.x * Math.cos(t) + bx * Math.sin(t), e.center.y + a.y * Math.cos(t) + by * Math.sin(t)]); }
         push(pts, { cor, curva: true, fechado: cheio });
@@ -225,17 +307,18 @@ function coletar(ctx, entidades, m, corPai, saida, prof = 0) {
       }
       case 'SOLID': case '3DFACE': case 'TRACE': {
         const c = [e.corner1, e.corner2, e.corner4 || e.corner3, e.corner3].filter(Boolean).map(p => [p.x, p.y]);
-        if (c.length >= 3) push([...c, c[0]], { cor, fechado: true, preenche: true });
+        if (c.length >= 3) push([...c, c[0]], { cor, fechado: true, preenche: true, solido: true });
         break;
       }
       case 'HATCH': {
         for (const bp of e.boundaryPaths || []) {
-          let pts = [];
+          const pts = [];
           if (bp.vertices && bp.vertices.length) {
             pts.push([bp.vertices[0].x, bp.vertices[0].y]);
             for (let i = 1; i < bp.vertices.length; i++) pts.push(...bulge(pts[pts.length - 1], [bp.vertices[i].x, bp.vertices[i].y], bp.vertices[i - 1].bulge || 0));
           } else {
             for (const ed of bp.edges || []) {
+              if (!ed) continue;
               if (ed.type === 1 && ed.start && ed.end) { if (!pts.length) pts.push([ed.start.x, ed.start.y]); pts.push([ed.end.x, ed.end.y]); }
               else if (ed.type === 2 && ed.center) { const a = arco(ed.center.x, ed.center.y, ed.radius, ed.startAngle || 0, ed.endAngle ?? Math.PI * 2, false); pts.push(...(pts.length ? a.slice(1) : a)); }
             }
@@ -250,6 +333,12 @@ function coletar(ctx, entidades, m, corPai, saida, prof = 0) {
       case 'INSERT': {
         const b = ctx.blocos.get(e.name);
         if (b && b.entities) {
+          const sEsc = Math.max(Math.abs(e.xScale || 1), Math.abs(e.yScale || 1)) * escalaDe(m);
+          /* bloco miúdo (cabide, tomada, ponto de luz): não se lê, não se vê */
+          if (ctx.limiteBloco && extensaoDoBloco(ctx, e.name) * sEsc < ctx.limiteBloco) {
+            for (const a of e.attribs || []) if (a && a.text && !saida.vistos.has(a.handle)) { saida.vistos.add(a.handle); texto(ctx, a.text, m, saida); }
+            break;
+          }
           const ins = e.insertionPoint || { x: 0, y: 0 }, base = b.basePoint || { x: 0, y: 0 };
           const cols = Math.max(1, e.columnCount || 1), rows = Math.max(1, e.rowCount || 1);
           for (let i = 0; i < cols; i++) for (let j = 0; j < rows; j++) {
@@ -262,8 +351,8 @@ function coletar(ctx, entidades, m, corPai, saida, prof = 0) {
       }
       case 'DIMENSION': {
         /* a cota entra desenhada (linhas, setas, número), mas o texto dela
-           não vale como "texto de prancha" para calibrar a escala: a altura
-           da cota segue o DIMSCALE, não o padrão dos rótulos */
+           não vale como rótulo: a altura segue o DIMSCALE, não o padrão dos
+           rótulos, e "2.50" nunca é ambiente */
         const b = e.name ? ctx.blocos.get(e.name) : null;
         if (b && b.entities) {
           const antes = saida.textos.length;
@@ -291,6 +380,7 @@ function texto(ctx, t, m, saida) {
   const ha = t.halign || 0, va = t.valign || 0;
   const usaFim = (ha === 1 || ha === 2 || ha === 4 || va !== 0) && t.endPoint && (t.endPoint.x || t.endPoint.y);
   const anc = usaFim ? t.endPoint : t.startPoint;
+  if (!anc) return;
   const dx = (ha === 1 || ha === 4) ? -w / 2 : ha === 2 ? -w : 0;
   const dy = va === 2 ? -h / 2 : va === 3 ? -h : 0;
   const ang = t.rotation || 0;
@@ -326,6 +416,7 @@ function mtext(ctx, e, m, saida) {
 /* ------------------------------------------------------------------ */
 
 const novaSaida = () => ({ paths: [], textos: [], vistos: new Set() });
+const mediana = (xs) => { if (!xs.length) return 0; const s = [...xs].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
 
 function caixaDe(saida) {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -335,36 +426,109 @@ function caixaDe(saida) {
   return Number.isFinite(x0) ? [x0, y0, x1, y1] : null;
 }
 
-const mediana = (xs) => { if (!xs.length) return 0; const s = [...xs].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
+/** Os rótulos (texto que não é cota) — a base de toda calibração. */
+const rotulosDe = saida => { const r = saida.textos.filter(t => !t.cota && t.h > 0); return r.length >= 3 ? r : saida.textos.filter(t => t.h > 0); };
 
 /**
  * A caixa do DESENHO, não de tudo o que há no arquivo: um traço perdido a
  * quilômetros da planta (é comum) faria a folha ter metros de vazio e o
- * texto virar pó. Onde há texto, o desenho é a região dos textos com folga;
- * o que fica longe dela é descartado da página.
+ * texto virar pó. O miolo é a mediana dos textos com um raio pelo desvio
+ * absoluto mediano; o que fica fora é descartado.
  */
 function caixaDoDesenho(saida) {
   const tudo = caixaDe(saida);
   if (!tudo || saida.textos.length < 3) return tudo;
-  /* o miolo dos textos: mediana e desvio absoluto mediano em x e y. Um
-     texto perdido ou um bloco inserido com escala absurda fica fora do raio
-     e não puxa a caixa — com cinco textos ou com cinco mil */
-  const base = saida.textos.filter(t => !t.cota).length >= 3 ? saida.textos.filter(t => !t.cota) : saida.textos;
+  const base = rotulosDe(saida);
   const xs = base.map(t => t.x), ys = base.map(t => t.y);
   const mx = mediana(xs), my = mediana(ys);
   const madX = mediana(xs.map(x => Math.abs(x - mx))), madY = mediana(ys.map(y => Math.abs(y - my)));
   const hMed = mediana(base.map(t => t.h));
   const raio = Math.max(madX, madY) * 4 + hMed * 60;
   const lim = [mx - raio, my - raio, mx + raio, my + raio];
-  const h = Math.max(madY * 2, 1);
   const dentro = (px, py) => px >= lim[0] && px <= lim[2] && py >= lim[1] && py <= lim[3];
   const antesP = saida.paths.length, antesT = saida.textos.length;
   saida.paths = saida.paths.filter(p => p.pts.some(q => dentro(q[0], q[1])));
-  saida.textos = saida.textos.filter(t => dentro(t.x, t.y) && t.h < Math.max(h * 2, hMed * 40));
+  saida.textos = saida.textos.filter(t => dentro(t.x, t.y) && t.h < Math.max(madY * 2, hMed * 40));
   const fora = (antesP - saida.paths.length) + (antesT - saida.textos.length);
   if (fora) console.info(`[dwg] ${fora} elemento(s) longe do desenho descartado(s)`);
   const cx = caixaDe(saida);
   return cx ? [Math.max(cx[0], lim[0]), Math.max(cx[1], lim[1]), Math.min(cx[2], lim[2]), Math.min(cx[3], lim[3])] : tudo;
+}
+
+/**
+ * Janelas de plotagem: retângulos grandes em camadas que não plotam
+ * (Defpoints). É como o projetista marca as pranchas desenhadas lado a lado
+ * no model space. `hMed` (altura mediana dos rótulos) dá a escala mínima.
+ */
+function janelasDePlotagem(ctx, entidades, hMed) {
+  const minimo = Math.max(hMed * 60, 1);
+  const janelas = [];
+  for (const e of entidades || []) {
+    if ((e.type !== 'LWPOLYLINE' && e.type !== 'POLYLINE2D') || !e.layer || !naoPlota(ctx, e.layer)) continue;
+    const vs = (e.vertices || []).filter(v => v && Number.isFinite(v.x));
+    if (vs.length < 4 || vs.length > 5) continue;
+    const xs = vs.map(v => v.x), ys = vs.map(v => v.y);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+    if (x1 - x0 < minimo || y1 - y0 < minimo) continue;
+    /* retângulo de verdade: todo vértice num canto */
+    if (!vs.every(v => (Math.abs(v.x - x0) < 1e-6 || Math.abs(v.x - x1) < 1e-6) && (Math.abs(v.y - y0) < 1e-6 || Math.abs(v.y - y1) < 1e-6))) continue;
+    janelas.push([x0, y0, x1, y1]);
+  }
+  /* janela dentro de janela (a margem interna da folha): fica a maior */
+  const contem = (a, b) => a[0] <= b[0] + 1 && a[1] <= b[1] + 1 && a[2] >= b[2] - 1 && a[3] >= b[3] - 1;
+  return janelas.filter(j => !janelas.some(o => o !== j && contem(o, j) && (o[2] - o[0]) * (o[3] - o[1]) > (j[2] - j[0]) * (j[3] - j[1])))
+    .sort((a, b) => (b[3] - a[3]) || (a[0] - b[0]));   // de cima para baixo, da esquerda para a direita
+}
+
+/**
+ * Ilhas de texto: uma grade grossa marcada onde há rótulo, componentes
+ * conexos = pranchas separadas por vazio. Devolve caixas em unidades do
+ * desenho, ou [] quando o desenho é um bloco só.
+ */
+function ilhasDeTexto(saida, hMed) {
+  const base = rotulosDe(saida);
+  if (base.length < 40) return [];
+  const celula = Math.max(hMed * 25, 1);
+  const cx = t => Math.floor(t.x / celula), cy = t => Math.floor(t.y / celula);
+  const ocupadas = new Map();
+  for (const t of base) { const k = cx(t) + ',' + cy(t); ocupadas.set(k, (ocupadas.get(k) || 0) + 1); }
+  const visto = new Set(); const ilhas = [];
+  for (const k of ocupadas.keys()) {
+    if (visto.has(k)) continue;
+    const fila = [k]; visto.add(k);
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, n = 0;
+    while (fila.length) {
+      const c = fila.pop(); const [i, j] = c.split(',').map(Number);
+      n += ocupadas.get(c);
+      x0 = Math.min(x0, i); x1 = Math.max(x1, i); y0 = Math.min(y0, j); y1 = Math.max(y1, j);
+      for (let di = -2; di <= 2; di++) for (let dj = -2; dj <= 2; dj++) {
+        const v = (i + di) + ',' + (j + dj);
+        if (ocupadas.has(v) && !visto.has(v)) { visto.add(v); fila.push(v); }
+      }
+    }
+    if (n >= 20) ilhas.push([x0 * celula, y0 * celula, (x1 + 1) * celula, (y1 + 1) * celula]);
+  }
+  return ilhas.length > 1 ? ilhas.sort((a, b) => (b[3] - a[3]) || (a[0] - b[0])) : [];
+}
+
+/** O recorte de uma coleta por uma janela (unidades do desenho). */
+function recortar(saida, j, folga = 0) {
+  const x0 = j[0] - folga, y0 = j[1] - folga, x1 = j[2] + folga, y1 = j[3] + folga;
+  const s = novaSaida();
+  for (const p of saida.paths) {
+    let dentro = false;
+    for (const q of p.pts) if (q[0] >= x0 && q[0] <= x1 && q[1] >= y0 && q[1] <= y1) { dentro = true; break; }
+    if (dentro) s.paths.push(p);
+  }
+  for (const t of saida.textos) if (t.x >= x0 && t.x <= x1 && t.y >= y0 && t.y <= y1) s.textos.push(t);
+  return s;
+}
+
+/** Nome de uma janela: o maior texto dentro dela ("2º PAVIMENTO"), senão a ordem. */
+function nomeDaJanela(saida, ordem) {
+  const cand = saida.textos.filter(t => !t.cota && /[A-Za-zÀ-ÿ]{3}/.test(t.str)).sort((a, b) => b.h - a.h)[0];
+  const nome = cand ? cand.str.replace(/\s+/g, ' ').trim().slice(0, 40) : '';
+  return nome || `Folha ${ordem}`;
 }
 
 /**
@@ -381,32 +545,41 @@ function montarPagina({ nome, numero, saida, k, caixa }) {
     const pts = p.pts.map(q => [X(q[0]), Y(q[1])]);
     let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
     for (const q of pts) { if (q[0] < bx0) bx0 = q[0]; if (q[0] > bx1) bx1 = q[0]; if (q[1] < by0) by0 = q[1]; if (q[1] > by1) by1 = q[1]; }
-    const cor = corImpressa(p.cor || [0, 0, 0]);
-    tracados.push({
-      subpaths: [pts], hasCurve: !!p.curva, closed: !!p.fechado,
-      stroke: cor, fill: p.preenche ? (p.solido ? cor : '#e8e8e8') : '#000000',
-      paintOp: p.preenche ? 'fill' : 'stroke', lineWidth: p.lw || 0.5,
-      bbox: [bx0, by0, bx1, by1], preenche: !!p.preenche,
-    });
+    if (Math.max(bx1 - bx0, by1 - by0) < MENOR_TRACO_PT) continue;
+    tracados.push(tracado(pts, [bx0, by0, bx1, by1], !!p.curva, !!p.fechado, ehVermelho(p.cor || [0, 0, 0]), !!p.preenche, !!p.solido, p.lw || 0.5));
   }
   const textos = [];
   for (const t of saida.textos) {
     const h = t.h * k, w = t.w * k;
-    const ux = Math.cos(t.ang), uy = -Math.sin(t.ang);       // y de prancha cresce para baixo
-    const x = X(t.x), y = Y(t.y);
-    textos.push({
-      str: t.str, x, y, w, h, ux, uy,
-      cx: x + ux * w / 2 - uy * h * 0.3,
-      cy: y + uy * w / 2 + ux * h * -0.3,
-      horizontal: Math.abs(ux) > 0.85,
-      cota: !!t.cota,   // texto de cota: o motor pode ignorá-lo ao procurar rótulos
-    });
+    if (h < 0.4) continue;
+    textos.push(item(t.str, X(t.x), Y(t.y), w, h, t.ang, !!t.cota));
   }
   return criarPagina({ nome, numero, largura: W, altura: H, tracados, textos });
 }
 
+/* os dois "átomos" da página, no contrato que o motor lê */
+function tracado(pts, bbox, curva, fechado, vermelho, preenche, solido, lw) {
+  const cor = vermelho ? '#e00000' : '#000000';
+  return {
+    subpaths: [pts], hasCurve: curva, closed: fechado,
+    stroke: cor, fill: preenche ? (solido ? cor : '#e8e8e8') : '#000000',
+    paintOp: preenche ? 'fill' : 'stroke', lineWidth: lw,
+    bbox, preenche,
+  };
+}
+function item(str, x, y, w, h, ang, cota) {
+  const ux = Math.cos(ang), uy = -Math.sin(ang);       // y de prancha cresce para baixo
+  return {
+    str, x, y, w, h, ux, uy,
+    cx: x + ux * w / 2 - uy * h * 0.3,
+    cy: y + uy * w / 2 + ux * h * -0.3,
+    horizontal: Math.abs(ux) > 0.85,
+    cota,
+  };
+}
+
 function criarPagina({ nome, numero, largura, altura, tracados, textos }) {
-  const page = {
+  return {
     dwg: true, nome, pageNumber: numero, rotate: 0,
     largura, altura, tracados, textos,
     getViewport({ scale = 1 } = {}) {
@@ -432,6 +605,7 @@ function criarPagina({ nome, numero, largura, altura, tracados, textos }) {
         ctx.transform(s, 0, 0, s, 0, 0);
         ctx.lineJoin = 'round'; ctx.lineCap = 'round';
         const lwMin = 0.7 / s;
+        let n = 0;
         for (const p of tracados) {
           const b = p.bbox;
           if (b[2] < vx0 || b[0] > vx1 || b[3] < vy0 || b[1] > vy1) continue;
@@ -440,6 +614,7 @@ function criarPagina({ nome, numero, largura, altura, tracados, textos }) {
           if (p.preenche) { ctx.fillStyle = p.fill; ctx.fill(); }
           ctx.strokeStyle = p.stroke; ctx.lineWidth = Math.max(lwMin, p.lineWidth || 0.5);
           ctx.stroke();
+          if (++n % 4000 === 0) await new Promise(r => setTimeout(r, 0));   // cede à tela
         }
         ctx.fillStyle = '#000000';
         for (const tx of textos) {
@@ -453,22 +628,32 @@ function criarPagina({ nome, numero, largura, altura, tracados, textos }) {
         }
         ctx.restore();
       })();
-      return { promise, cancel() { /* desenho síncrono: nada a cancelar */ } };
+      return { promise, cancel() { /* o desenho cede à tela, mas não cancela */ } };
     },
     cleanup() {},
   };
-  return page;
+}
+
+function documentoDe(paginas) {
+  return {
+    dwg: true,
+    numPages: paginas.length,
+    paginas: paginas.map(p => ({ nome: p.nome, largura: Math.round(p.largura), altura: Math.round(p.altura), tracados: p.tracados.length, textos: p.textos.length })),
+    async getPage(n) { const p = paginas[n - 1]; if (!p) throw new Error(`página ${n} não existe`); return p; },
+    async destroy() { paginas.length = 0; },
+  };
 }
 
 /**
- * Monta o documento a partir do banco do libredwg. Puro: não toca no DOM,
- * então roda também em Node, para testes.
+ * Monta as páginas a partir do banco do libredwg. Puro: não toca no DOM,
+ * então roda no Worker e em Node (testes). Devolve o documento.
  */
-export function montarDocumento(db) {
+export function montarDocumento(db, aoProgredir = () => {}) {
   const ctx = contexto(db);
   const modelo = ctx.blocos.get('*Model_Space');
   const entidadesModelo = (db.entities && db.entities.length) ? db.entities : ((modelo && modelo.entities) || []);
   const paginas = [];
+  const unidadePapel = Number(db.header && db.header.INSUNITS) === 1 ? 72 : PT_POR_MM;
 
   /* 1) layouts de paper space com conteúdo próprio */
   const layouts = ((db.objects || {}).LAYOUT || []).filter(l => l && !/^model$/i.test(l.layoutName || l.name || ''));
@@ -478,11 +663,24 @@ export function montarDocumento(db) {
     const ents = (bloco && bloco.entities) || [];
     /* a viewport "geral" (id 1) é o próprio papel, não uma janela; e uma
        folha de verdade tem carimbo e moldura desenhados no paper space —
-       layout só com viewports é o padrão vazio que todo DWG traz */
+       layout só com viewports é o padrão vazio que todo DWG traz. Uma folha
+       cheia de viewports miúdas (menos de 60 mm) é um resumo, não uma prancha
+       que se leia. */
     const viewports = ents.filter(e => e.type === 'VIEWPORT' && Number(e.viewportId) !== 1
       && (e.viewHeight || 0) > 0 && (e.width || 0) > 0 && (e.width || 0) < 5000 && (e.height || 0) < 5000);
     const proprias = ents.filter(e => e.type !== 'VIEWPORT');
     if (!proprias.length) continue;
+    /* legibilidade: na escala da viewport, que altura o rótulo típico do
+       model space teria no papel? Abaixo de 1 mm é miniatura (folha-resumo
+       em 1:500), não uma prancha que se leia — e o model space é que vale */
+    if (viewports.length) {
+      if (!ctx.hMedModelo) {
+        const st = novaSaida(); coletarTextos(ctx, entidadesModelo, ID, st);
+        ctx.hMedModelo = mediana(rotulosDe(st).map(t => t.h)) || 0;
+      }
+      const mmNoPapel = viewports.map(v => ctx.hMedModelo * (v.height / v.viewHeight));
+      if (ctx.hMedModelo && mediana(mmNoPapel) < 1) { console.info(`[dwg] layout "${l.layoutName}" é miniatura (texto de ${mediana(mmNoPapel).toFixed(2)} mm): ignorado`); continue; }
+    }
     const saida = novaSaida();
     coletar(ctx, proprias, ID, null, saida);
     for (const vp of viewports) {
@@ -490,43 +688,138 @@ export function montarDocumento(db) {
       const s = (vp.height || 1) / vp.viewHeight;
       const m = mul(mul(mul(T(-dc.x, -dc.y), S(s, s)), R(vp.viewTwistAngle || 0)), T(vc.x, vc.y));
       const parcial = novaSaida();
+      ctx.limiteBloco = MENOR_BLOCO_PT / (unidadePapel * s);
       coletar(ctx, entidadesModelo, m, null, parcial);
-      /* só o que cabe na janela da viewport */
-      const rx0 = vc.x - vp.width / 2, rx1 = vc.x + vp.width / 2, ry0 = vc.y - vp.height / 2, ry1 = vc.y + vp.height / 2;
-      const dentro = (xs, ys) => Math.max(...xs) >= rx0 && Math.min(...xs) <= rx1 && Math.max(...ys) >= ry0 && Math.min(...ys) <= ry1;
-      for (const p of parcial.paths) if (dentro(p.pts.map(q => q[0]), p.pts.map(q => q[1]))) saida.paths.push(p);
-      for (const t of parcial.textos) if (t.x >= rx0 - t.w && t.x <= rx1 && t.y >= ry0 - t.h && t.y <= ry1 + t.h) saida.textos.push(t);
-      /* a moldura da viewport, como plotada */
-      saida.paths.push({ pts: [[rx0, ry0], [rx1, ry0], [rx1, ry1], [rx0, ry1], [rx0, ry0]], curva: false, fechado: true, cor: [0, 0, 0], preenche: false, lw: 0.3 });
+      ctx.limiteBloco = 0;
+      const rec = recortar(parcial, [vc.x - vp.width / 2, vc.y - vp.height / 2, vc.x + vp.width / 2, vc.y + vp.height / 2]);
+      saida.paths.push(...rec.paths); saida.textos.push(...rec.textos);
+      saida.paths.push({ pts: [[vc.x - vp.width / 2, vc.y - vp.height / 2], [vc.x + vp.width / 2, vc.y - vp.height / 2], [vc.x + vp.width / 2, vc.y + vp.height / 2], [vc.x - vp.width / 2, vc.y + vp.height / 2], [vc.x - vp.width / 2, vc.y - vp.height / 2]], curva: false, fechado: true, cor: [0, 0, 0], preenche: false, lw: 0.3 });
     }
     const caixaEnt = caixaDe(saida);
     if (!caixaEnt) continue;
     const lim = l.minLimit && l.maxLimit && Number.isFinite(l.minLimit.x) && (l.maxLimit.x - l.minLimit.x) > 10 && (l.maxLimit.x - l.minLimit.x) < 5000
       ? [l.minLimit.x, l.minLimit.y, l.maxLimit.x, l.maxLimit.y] : null;
     const caixa = lim && caixaEnt[0] >= lim[0] - 50 && caixaEnt[2] <= lim[2] + 50 ? lim : caixaEnt;
-    const k = Number(db.header && db.header.INSUNITS) === 1 ? 72 : PT_POR_MM;
-    paginas.push(montarPagina({ nome: l.layoutName || l.name || 'Layout', numero: paginas.length + 1, saida, k, caixa }));
+    paginas.push(montarPagina({ nome: l.layoutName || l.name || 'Layout', numero: paginas.length + 1, saida, k: unidadePapel, caixa }));
+    aoProgredir(`folha ${paginas.length}: ${l.layoutName || 'layout'}`);
   }
+  if (paginas.length) return documentoDe(paginas);
 
-  /* 2) sem layouts úteis: o model space inteiro */
+  /* 2) o model space: escala pelos rótulos, janelas de plotagem ou ilhas */
+  aoProgredir('montando o model space');
+  const tudo = novaSaida();
+  /* primeiro só os textos, para calibrar a escala e o corte de blocos miúdos */
+  const soTexto = novaSaida();
+  coletarTextos(ctx, entidadesModelo, ID, soTexto);
+  const hMed = mediana(rotulosDe(soTexto).map(t => t.h)) || 0;
+  const k0 = hMed ? ALTURA_TEXTO_ALVO / hMed : 0;
+  ctx.limiteBloco = k0 ? MENOR_BLOCO_PT / k0 : 0;
+  coletar(ctx, entidadesModelo, ID, null, tudo);
+  ctx.limiteBloco = 0;
+  aoProgredir(`${tudo.paths.length} traçados e ${tudo.textos.length} textos lidos`);
+
+  let janelas = hMed ? janelasDePlotagem(ctx, entidadesModelo, hMed) : [];
+  let origem = 'janelas de plotagem';
+  if (janelas.length < 2) { janelas = ilhasDeTexto(tudo, hMed || 1); origem = 'ilhas de texto'; }
+  if (janelas.length >= 2) {
+    console.info(`[dwg] ${janelas.length} página(s) pelas ${origem}`);
+    janelas.forEach((j, i) => {
+      const parte = recortar(tudo, j, hMed * 2);
+      if (!parte.textos.length && parte.paths.length < 50) return;
+      const rot = rotulosDe(parte);
+      const hLocal = rot.length >= 10 ? mediana(rot.map(t => t.h)) : hMed;
+      const maior = Math.max(j[2] - j[0], j[3] - j[1]) || 1;
+      let k = hLocal ? ALTURA_TEXTO_ALVO / hLocal : 3370 / maior;
+      k = Math.min(MAIOR_LADO_MAX / maior, Math.max(MAIOR_LADO_MIN / maior, k));
+      paginas.push(montarPagina({ nome: nomeDaJanela(parte, i + 1), numero: paginas.length + 1, saida: parte, k, caixa: j }));
+      aoProgredir(`folha ${paginas.length} de ${janelas.length}`);
+    });
+  }
   if (!paginas.length) {
-    const saida = novaSaida();
-    coletar(ctx, entidadesModelo, ID, null, saida);
-    const caixa = caixaDoDesenho(saida);
+    const caixa = caixaDoDesenho(tudo);
     if (!caixa) throw new Error('o DWG não tem geometria nem texto legível');
     const maior = Math.max(caixa[2] - caixa[0], caixa[3] - caixa[1]) || 1;
-    const rotulos = saida.textos.filter(t => !t.cota && t.h > 0);
-    const alturas = (rotulos.length >= 3 ? rotulos : saida.textos).map(t => t.h).filter(h => h > 0);
+    const alturas = rotulosDe(tudo).map(t => t.h);
     let k = alturas.length ? ALTURA_TEXTO_ALVO / mediana(alturas) : 3370 / maior;
     k = Math.min(MAIOR_LADO_MAX / maior, Math.max(MAIOR_LADO_MIN / maior, k));
-    paginas.push(montarPagina({ nome: 'Model', numero: 1, saida, k, caixa }));
+    paginas.push(montarPagina({ nome: 'Model', numero: 1, saida: tudo, k, caixa }));
   }
+  return documentoDe(paginas);
+}
 
-  return {
-    dwg: true,
-    numPages: paginas.length,
-    paginas: paginas.map(p => ({ nome: p.nome, largura: Math.round(p.largura), altura: Math.round(p.altura), tracados: p.tracados.length, textos: p.textos.length })),
-    async getPage(n) { const p = paginas[n - 1]; if (!p) throw new Error(`página ${n} não existe`); return p; },
-    async destroy() { paginas.length = 0; },
-  };
+/** Só os textos (rótulos, atributos, MTEXT), sem geometria — para calibrar. */
+function coletarTextos(ctx, entidades, m, saida, prof = 0) {
+  if (prof > PROFUNDIDADE_MAX) return;
+  for (const e of entidades || []) {
+    if (!e || e.isVisible === false || (e.layer && ocultaCamada(ctx, e.layer))) continue;
+    if (e.type === 'TEXT') texto(ctx, e, m, saida);
+    else if (e.type === 'MTEXT') mtext(ctx, e, m, saida);
+    else if (e.type === 'ATTRIB' && e.text) texto(ctx, e.text, m, saida);
+    else if (e.type === 'INSERT') {
+      const b = ctx.blocos.get(e.name);
+      if (b && b.entities) {
+        const ins = e.insertionPoint || { x: 0, y: 0 }, base = b.basePoint || { x: 0, y: 0 };
+        const local = mul(mul(T(-base.x, -base.y), S(e.xScale || 1, e.yScale || 1)), mul(R(e.rotation || 0), T(ins.x, ins.y)));
+        coletarTextos(ctx, b.entities, mul(local, m), saida, prof + 1);
+      }
+      for (const a of e.attribs || []) if (a && a.text) texto(ctx, a.text, m, saida);
+    }
+    /* cotas (DIMENSION) ficam de fora de propósito: não são rótulos */
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* empacotar / desempacotar — a travessia do Worker                     */
+/* ------------------------------------------------------------------ */
+
+/** Páginas → arrays tipados transferíveis. */
+export function empacotar(doc, paginas) {
+  const out = { paginas: [] }, buffers = [];
+  for (let n = 1; n <= doc.numPages; n++) {
+    const p = paginas[n - 1];
+    let nPts = 0; for (const t of p.tracados) nPts += t.subpaths[0].length;
+    const coords = new Float32Array(nPts * 2);
+    const inicio = new Uint32Array(p.tracados.length + 1);
+    const flags = new Uint8Array(p.tracados.length);
+    const lw = new Float32Array(p.tracados.length);
+    let c = 0;
+    p.tracados.forEach((t, i) => {
+      inicio[i] = c / 2;
+      for (const q of t.subpaths[0]) { coords[c++] = q[0]; coords[c++] = q[1]; }
+      flags[i] = (t.hasCurve ? 1 : 0) | (t.closed ? 2 : 0) | (t.stroke !== '#000000' ? 4 : 0) | (t.preenche ? 8 : 0) | (t.fill === t.stroke && t.preenche ? 16 : 0);
+      lw[i] = t.lineWidth || 0.5;
+    });
+    inicio[p.tracados.length] = c / 2;
+    out.paginas.push({ nome: p.nome, largura: p.largura, altura: p.altura, coords, inicio, flags, lw, textos: p.textos.map(t => [t.str, t.x, t.y, t.w, t.h, Math.atan2(-t.uy, t.ux), t.cota ? 1 : 0]) });
+    buffers.push(coords.buffer, inicio.buffer, flags.buffer, lw.buffer);
+  }
+  return { pacote: out, buffers };
+}
+
+/** Arrays tipados → documento com páginas. */
+export function desempacotar(pacote) {
+  const paginas = pacote.paginas.map((p, n) => {
+    const tracados = [];
+    for (let i = 0; i + 1 < p.inicio.length; i++) {
+      const a = p.inicio[i], b = p.inicio[i + 1];
+      const pts = new Array(b - a);
+      let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
+      for (let j = a; j < b; j++) { const x = p.coords[2 * j], y = p.coords[2 * j + 1]; pts[j - a] = [x, y]; if (x < bx0) bx0 = x; if (x > bx1) bx1 = x; if (y < by0) by0 = y; if (y > by1) by1 = y; }
+      const f = p.flags[i];
+      tracados.push(tracado(pts, [bx0, by0, bx1, by1], !!(f & 1), !!(f & 2), !!(f & 4), !!(f & 8), !!(f & 16), p.lw[i]));
+    }
+    const textos = p.textos.map(([str, x, y, w, h, ang, cota]) => item(str, x, y, w, h, ang, !!cota));
+    return criarPagina({ nome: p.nome, numero: n + 1, largura: p.largura, altura: p.altura, tracados, textos });
+  });
+  return documentoDe(paginas);
+}
+
+/** Monta e empacota num passo (o que o Worker faz). */
+export async function lerEEmpacotar(bytes, aoProgredir = () => {}) {
+  const db = await lerBanco(bytes, aoProgredir);
+  aoProgredir('montando as folhas');
+  const paginas = [];
+  const doc = montarDocumento(db, aoProgredir);
+  for (let n = 1; n <= doc.numPages; n++) paginas.push(await doc.getPage(n));
+  return empacotar(doc, paginas);
 }

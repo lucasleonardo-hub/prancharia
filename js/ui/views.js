@@ -874,6 +874,8 @@ async function processarDocumento(meta, lote = null) {
            disciplinas); memorial: a capa inteira, que é onde está o título */
         carimbo = meta.tipo === 'prancha' ? textoDoCarimbo(tc, vp) : tc.items.map(i => i.str).join(' ');
       } catch { /* sem camada de texto */ }
+      /* DWG: o nome de cada folha ("Planta 2º pavimento") vale como carimbo */
+      if (doc.dwg && meta.folhas && meta.folhas.length) carimbo = meta.folhas.join(' · ') + ' ' + carimbo;
       const d = await identificarDisciplina({
         nome: meta.nome, caminho: meta.pasta || '', carimbo, tipo: meta.tipo, ia: iaLigada(),
         imagem: () => recorteBase64(pagina1, [0, 0, vp.width, vp.height], { largura: 1600, qualidade: 0.6 }),
