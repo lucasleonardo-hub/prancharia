@@ -44,6 +44,13 @@ export const IA = {
   /* disciplina do documento: a primeira página em resolução baixa, uma
      chamada curta por PDF, só quando o nome e o carimbo não bastaram */
   rotaDisciplina: '/api/vision/classify-document',
+  /* o assistente do empreendimento: contexto grande, uma resposta */
+  rotaChat: '/api/chat',
+  timeoutChatMs: 300000,
+  /* o mapeamento inteiro (áreas comuns ou unidades por tipologia): a chamada
+     mais longa do sistema */
+  rotaMapeamento: '/api/mapear',
+  timeoutMapeamentoMs: 480000,
   timeoutMs: 60000,
   /* a leitura ampla devolve dezenas de linhas de uma vez: é a chamada mais
      demorada, e a mais rentável — um quadro de acabamentos traz o levantamento
@@ -71,7 +78,7 @@ export const IA = {
 };
 
 const CHAVE_CONFIG = 'prancharia.ia';
-const DURAVEIS = ['provedor', 'bff', 'rota', 'rotaFolha', 'rotaMemorial', 'rotaOcr', 'rotaDisciplina',
+const DURAVEIS = ['provedor', 'bff', 'rota', 'rotaFolha', 'rotaMemorial', 'rotaOcr', 'rotaDisciplina', 'rotaChat', 'timeoutChatMs', 'rotaMapeamento', 'timeoutMapeamentoMs',
   'timeoutMs', 'timeoutQuadroMs', 'timeoutMemorialMs', 'timeoutOcrMs',
   'lerLocaisSemTag', 'lerQuadrosComIA', 'maxRegioesPorFolha', 'paralelas'];
 

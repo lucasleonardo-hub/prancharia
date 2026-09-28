@@ -36,6 +36,7 @@ export function menuDe(e) {
     { id: 'produtos', nome: 'Produtos', ico: 'caixa' },
     { id: 'pendencias', nome: 'Revisão', ico: 'alerta', cont: x => pendencias(x).length },
     { id: 'planilhas', nome: 'Exportar', ico: 'baixar' },
+    { id: 'assistente', nome: 'Assistente', ico: 'balao', cont: x => ((x.assistente || {}).mensagens || []).length || '' },
     { grupo: 'Base' },
     { id: 'glossario', nome: 'Glossário', ico: 'livro' },
     { id: 'config', nome: 'Configurações', ico: 'ajuste' },
@@ -48,6 +49,7 @@ const PAI_DA_ROTA = { estrutura: 'config', fornecedores: 'produtos', rastro: 'lo
 
 export const ICONES = {
   painel: '<path d="M3 3h7v7H3zM14 3h7v4h-7zM14 10h7v11h-7zM3 13h7v8H3z"/>',
+  balao: '<path d="M4 4h16v11H9l-4 4v-4H4z"/><path d="M8 8h8M8 11h5"/>',
   pasta: '<path d="M3 6h6l2 2h10v11H3z"/>',
   arquivo: '<path d="M6 2h8l4 4v16H6z"/><path d="M14 2v5h4"/>',
   camadas: '<path d="M12 3 3 8l9 5 9-5z"/><path d="m3 13 9 5 9-5"/>',

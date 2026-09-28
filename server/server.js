@@ -52,6 +52,9 @@ import {
   INSTRUCAO_MEMORIAL, SCHEMA_MEMORIAL, contextoMemorial, sanearMemorial, lotesDePaginas,
   INSTRUCAO_QUADRO, SCHEMA_QUADRO, contextoQuadro, sanearQuadro,
   INSTRUCAO_DISCIPLINA, SCHEMA_DISCIPLINA, contextoDisciplina, sanearDisciplina, disciplinaSimulada,
+  INSTRUCAO_CHAT, SCHEMA_CHAT, contextoChat, sanearChat, chatSimulado,
+  INSTRUCAO_MAPEAMENTO_COMUNS, INSTRUCAO_MAPEAMENTO_UNIDADES, INSTRUCAO_MAPEAMENTO_INVENTARIO, SCHEMA_MAPEAMENTO, SCHEMA_INVENTARIO,
+  contextoMapeamento, sanearMapeamento, sanearInventario, mapeamentoSimulado, inventarioSimulado,
   blocoDeEmpresa, assinaturaDeEmpresa,
 } from './prompt.js';
 import { gerarComCadeia, PROVEDORES_CONFIGURADOS } from './provedores.js';
@@ -124,11 +127,11 @@ function registrar(info) {
 /* o cliente do modelo                                                 */
 /* ------------------------------------------------------------------ */
 
-const INSTRUCAO_DO_MODO = { memorial: INSTRUCAO_MEMORIAL, quadro: INSTRUCAO_QUADRO, visao: INSTRUCAO, disciplina: INSTRUCAO_DISCIPLINA };
-const SCHEMA_DO_MODO = { memorial: SCHEMA_MEMORIAL, quadro: SCHEMA_QUADRO, visao: SCHEMA, disciplina: SCHEMA_DISCIPLINA };
+const INSTRUCAO_DO_MODO = { memorial: INSTRUCAO_MEMORIAL, quadro: INSTRUCAO_QUADRO, visao: INSTRUCAO, disciplina: INSTRUCAO_DISCIPLINA, chat: INSTRUCAO_CHAT, mapeamento_comum: INSTRUCAO_MAPEAMENTO_COMUNS, mapeamento_unidades: INSTRUCAO_MAPEAMENTO_UNIDADES, mapeamento_inventario: INSTRUCAO_MAPEAMENTO_INVENTARIO };
+const SCHEMA_DO_MODO = { memorial: SCHEMA_MEMORIAL, quadro: SCHEMA_QUADRO, visao: SCHEMA, disciplina: SCHEMA_DISCIPLINA, chat: SCHEMA_CHAT, mapeamento_comum: SCHEMA_MAPEAMENTO, mapeamento_unidades: SCHEMA_MAPEAMENTO, mapeamento_inventario: SCHEMA_INVENTARIO };
 /* Como cada modo embrulha o array quando quem responde é Groq/Cohere/HF (ver
    provedores.js) — a mesma chave que prompt.js/sanear() já sabe ler. */
-const CHAVE_ENVOLTORIA_DO_MODO = { memorial: 'atualizacoes', quadro: 'itens', visao: 'especificacoes', disciplina: 'classificacoes' };
+const CHAVE_ENVOLTORIA_DO_MODO = { memorial: 'atualizacoes', quadro: 'itens', visao: 'especificacoes', disciplina: 'classificacoes', chat: 'respostas', mapeamento_comum: 'linhas', mapeamento_unidades: 'linhas', mapeamento_inventario: 'entradas' };
 
 /* Lê a empresa pedida pela requisição. Nunca lança: empresa inexistente ou
    banco fora do ar devolvem null, e a chamada segue sem contexto — perder o
@@ -158,8 +161,9 @@ async function gerar(modo, partes, limiteMs = TEMPO_LIMITE, empresa = null) {
     schema: SCHEMA_DO_MODO[modo] || SCHEMA,
     chaveEnvoltoria: CHAVE_ENVOLTORIA_DO_MODO[modo] || 'especificacoes',
     chaveCache: modo + '|' + (bloco ? assinaturaDeEmpresa(empresa) : ''),
-    /* um quadro de 19 ambientes × 3 categorias são 57 itens: precisa de espaço */
-    maxOutputTokens: modo === 'visao' ? 8192 : 16384,
+    /* um quadro de 19 ambientes × 3 categorias são 57 itens: precisa de
+       espaço; o mapeamento inteiro de um empreendimento são centenas de linhas */
+    maxOutputTokens: modo === 'visao' ? 8192 : /^mapeamento/.test(modo) ? 65536 : 16384,
     partes, limiteMs,
   });
 }
@@ -309,7 +313,7 @@ app.get('/api/health', async (_req, res) => {
       'GET/POST /api/companies', 'GET/POST /api/projects', 'GET/POST /api/glossary',
       'POST /api/upload', 'GET /api/files/:id', 'GET /api/backup',
       'POST /api/vision/process-local', 'POST /api/vision/process-sheet', 'POST /api/text/process-memorial',
-      'POST /api/vision/classify-document', 'POST /api/pdf/ocr',
+      'POST /api/vision/classify-document', 'POST /api/pdf/ocr', 'POST /api/chat', 'POST /api/mapear',
     ],
     categorias: CATEGORIAS.length,
   });
@@ -640,6 +644,91 @@ app.post('/api/vision/classify-document', async (req, res) => {
       ok: false, erro: estourou ? 'tempo limite ao classificar o documento' : 'falha ao classificar o documento',
       motor: 'multimodal_gemini', ms, disciplina: null,
     });
+  }
+});
+
+/* O assistente do empreendimento: a pergunta, a conversa e o contexto
+   inteiro (texto dos documentos lidos + levantamento + Drive) montados no
+   navegador. Uma chamada, uma resposta com fontes e ações propostas. O
+   contexto é grande (centenas de milhares de caracteres): o prazo é o do
+   memorial. */
+const TEMPO_LIMITE_CHAT = Number(process.env.GEMINI_TIMEOUT_CHAT_MS || 300000);
+app.post('/api/chat', async (req, res) => {
+  const t0 = agora();
+  const { pergunta = '', historico = [], contexto = '' } = req.body || {};
+  /* o log não guarda a pergunta (pode trazer texto do cliente): só o tamanho */
+  const rotulo = `chat ${String(pergunta).length} car · contexto ${Math.round(String(contexto).length / 1024)} KB`;
+  if (!String(pergunta).trim()) {
+    return res.status(400).json({ ok: false, erro: 'pergunta vazia' });
+  }
+  if (SIMULAR) {
+    const r = sanearChat(chatSimulado({ contexto, pergunta }));
+    registrar({ ok: true, ms: agora() - t0, local: rotulo, itens: 1, erro: 'modo simulado' });
+    return res.json({ ok: true, motor: 'multimodal_gemini', modelo: 'simulado', ms: agora() - t0, ...r });
+  }
+  if (!ALGUM_PROVEDOR) {
+    registrar({ ok: false, ms: agora() - t0, local: rotulo, erro: 'nenhum provedor de IA configurado' });
+    return res.status(503).json({ ok: false, erro: 'nenhuma chave de IA configurada no servidor' });
+  }
+  try {
+    const empresa = await empresaDaRequisicao(req);
+    const partes = [{ text: contextoChat({ contexto, historico, pergunta }) }];
+    const { bruto, tokens, modelo, provedor } = await gerar('chat', partes, TEMPO_LIMITE_CHAT, empresa);
+    const r = sanearChat(bruto);
+    const ms = agora() - t0;
+    if (!r) {
+      registrar({ ok: false, ms, local: rotulo, erro: 'resposta vazia' });
+      return res.status(502).json({ ok: false, erro: 'o modelo não devolveu uma resposta' });
+    }
+    registrar({ ok: true, ms, local: rotulo, itens: r.fontes.length, tokens, erro: `${r.confianca} · ${r.acoes.length} ação(ões)` + (provedor !== 'gemini' ? ` · via ${provedor}` : '') });
+    res.json({ ok: true, motor: 'multimodal_gemini', provedor, modelo, ms, tokens: tokens || null, ...r });
+  } catch (err) {
+    const ms = agora() - t0;
+    const msg = err.message || String(err);
+    registrar({ ok: false, ms, local: rotulo, erro: msg });
+    res.status(/tempo limite/.test(msg) ? 504 : 502).json({ ok: false, erro: /tempo limite/.test(msg) ? 'tempo limite na resposta do assistente' : 'falha ao responder' });
+  }
+});
+
+/* O mapeamento inteiro pela IA: o corpus do empreendimento e a instrução da
+   equipe (áreas comuns ou unidades por tipologia) → linhas com fonte. É a
+   chamada mais longa do sistema: contexto de centenas de milhares de
+   caracteres e resposta de centenas de linhas. */
+const TEMPO_LIMITE_MAPEAMENTO = Number(process.env.GEMINI_TIMEOUT_MAPEAMENTO_MS || 480000);
+app.post('/api/mapear', async (req, res) => {
+  const t0 = agora();
+  const { escopo = 'comum', contexto = '', sistemas = [], filtro = null } = req.body || {};
+  const modo = escopo === 'inventario' ? 'mapeamento_inventario' : escopo === 'privativa' ? 'mapeamento_unidades' : 'mapeamento_comum';
+  const alvo = filtro && typeof filtro === 'object' ? { nome: String(filtro.nome || '').slice(0, 80), tipo: filtro.tipo === 'opcional' ? 'opcional' : 'tipologia', base: String(filtro.base || '').slice(0, 80) } : null;
+  const rotulo = `mapeamento ${escopo}${alvo ? ' (1 alvo)' : ''}`;
+  if (!String(contexto).trim()) return res.status(400).json({ ok: false, erro: 'contexto vazio', linhas: [] });
+  const responder = (bruto, extra = {}) => {
+    if (modo === 'mapeamento_inventario') return { entradas: sanearInventario(bruto), ...extra };
+    const { linhas, recusadas } = sanearMapeamento(bruto, sistemas);
+    return { linhas, recusadas, ...extra };
+  };
+  if (SIMULAR) {
+    const r = responder(modo === 'mapeamento_inventario' ? inventarioSimulado({ contexto }) : mapeamentoSimulado({ escopo, contexto, filtro: alvo }));
+    registrar({ ok: true, ms: agora() - t0, local: rotulo, itens: (r.linhas || r.entradas || []).length, erro: 'modo simulado' });
+    return res.json({ ok: true, motor: 'multimodal_gemini', modelo: 'simulado', ms: agora() - t0, ...r });
+  }
+  if (!ALGUM_PROVEDOR) {
+    registrar({ ok: false, ms: agora() - t0, local: rotulo, erro: 'nenhum provedor de IA configurado' });
+    return res.status(503).json({ ok: false, erro: 'nenhuma chave de IA configurada no servidor', linhas: [] });
+  }
+  try {
+    const empresa = await empresaDaRequisicao(req);
+    const partes = [{ text: contextoMapeamento({ contexto, sistemas, filtro: alvo }) }];
+    const { bruto, tokens, modelo, provedor } = await gerar(modo, partes, TEMPO_LIMITE_MAPEAMENTO, empresa);
+    const r = responder(bruto);
+    const ms = agora() - t0;
+    registrar({ ok: true, ms, local: rotulo, itens: (r.linhas || r.entradas || []).length, tokens, erro: (r.recusadas ? `recusadas ${JSON.stringify(r.recusadas)}` : 'inventário') + (provedor !== 'gemini' ? ` · via ${provedor}` : '') });
+    res.json({ ok: true, motor: 'multimodal_gemini', provedor, modelo, ms, tokens: tokens || null, ...r });
+  } catch (err) {
+    const ms = agora() - t0;
+    const msg = err.message || String(err);
+    registrar({ ok: false, ms, local: rotulo, erro: msg });
+    res.status(/tempo limite/.test(msg) ? 504 : 502).json({ ok: false, erro: /tempo limite/.test(msg) ? 'tempo limite no mapeamento' : 'falha no mapeamento', linhas: [] });
   }
 });
 

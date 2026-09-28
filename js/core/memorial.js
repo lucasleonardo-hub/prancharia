@@ -217,11 +217,32 @@ function classificarLinhas(linhas) {
     if (l.tipo !== 'titulo') continue;
     const marcador = marcadorDeGrupo(l.texto);
     if (marcador) { l.tipo = 'marcador'; l.grupo = marcador; continue; }
+    /* "PORCELANATO PORTOBELLO 60X60" em caixa alta, seguido de linhas de
+       especificação, tem a forma de um título de local — e é o nome de um
+       produto. Produto, material ou código de catálogo nunca vira local:
+       a seção só reinicia o contexto. */
+    if (ehProduto(l.texto)) { l.tipo = 'secao'; continue; }
     const seguintes = linhas.slice(i + 1, i + 6).filter(x => x.tipo !== 'absorvida');
     const iItem = seguintes.findIndex(x => x.tipo === 'item');
     const iTitulo = seguintes.findIndex(x => x.tipo === 'titulo' || x.tipo === 'marcador');
     l.tipo = iItem >= 0 && iItem <= 1 && (iTitulo < 0 || iItem < iTitulo) ? 'local' : 'secao';
   }
+}
+
+/* Material, produto ou código de catálogo — o que um título de memorial
+   pode ser sem ser um local. O vocabulário de local (áreas.js) tem a última
+   palavra: "SALA DE ESTAR" nunca cai aqui, mesmo que o glossário conheça
+   "estar". */
+const MATERIAL = /\b(porcelanato|cer[âa]mic|azulejo|pastilha|ladrilho|granito|m[áa]rmore|quartzo|pedra|pintura|tinta|textura|grafiato|verniz|esmalte|forro|gesso|drywall|rodap[ée]|soleira|peitoril|rejunte|argamassa|contrapiso|reboco|vidro|alum[íi]nio|madeira|acr[íi]lic|pvc|inox|laminado|vin[íi]lic|carpete|metal|lou[çc]a|bacia|cuba|torneira|registro|chuveiro|ducha|lumin[áa]ria|l[âa]mpada|interruptor|tomada|porta|janela|esquadria|fechadura|ma[çc]aneta|bancada|tampo|impermeabiliza|manta|tela|piso|revestimento|papel de parede|cimento|concreto|tijolo|bloco)\b/i;
+const CODIGO_CATALOGO = /\b[A-Z]{1,4}[-\s]?\d{2,}[A-Z0-9-]*\b/;
+const MEDIDA_NO_NOME = /\d+\s?[xX×]\s?\d+/;
+export function ehProduto(titulo) {
+  const t = String(titulo || '').replace(/[:–—-]\s*$/, '').trim();
+  if (!t || classificarArea(t)) return false;
+  if (MEDIDA_NO_NOME.test(t) || CODIGO_CATALOGO.test(t)) return true;
+  if (MATERIAL.test(t)) return true;
+  const c = classificar(t);
+  return !!(c && c.produto);
 }
 
 /**

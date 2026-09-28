@@ -70,7 +70,34 @@ function lerJsonSolto(cru) {
   for (const [i, j] of cortes) {
     try { return JSON.parse(cru.slice(i, j + 1)); } catch { /* tenta o próximo corte */ }
   }
+  const truncado = resgatarArrayTruncado(cru);
+  if (truncado) return truncado;
   throw new Error('resposta do modelo não é JSON');
+}
+
+/**
+ * Um array cortado no meio pelo limite de saída do modelo ("[{…},{…},{"tip")
+ * ainda tem os objetos inteiros que vieram antes do corte. Fecha o array no
+ * último objeto completo do primeiro nível e devolve o que dá para ler — é
+ * o mapeamento inteiro menos a cauda, em vez de nada. Avisa no log.
+ */
+function resgatarArrayTruncado(cru) {
+  const i = cru.indexOf('[');
+  if (i < 0) return null;
+  let prof = 0, emStr = false, esc = false, fim = -1;
+  for (let k = i; k < cru.length; k++) {
+    const c = cru[k];
+    if (emStr) { if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') emStr = false; continue; }
+    if (c === '"') { emStr = true; continue; }
+    if (c === '{' || c === '[') prof++;
+    else if (c === '}' || c === ']') { prof--; if (prof === 1 && c === '}') fim = k; }
+  }
+  if (fim < 0) return null;
+  try {
+    const r = JSON.parse(cru.slice(i, fim + 1) + ']');
+    if (Array.isArray(r) && r.length) { console.warn(`[provedores] resposta truncada pelo limite de saída: ${r.length} objeto(s) resgatado(s)`); return r; }
+  } catch { /* nem assim */ }
+  return null;
 }
 
 /** O array de itens, venha ele solto ou embrulhado num objeto — mesma regra

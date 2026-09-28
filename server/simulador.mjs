@@ -22,7 +22,7 @@
    tanto para testar quanto para uma máquina de escritório sem compilador. */
 
 import http from 'node:http';
-import { sanear, sanearMemorial, sanearQuadro, sanearDisciplina, disciplinaSimulada, CATEGORIAS, blocoDeEmpresa } from './prompt.js';
+import { sanear, sanearMemorial, sanearQuadro, sanearDisciplina, disciplinaSimulada, sanearChat, chatSimulado, sanearMapeamento, mapeamentoSimulado, sanearInventario, inventarioSimulado, CATEGORIAS, blocoDeEmpresa } from './prompt.js';
 import * as banco from './db.js';
 import armazenamento, { lerMultipart } from './armazenamento.js';
 
@@ -390,6 +390,46 @@ const servidor = http.createServer((req, res) => {
       }
       const r = sanearDisciplina(disciplinaSimulada({ documento, heuristica }));
       console.log(`ok   ${String(Date.now() - t0).padStart(5)}ms | disciplina ${documento} → ${r.disciplina} (${r.tipoDocumento})`);
+      res.writeHead(200, CABECA);
+      res.end(JSON.stringify({ ok: true, motor: 'multimodal_gemini', modelo: 'simulado', ms: Date.now() - t0, ...r }));
+    });
+    return;
+  }
+
+  if (req.method === 'POST' && req.url.startsWith('/api/mapear')) {
+    const pedacos = []; let bytes = 0, excedeu = false;
+    req.on('data', c => { bytes += c.length; if (bytes > 50 * 1024 * 1024) { excedeu = true; req.destroy(); return; } pedacos.push(c); });
+    req.on('end', async () => {
+      if (excedeu) { res.writeHead(413, CABECA); return res.end(JSON.stringify({ ok: false, erro: 'corpo grande demais', linhas: [] })); }
+      const t0 = Date.now();
+      let corpo = {};
+      try { corpo = JSON.parse(Buffer.concat(pedacos).toString('utf8') || '{}'); } catch { /* corpo inválido */ }
+      if (LENTO) await new Promise(r => setTimeout(r, LENTO));
+      if (FALHAR) { res.writeHead(502, CABECA); return res.end(JSON.stringify({ ok: false, erro: 'falha simulada', linhas: [] })); }
+      const contexto = String(corpo.contexto || '');
+      const filtro = corpo.filtro && typeof corpo.filtro === 'object' ? corpo.filtro : null;
+      let r;
+      if (corpo.escopo === 'inventario') r = { entradas: sanearInventario(inventarioSimulado({ contexto })) };
+      else r = sanearMapeamento(mapeamentoSimulado({ escopo: corpo.escopo, contexto, filtro }), corpo.sistemas || []);
+      console.log(`ok   ${String(Date.now() - t0).padStart(5)}ms | mapeamento ${corpo.escopo}${filtro ? ' → ' + filtro.nome : ''} | ${(r.linhas || r.entradas).length} | contexto ${Math.round(contexto.length / 1024)} KB`);
+      res.writeHead(200, CABECA);
+      res.end(JSON.stringify({ ok: true, motor: 'multimodal_gemini', modelo: 'simulado', ms: Date.now() - t0, ...r }));
+    });
+    return;
+  }
+
+  if (req.method === 'POST' && req.url.startsWith('/api/chat')) {
+    const pedacos = []; let bytes = 0, excedeu = false;
+    req.on('data', c => { bytes += c.length; if (bytes > 50 * 1024 * 1024) { excedeu = true; req.destroy(); return; } pedacos.push(c); });
+    req.on('end', async () => {
+      if (excedeu) { res.writeHead(413, CABECA); return res.end(JSON.stringify({ ok: false, erro: 'corpo grande demais' })); }
+      const t0 = Date.now();
+      let corpo = {};
+      try { corpo = JSON.parse(Buffer.concat(pedacos).toString('utf8') || '{}'); } catch { /* corpo inválido */ }
+      if (LENTO) await new Promise(r => setTimeout(r, LENTO));
+      if (FALHAR) { res.writeHead(502, CABECA); return res.end(JSON.stringify({ ok: false, erro: 'falha simulada' })); }
+      const r = sanearChat(chatSimulado({ contexto: String(corpo.contexto || ''), pergunta: String(corpo.pergunta || '') }));
+      console.log(`ok   ${String(Date.now() - t0).padStart(5)}ms | chat "${String(corpo.pergunta || '').slice(0, 40)}" | contexto ${Math.round(String(corpo.contexto || '').length / 1024)} KB`);
       res.writeHead(200, CABECA);
       res.end(JSON.stringify({ ok: true, motor: 'multimodal_gemini', modelo: 'simulado', ms: Date.now() - t0, ...r }));
     });

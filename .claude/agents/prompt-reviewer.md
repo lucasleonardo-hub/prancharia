@@ -39,8 +39,10 @@ O pipeline é híbrido: a leitura vetorial é a espinha e a IA só `confirma`,
 
 - Comece por `git diff` (ou o intervalo que o chamador indicar) para focar no
   que mudou; depois leia o arquivo inteiro para ver o efeito no conjunto.
-- Use `grep` em `server/server.js` e `js/core/engine.js` para achar onde cada
-  campo do schema é consumido; um campo novo que ninguém lê é achado.
+- Use `grep` no repositório inteiro (`server/`, `js/core/`, `js/ui/`) para
+  achar onde cada campo do schema é consumido — o consumidor pode estar em
+  `assistente.js`, `exporter.js` ou numa view, não só em `server.js` e
+  `engine.js`; um campo novo que ninguém lê é achado.
 - Não proponha reescrever o prompt inteiro. Aponte a regra, a linha e a
   correção mínima.
 

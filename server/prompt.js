@@ -765,6 +765,334 @@ export function disciplinaSimulada({ documento = '', heuristica = null } = {}) {
 }
 
 /* ================================================================== */
+/* ASSISTENTE DO EMPREENDIMENTO — conversa presa ao que existe          */
+/* ================================================================== */
+
+/* A pessoa pergunta sobre o empreendimento e a resposta vem SÓ do que o
+   Prancharia tem: os documentos lidos (texto das pranchas e dos memoriais),
+   o levantamento atual (locais, itens, evidências, pendências) e a lista do
+   que está no Drive e ainda não foi lido. Quando a informação não está aí, a
+   resposta diz isso — e aponta o arquivo do Drive que pode tê-la. Quando a
+   pessoa diz que o levantamento está errado, o assistente explica o que os
+   documentos mostram e propõe a ação (reler, recruzar, revisar); quem
+   executa é a pessoa, com um clique. */
+
+export const ACOES_ASSISTENTE = ['reprocessar', 'recruzar_memoriais', 'importar', 'revisar', 'abrir_local', 'exportar', 'mapear', 'nenhuma'];
+/* ações que só fazem sentido com alvo: sem alvo, caem */
+const ACOES_COM_ALVO = new Set(['reprocessar', 'importar', 'abrir_local', 'mapear']);
+
+export const INSTRUCAO_CHAT = `Você é o assistente do Prancharia para UM empreendimento: quem responde à equipe que faz o levantamento de acabamentos, esquadrias e locais para os Manuais do Proprietário e do Condomínio.
+
+Você recebe um CONTEXTO com tudo o que o sistema tem sobre o empreendimento: a lista de documentos lidos, o texto extraído de cada um (pranchas e memoriais), o levantamento atual (locais, tipologias, itens por categoria, com a fonte de cada um), as pendências, e a lista de arquivos que estão no Drive mas ainda não foram lidos. Recebe também a conversa até aqui e a pergunta.
+
+A1. RESPONDA SÓ COM O CONTEXTO. Nada do que você sabe sobre construção civil substitui o documento: se a pergunta é "qual o piso da suíte?", a resposta é o que o memorial ou a prancha dizem, com a fonte. Se o contexto não tem a informação, diga "não está nos documentos lidos" — e, se há um arquivo no Drive ainda não lido cujo nome sugere que ele tem a resposta (memorial, caderno de acabamentos, planta de outro pavimento), diga qual e proponha a ação "importar".
+A2. CITE A FONTE de cada afirmação factual: nome do documento e página/folha ("Memorial descritivo p.12", "Planta 2º pavimento"). Sem fonte, não afirme.
+A3. NÃO INVENTE marca, modelo, medida, quantidade ou local. Preferência de mercado não é informação do empreendimento.
+A4. QUANDO A PESSOA DIZ QUE ALGO ESTÁ ERRADO (um local que não existe, um item no local errado, a planilha incompleta), compare o levantamento com o texto dos documentos, explique a diferença e proponha a ação certa em "acoes": "reprocessar" (reler documentos: o nome do documento em "alvo" é obrigatório), "recruzar_memoriais" (refazer o cruzamento do memorial com as pranchas), "mapear" (refazer o mapeamento inteiro pela IA a partir de todos os documentos: "alvo" = "comum" para áreas comuns ou "privativa" para as unidades), "revisar" (abrir a tela de revisão), "abrir_local" (abrir um local: nome em "alvo"), "importar" (trazer um arquivo do Drive: nome em "alvo"), "exportar" (gerar a planilha). Você propõe; quem executa é a pessoa.
+A5. Seja direto e em português do Brasil. Frases curtas. Listas quando há vários itens. Não repita a pergunta. Não descreva o que você está fazendo.
+A6. "confianca": "alta" quando a resposta vem literalmente dos documentos; "media" quando junta fontes ou interpreta; "baixa" quando o contexto é insuficiente e você diz isso.
+
+Responda com um array JSON contendo UM objeto.`;
+
+export const SCHEMA_CHAT = {
+  type: 'array',
+  minItems: 1, maxItems: 1,
+  items: {
+    type: 'object',
+    properties: {
+      resposta: texto('A resposta, em texto corrido com quebras de linha; listas com "- ".'),
+      fontes: { type: 'array', items: { type: 'object', properties: {
+        documento: texto('Nome do documento como aparece no contexto.'),
+        pagina: texto('Página ou folha, se souber. Senão "".'),
+        trecho: texto('O trecho curto do documento que sustenta a afirmação (até 300 caracteres). Obrigatório.'),
+      }, required: ['documento', 'trecho'] } },
+      acoes: { type: 'array', items: { type: 'object', properties: {
+        tipo: { type: 'string', enum: ACOES_ASSISTENTE },
+        alvo: texto('Nome do documento, arquivo do Drive ou local, quando a ação tem alvo. Senão "".'),
+        motivo: texto('Por que esta ação, em uma frase.'),
+      }, required: ['tipo', 'motivo'] } },
+      confianca: { type: 'string', enum: ['alta', 'media', 'baixa'] },
+    },
+    required: ['resposta', 'fontes', 'acoes', 'confianca'],
+  },
+};
+
+const MAX_CONTEXTO = 600000;   // caracteres — cabe no Gemini com folga
+
+/** Monta a parte de texto da chamada: contexto, conversa e pergunta. */
+export function contextoChat({ contexto = '', historico = [], pergunta = '' } = {}) {
+  const l = [];
+  l.push('=== CONTEXTO DO EMPREENDIMENTO (tudo o que o sistema tem) ===');
+  l.push(String(contexto || '').slice(0, MAX_CONTEXTO));
+  if (String(contexto || '').length > MAX_CONTEXTO) l.push('[… contexto cortado por tamanho …]');
+  const h = (Array.isArray(historico) ? historico : []).slice(-10);
+  if (h.length) {
+    l.push('', '=== CONVERSA ATÉ AQUI ===');
+    for (const m of h) l.push(`${m.de === 'ia' ? 'ASSISTENTE' : 'PESSOA'}: ${limpaLinha(m.texto).slice(0, 2000)}`);
+  }
+  l.push('', '=== PERGUNTA ===', limpaLinha(pergunta).slice(0, 4000));
+  return l.join('\n');
+}
+
+/** Uma resposta com texto, fontes e ações válidas — ou null. */
+export function sanearChat(bruto) {
+  const obj = Array.isArray(bruto) ? bruto.find(x => x && typeof x === 'object') : (bruto && typeof bruto === 'object' ? bruto : null);
+  if (!obj) return null;
+  const resposta = String(obj.resposta || '').trim();
+  if (!resposta) return null;
+  /* a regra de ouro em código, como nos outros modos: fonte sem trecho não é
+     fonte; resposta "alta" sem nenhuma fonte é "baixa"; ação que precisa de
+     alvo e veio sem ele cai */
+  const fontes = (Array.isArray(obj.fontes) ? obj.fontes : []).map(f => ({
+    documento: limpar(f && f.documento).slice(0, 200), pagina: limpar(f && f.pagina).slice(0, 40), trecho: limpar(f && f.trecho).slice(0, 300),
+  })).filter(f => f.documento && f.trecho.length >= 6).slice(0, 20);
+  const acoes = (Array.isArray(obj.acoes) ? obj.acoes : []).map(a => ({
+    tipo: ACOES_ASSISTENTE.includes(limpar(a && a.tipo)) ? limpar(a.tipo) : 'nenhuma',
+    alvo: limpar(a && a.alvo).slice(0, 200), motivo: limpar(a && a.motivo).slice(0, 300),
+  })).filter(a => a.tipo !== 'nenhuma' && !(ACOES_COM_ALVO.has(a.tipo) && !a.alvo)).slice(0, 6);
+  let confianca = ['alta', 'media', 'baixa'].includes(limpar(obj.confianca)) ? limpar(obj.confianca) : 'media';
+  if (confianca === 'alta' && !fontes.length) confianca = 'baixa';
+  return { resposta: resposta.slice(0, 12000), fontes, acoes, confianca };
+}
+
+/** Resposta canned para o modo simulado: ecoa o que há no contexto. */
+export function chatSimulado({ contexto = '', pergunta = '' } = {}) {
+  const docs = (contexto.match(/^- (.+?) \(/gm) || []).map(s => s.replace(/^- /, '').replace(/ \($/, '')).slice(0, 3);
+  return [{
+    resposta: `[SIMULADO] Pergunta recebida: "${limpaLinha(pergunta).slice(0, 120)}". O contexto tem ${contexto.length} caracteres e ${docs.length ? 'os documentos ' + docs.join(', ') : 'nenhum documento'}.`,
+    fontes: docs.map(d => ({ documento: d, pagina: '', trecho: '[SIMULADO] trecho do contexto' })),
+    acoes: /errad|refa[çz]|reprocess/i.test(pergunta) ? [{ tipo: 'reprocessar', alvo: docs[0] || '', motivo: '[SIMULADO] a pessoa disse que está errado' }] : [],
+    confianca: 'baixa',
+  }];
+}
+
+/* ================================================================== */
+/* MAPEAMENTO PELA IA — o levantamento inteiro a partir do corpus       */
+/* ================================================================== */
+
+/* O que o NotebookLM faz com a pasta inteira do empreendimento: lê tudo e
+   entrega a planilha por local, por tipologia e por opcional. Aqui o corpus
+   é o mesmo contexto do assistente (texto de todos os documentos lidos), a
+   instrução é a da equipe (os dois prompts de áreas comuns e apartamentos,
+   condensados) e a saída é estruturada — uma linha por item, com a fonte.
+   Cada linha entra na árvore como item A REVISAR, com a evidência apontando
+   o documento e a página; nada substitui o que a leitura vetorial já leu.
+
+   Três chamadas, não uma: o INVENTÁRIO (só os nomes das tipologias e dos
+   opcionais, resposta curta), o mapeamento das ÁREAS COMUNS e o mapeamento
+   das UNIDADES — este último uma chamada POR tipologia ou opcional
+   (`filtro`), para a resposta caber com folga no limite de saída do modelo:
+   uma resposta truncada no meio do array perde tudo. Nenhuma chamada recebe
+   imagem: o que a IA cruza é texto — a legenda escrita, a tabela de
+   esquadrias, o memorial —, nunca a forma geométrica de uma tag. */
+
+export const CATEGORIAS_MAPEAMENTO = CATEGORIAS;   // as mesmas da planilha, literais
+
+const REGRAS_MAPEAMENTO_COMUNS = `MP1. FONTE DE VERDADE. Use EXCLUSIVAMENTE o CONTEXTO (texto das pranchas, memoriais, cadernos, tabelas de esquadrias, opcionais e demais documentos lidos). É PROIBIDO conhecimento externo, padrão de mercado, suposição construtiva ou dado de outro empreendimento. É PROIBIDO inventar local, produto, esquadria, marca ou fornecedor: o que não está explícito fica "".
+MP2. SISTEMA CONSTRUTIVO só com a nomenclatura LITERAL da LISTA MESTRA DE SISTEMAS do contexto. Sem correspondência explícita, "".
+MP3. LOCAIS com a nomenclatura EXATA do projeto (grafia, caixa, numeração). Não padronize, não traduza, não abrevie, não crie nomes. O mesmo ambiente com nomes distintos em pavimentos distintos fica como consta.
+MP4. ACABAMENTOS por local: só o que o texto vincula àquele ambiente — a linha do memorial, do caderno ou do quadro que nomeia o local, ou a legenda escrita cujo código o texto da planta associa ao ambiente. Você não vê o desenho: nunca deduza forma, número de tag ou material que não estejam escritos. Sem contaminação de vizinho, de outra tipologia ou de especificação genérica. Teto = só acabamento interno (forro, gesso, pintura, moldura), nunca cobertura ou estrutura.
+MP5. ESQUADRIAS por local (obrigatório): toda janela e porta (de correr, de abrir, basculante, maxim-ar, veneziana, porta-balcão, porta corta-fogo, porta de vidro, portão) que o texto da planta marca pelo código (J01, P02, PJ03, EA18, PCF) no ambiente, cruzada com a tabela/quadro/memorial. UMA LINHA por esquadria, categoria "Esquadrias", produto = tipo + código exato ("Porta de abrir P02", "Janela de correr EA18"); descrição = material, linha, dimensões, vidro, cor, ferragens, só quando escritos; mais de uma do mesmo código no mesmo local → "quantidade"; esquadria na divisa entre dois ambientes → uma linha em cada; código sem tabela → linha só com o código.
+MP6. CATEGORIA fechada, exatamente uma destas: ${CATEGORIAS.join(' | ')}. ${MAPEAMENTO_CATEGORIAS} Rodapé e rejunte de piso vão em "Piso"; pintura e rejunte de parede em "Paredes"; forro, moldura e pintura de teto em "Teto".
+MP7. FONTE em toda linha: documento (nome exato do contexto), página/folha e o trecho literal que sustenta. Linha sem fonte é descartada pelo sistema.
+MP8. VERACIDADE: célula sem informação explícita fica "" — nunca "N/A", "não se aplica", "-", "a definir". Sem métodos de instalação, limpeza, manutenção ou garantia. Linguagem técnica, sem adjetivos. Não altere medidas nem unidades.
+MP9. UM ITEM, UM MANUAL. Vaga, depósito, hobby box ou área técnica que as fontes vinculam a UMA unidade específica entra só no mapeamento das unidades; o que é de uso coletivo entra só nas áreas comuns. Nunca nos dois.`;
+
+export const INSTRUCAO_MAPEAMENTO_COMUNS = `Atue como um Engenheiro de Redação Técnica especializado em especificações de acabamento e quadros de produtos e fornecedores.
+
+Sua tarefa é mapear os LOCAIS DAS ÁREAS COMUNS do empreendimento, os acabamentos/produtos e as esquadrias de cada local, a partir do CONTEXTO recebido.
+
+ESCOPO: só ÁREAS COMUNS — acessos, halls, circulações, escadas, salões, lazer, áreas técnicas coletivas, garagens de uso comum, áreas externas, coberturas acessíveis, guarita, depósitos coletivos, sanitários de uso comum e demais ambientes de uso coletivo. IGNORE o interior das unidades privativas, suas sacadas e o que está vinculado a uma unidade específica (MP9). Não inclua ambientes de outros empreendimentos ou fases.
+
+${REGRAS_MAPEAMENTO_COMUNS}
+
+Devolva um array JSON: uma linha por item, "tipologia" e "opcional" sempre "" (áreas comuns não têm tipologia).`;
+
+export const INSTRUCAO_MAPEAMENTO_INVENTARIO = `Atue como um Engenheiro de Redação Técnica que conhece projetos residenciais brasileiros.
+
+Sua tarefa é só o INVENTÁRIO: listar, a partir do CONTEXTO, (a) as TIPOLOGIAS de unidade privativa que as fontes mostram — apartamento, casa, sala — com a nomenclatura exata do projeto (FINAL 01, TIPO A, 2 SUÍTES, STUDIO, GARDEN, COBERTURA DUPLEX…) e (b) os OPCIONAIS DE PERSONALIZAÇÃO previstos nas fontes (planta opcional, sala ampliada, varanda estendida, acabamento alternativo, unidade personalizada: "APTO 104", "APTO 305 (TAÍSA)"), cada um com a tipologia base sobre a qual ele se aplica, quando as fontes dizem.
+
+Não presuma tipologia nem opcional que as fontes não mostrem. Não mapeie acabamentos aqui. Cite, em "fonte", o documento que sustenta cada entrada.
+
+Devolva um array JSON, uma entrada por tipologia ou opcional.`;
+
+export const INSTRUCAO_MAPEAMENTO_UNIDADES = `Atue como um Engenheiro de Redação Técnica especializado em especificações de acabamento e quadros de produtos e fornecedores.
+
+Sua tarefa é mapear os LOCAIS DE UMA TIPOLOGIA (ou de UM OPCIONAL DE PERSONALIZAÇÃO) de unidade privativa, os acabamentos/produtos e as esquadrias de cada local, a partir do CONTEXTO recebido. O contexto diz, em "MAPEIE SOMENTE", qual tipologia ou opcional é o alvo desta chamada: mapeie só ele.
+
+ESCOPO: só o interior das unidades e suas sacadas/varandas privativas. IGNORE áreas comuns, áreas técnicas coletivas, garagens de uso comum e implantação — exceto item fora da unidade que as fontes vinculem explicitamente a ela (MP9).
+
+TIPOLOGIA: preencha "tipologia" com o nome exato do projeto em toda linha. Não replique acabamentos de outra tipologia: cada uma pela sua evidência.
+OPCIONAL: quando o alvo é um opcional, "opcional" leva o nome do opcional e "tipologia" a tipologia base sobre a qual ele se aplica; devolva SÓ o que o opcional muda ou acrescenta (a planta ou o documento do opcional), sem copiar a base — o sistema monta a unidade personalizada juntando a base com estas linhas.
+
+${REGRAS_MAPEAMENTO_COMUNS}
+
+Devolva um array JSON: uma linha por item.`;
+
+export const SCHEMA_MAPEAMENTO = {
+  type: 'array',
+  items: {
+    type: 'object',
+    properties: {
+      tipologia: texto('Tipologia da unidade, com o nome exato do projeto. "" nas áreas comuns.'),
+      opcional: texto('Nome do opcional de personalização, quando a linha é de um opcional. Senão "".'),
+      local: texto('Nome do ambiente exatamente como no projeto.'),
+      categoria: { type: 'string', enum: CATEGORIAS_MAPEAMENTO },
+      produto: texto('Nome do produto/serviço: Porcelanato, Tinta acrílica, Forro de gesso acartonado, Bacia sanitária, Soleira, Janela de correr J01.'),
+      sistema: texto('Sistema construtivo, literal da Lista Mestra, ou "".'),
+      descricao: texto('Descrição/modelo/linha conforme a fonte: linha, referência, dimensão, cor, acabamento. "" se não houver.'),
+      marca: texto('Fabricante, só se escrito. Senão "".'),
+      fornecedor: texto('Nome fantasia do fornecedor/aplicador, só se explícito. Senão "".'),
+      quantidade: texto('Só para esquadria repetida no mesmo local. Senão "".'),
+      documento: texto('Nome exato do documento do contexto de onde a linha saiu.'),
+      pagina: texto('Página ou folha, se souber. Senão "".'),
+      trecho: texto('Trecho literal do documento que sustenta a linha (até 300 caracteres). Obrigatório.'),
+      confianca: { type: 'string', enum: ['alta', 'media', 'baixa'] },
+    },
+    required: ['tipologia', 'opcional', 'local', 'categoria', 'produto', 'documento', 'trecho', 'confianca'],
+  },
+};
+
+export const SCHEMA_INVENTARIO = {
+  type: 'array',
+  items: {
+    type: 'object',
+    properties: {
+      nome: texto('Nome exato da tipologia ou do opcional, como no projeto.'),
+      tipo: { type: 'string', enum: ['tipologia', 'opcional'] },
+      base: texto('Só para opcional: a tipologia base sobre a qual ele se aplica, quando as fontes dizem. Senão "".'),
+      descricao: texto('Uma frase: o que caracteriza (2 suítes, 1 suíte + 2 semi-suítes, sala ampliada…). "" se não houver.'),
+      fonte: texto('Documento (e página) que sustenta a entrada.'),
+    },
+    required: ['nome', 'tipo', 'fonte'],
+  },
+};
+
+const MAX_CONTEXTO_MAPEAMENTO = 700000;
+
+/** Monta a parte de texto da chamada: lista mestra, o alvo (se houver) e o corpus. */
+export function contextoMapeamento({ contexto = '', sistemas = [], filtro = null } = {}) {
+  const l = [];
+  if (filtro && filtro.nome) {
+    l.push('=== MAPEIE SOMENTE ===');
+    l.push(`${filtro.tipo === 'opcional' ? 'OPCIONAL' : 'TIPOLOGIA'}: ${limpaLinha(filtro.nome)}${filtro.tipo === 'opcional' && filtro.base ? ` (tipologia base: ${limpaLinha(filtro.base)})` : ''}`);
+    l.push('Toda linha desta resposta pertence a este alvo. Ignore as demais tipologias e opcionais.', '');
+  }
+  l.push('=== LISTA MESTRA DE SISTEMAS (use só estes nomes, literalmente) ===');
+  for (const s of (Array.isArray(sistemas) ? sistemas : []).slice(0, 400)) l.push('- ' + limpaLinha(s));
+  l.push('', '=== CONTEXTO DO EMPREENDIMENTO (documentos lidos, levantamento atual, Drive) ===');
+  l.push(String(contexto || '').slice(0, MAX_CONTEXTO_MAPEAMENTO));
+  if (String(contexto || '').length > MAX_CONTEXTO_MAPEAMENTO) l.push('[… contexto cortado por tamanho …]');
+  return l.join('\n');
+}
+
+const MAX_LINHAS_MAPEAMENTO = 1500;
+
+/** Linhas válidas: com local, produto e fonte; categoria e sistema só das listas. */
+export function sanearMapeamento(bruto, sistemas = []) {
+  const lista = Array.isArray(bruto) ? bruto : (bruto && Array.isArray(bruto.linhas) ? bruto.linhas : []);
+  const sis = new Map((Array.isArray(sistemas) ? sistemas : []).map(s => [limpaLinha(s).toLowerCase(), s]));
+  const cat = new Map(CATEGORIAS_MAPEAMENTO.map(c => [c.toLowerCase(), c]));
+  /* o nome curto que a equipe usa nos prompts, aceito por tolerância */
+  cat.set('pedras naturais', 'Revestimentos em Pedras Naturais');
+  cat.set('pedra natural', 'Revestimentos em Pedras Naturais');
+  const out = [];
+  const vistos = new Set();
+  const recusadas = { vazia: 0, semFonte: 0, repetida: 0, categoria: 0, excedente: 0 };
+  for (const r of lista) {
+    if (!r || typeof r !== 'object') continue;
+    if (out.length >= MAX_LINHAS_MAPEAMENTO) { recusadas.excedente++; continue; }
+    const item = {
+      tipologia: limpar(r.tipologia).slice(0, 80),
+      opcional: limpar(r.opcional).slice(0, 80),
+      local: limpar(r.local).slice(0, 80),
+      categoria: cat.get(limpar(r.categoria).toLowerCase()) || '',
+      produto: limpar(r.produto).slice(0, 120),
+      sistema: sis.get(limpar(r.sistema).toLowerCase()) || '',
+      descricao: limpar(r.descricao).slice(0, 600),
+      marca: limpar(r.marca).slice(0, 80),
+      fornecedor: limpar(r.fornecedor).slice(0, 120),
+      quantidade: limpar(r.quantidade).slice(0, 20),
+      documento: limpar(r.documento).slice(0, 200),
+      pagina: limpar(r.pagina).slice(0, 40),
+      trecho: limpar(r.trecho).slice(0, 300),
+      confianca: ['alta', 'media', 'baixa'].includes(limpar(r.confianca)) ? limpar(r.confianca) : 'baixa',
+    };
+    if (!item.local || (!item.produto && !item.descricao)) { recusadas.vazia++; continue; }
+    if (!item.categoria) { recusadas.categoria++; continue; }
+    if (!item.documento || item.trecho.length < 6) { recusadas.semFonte++; continue; }
+    const k = [item.tipologia, item.opcional, item.local, item.categoria, item.produto, item.descricao].join('|').toLowerCase();
+    if (vistos.has(k)) { recusadas.repetida++; continue; }
+    vistos.add(k);
+    out.push(item);
+  }
+  return { linhas: out, recusadas };
+}
+
+/** Entradas válidas do inventário: nome e fonte; no máximo 60. */
+export function sanearInventario(bruto) {
+  const lista = Array.isArray(bruto) ? bruto : (bruto && Array.isArray(bruto.entradas) ? bruto.entradas : []);
+  const out = [];
+  const vistos = new Set();
+  for (const r of lista) {
+    if (!r || typeof r !== 'object') continue;
+    const e = {
+      nome: limpar(r.nome).slice(0, 80),
+      tipo: limpar(r.tipo) === 'opcional' ? 'opcional' : 'tipologia',
+      base: limpar(r.base).slice(0, 80),
+      descricao: limpar(r.descricao).slice(0, 200),
+      fonte: limpar(r.fonte).slice(0, 200),
+    };
+    if (!e.nome || !e.fonte) continue;
+    const k = (e.tipo + '|' + e.nome).toLowerCase();
+    if (vistos.has(k)) continue;
+    vistos.add(k);
+    out.push(e);
+    if (out.length >= 60) break;
+  }
+  return out;
+}
+
+/** Modo simulado: inventário com duas tipologias e um opcional. */
+export function inventarioSimulado({ contexto = '' } = {}) {
+  const docs = (contexto.match(/^--- (.+?) ---$/gm) || []).map(s => s.replace(/^--- | ---$/g, ''));
+  const doc = docs[0] || 'documento';
+  return [
+    { nome: 'TIPOLOGIA BASE - 2 SUÍTES', tipo: 'tipologia', base: '', descricao: '[SIMULADO] 2 suítes', fonte: doc },
+    { nome: 'TIPOLOGIA BASE - 3 SUÍTES', tipo: 'tipologia', base: '', descricao: '[SIMULADO] 3 suítes', fonte: doc },
+    { nome: 'APTO 104', tipo: 'opcional', base: 'TIPOLOGIA BASE - 2 SUÍTES', descricao: '[SIMULADO] cozinha modificada', fonte: doc },
+  ];
+}
+
+/** Modo simulado: uma linha por local que o contexto lista, para o caminho existir. */
+export function mapeamentoSimulado({ escopo = 'comum', contexto = '', filtro = null } = {}) {
+  const docs = (contexto.match(/^--- (.+?) ---$/gm) || []).map(s => s.replace(/^--- | ---$/g, ''));
+  const doc = docs[0] || 'documento';
+  const linha = (tipologia, opcional, local, categoria, produto, descricao, sistema = '') => ({
+    tipologia, opcional, local, categoria, produto, sistema, descricao, marca: categoria === 'Piso' ? 'Portobello' : '', fornecedor: '', quantidade: '',
+    documento: doc, pagina: '1', trecho: `[SIMULADO] trecho sobre ${local}`, confianca: 'media',
+  });
+  if (escopo === 'comum') {
+    return [
+      linha('', '', 'HALL SOCIAL', 'Piso', 'Porcelanato', '[SIMULADO] PORCELANATO 90X90', 'Revestimento cerâmico interno'),
+      linha('', '', 'HALL SOCIAL', 'Esquadrias', 'Porta de abrir P01', '[SIMULADO] porta de madeira 80x210'),
+      linha('', '', 'SALÃO DE FESTAS', 'Piso', 'Porcelanato', '[SIMULADO] PORCELANATO 90X90', 'Revestimento cerâmico interno'),
+    ];
+  }
+  const alvo = filtro && filtro.nome ? filtro : { nome: 'TIPOLOGIA BASE - 2 SUÍTES', tipo: 'tipologia' };
+  if (alvo.tipo === 'opcional') {
+    return [linha(alvo.base || '', alvo.nome, 'COZINHA', 'Teto', 'Forro de gesso trabalhado', '[SIMULADO] forro de gesso com tabica', 'Forro de gesso')];
+  }
+  return [
+    linha(alvo.nome, '', 'SALA DE ESTAR', 'Piso', 'Porcelanato', '[SIMULADO] PORCELANATO 90X90', 'Revestimento cerâmico interno'),
+    linha(alvo.nome, '', 'SALA DE ESTAR', 'Esquadrias', 'Porta de abrir P01', '[SIMULADO] porta de madeira 80x210'),
+    linha(alvo.nome, '', 'SUÍTE 1', 'Piso', 'Porcelanato', '[SIMULADO] PORCELANATO 90X90', 'Revestimento cerâmico interno'),
+    linha(alvo.nome, '', 'SUÍTE 1', 'Esquadrias', 'Porta de abrir P01', '[SIMULADO] porta de madeira 80x210'),
+    linha(alvo.nome, '', 'COZINHA', 'Piso', 'Porcelanato', '[SIMULADO] PORCELANATO 90X90', 'Revestimento cerâmico interno'),
+    linha(alvo.nome, '', 'COZINHA', 'Teto', 'Pintura', '[SIMULADO] laje aparente pintada'),
+  ];
+}
+/* ================================================================== */
 /* CONTEXTO DE EMPRESA — a memória técnica da construtora              */
 /* ================================================================== */
 

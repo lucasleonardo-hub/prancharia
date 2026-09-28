@@ -14,6 +14,7 @@ import { analisarMemorial, pareceMemorial, cruzarComPranchas, fundirComMemorial,
 import { ocrPdf, anotarFalha } from '../core/ia.js';
 import { identificarDisciplina, textoDoCarimbo, emEscopo, nomeDisciplina, DISCIPLINAS, triarLista } from '../core/disciplina.js';
 import { completarObrigatorias } from '../core/ambiente.js';
+import { perguntarAoAssistente, indexarTexto, assistenteDisponivel, montarContexto, mapearComIA, incorporarMapeamento, inventarioComIA, incorporarInventario } from '../core/assistente.js';
 import {
   CATEGORIAS, STATUS, CONFIANCA, MOTIVOS_PENDENCIA, registrarHistorico, normalizar,
   semearPavimentos, sincronizar,
@@ -566,6 +567,10 @@ const documentos = {
     },
     async reprocessarMemoriais() {
       const e = emp();
+      if (estado.processando) { aviso('Espere o processamento atual terminar.'); return; }
+      const n = e.documentos.filter(x => x.tipo === 'memorial').length;
+      if (!n) { aviso('Não há memorial neste empreendimento.'); return; }
+      if (!await confirmar({ titulo: `Recruzar ${n} memorial(is)?`, texto: 'Os itens que vieram do memorial são apagados e lidos de novo; o que veio das pranchas e o que você editou à mão nas pranchas ficam.', ok: 'Recruzar' })) return;
       for (const l of (e.locais || [])) l.especificacoes = (l.especificacoes || []).filter(a => a.origemLeitura !== 'memorial');
       e.especificacoesSemLocal = (e.especificacoesSemLocal || []).filter(a => a.origemLeitura !== 'memorial');
       sincronizar(e);
@@ -622,8 +627,16 @@ async function receberDoDrive({ porLink = false } = {}) {
     render();
     /* 2) triagem pelo nome e pela pasta, antes do download: estrutura,
           instalações e modificação nem chegam ao navegador */
-    const escolha = await escolherDoDrive(triarLista(l.itens));
-    if (!escolha) return;
+    const triados = triarLista(l.itens);
+    /* o empreendimento lembra a pasta e o que há nela: é o que o assistente
+       usa para dizer "isso está no Drive, ainda não foi lido" */
+    const e0 = emp();
+    if (e0) {
+      if (l.pasta) e0.drivePasta = { id: l.pasta.id, nome: l.pasta.nome, link: `https://drive.google.com/drive/folders/${encodeURIComponent(l.pasta.id)}`, visto: new Date().toISOString() };
+      e0.driveArquivos = triados.itens.map(it => ({ id: it.id, nome: it.name, caminho: it.caminho || '', bytes: it.size || 0, disciplina: it.disciplina, escopo: it.escopo }));
+    }
+    const escolha = await escolherDoDrive(triados);
+    if (!escolha) { if (e0) await salvar(); return; }
     const selecionados = l.itens.filter(it => escolha.ids.has(it.id));
     if (!selecionados.length) { aviso('Nenhum arquivo selecionado.'); return; }
     /* 3) baixa só o que entra */
@@ -907,6 +920,8 @@ async function processarDocumento(meta, lote = null) {
       return;
     }
     meta.foraDoEscopo = false;
+    /* o texto do documento entra no índice do assistente (js/core/assistente.js) */
+    try { meta.textoIndexado = await indexarTexto(doc, meta.tipo); } catch (err) { console.warn('[assistente] índice de texto falhou:', err.message); }
     if (meta.tipo === 'memorial') {
       /* memorial escaneado (sem camada de texto) quase não tem texto
          extraível: manda pro OCR antes de tentar ler. Só faz sentido com o
@@ -920,6 +935,7 @@ async function processarDocumento(meta, lote = null) {
           estado.pdfs.set(meta.id, { doc, blob });
           meta.paginas = doc.numPages;
           meta.ocrAplicado = true;
+          try { meta.textoIndexado = await indexarTexto(doc, 'memorial'); } catch { /* fica o índice anterior */ }
         } catch (err) {
           anotarFalha(err, 'OCR do memorial');
         }
@@ -2619,6 +2635,191 @@ function relatorioHtml(a) {
 }
 
 /* ================= RASTREABILIDADE ================= */
+/* ================= ASSISTENTE ================= */
+/* A conversa com a IA sobre este empreendimento, presa ao que ele tem: os
+   documentos lidos, o levantamento e a lista do Drive. Cada resposta traz
+   as fontes e, quando cabe, ações que a pessoa executa com um clique. */
+const ROTULO_ACAO = {
+  reprocessar: 'Reler documentos', recruzar_memoriais: 'Recruzar memoriais', importar: 'Importar do Drive',
+  revisar: 'Abrir a revisão', abrir_local: 'Abrir o local', exportar: 'Abrir a exportação', mapear: 'Mapear pela IA',
+};
+const textoParaHtml = s => esc(s).replace(/\n/g, '<br>').replace(/(^|<br>)- /g, '$1• ');
+const assistente = {
+  render(e) {
+    if (!e) return '';
+    const msgs = ((e.assistente || {}).mensagens || []);
+    const disponivel = assistenteDisponivel();
+    const naoLidos = (e.driveArquivos || []).filter(f => !e.documentos.some(d => d.nome === f.nome || (d.drive && d.drive.id === f.id)));
+    const indexados = e.documentos.filter(d => d.textoIndexado).length;
+    const bolha = (m, i) => m.de === 'ia'
+      ? `<div class="msg ia"><div class="corpo-msg">${textoParaHtml(m.texto)}</div>
+          ${(m.fontes || []).length ? `<div class="fontes">${m.fontes.map(f => `<span class="selo apagado" title="${esc(f.trecho || '')}">${esc(f.documento)}${f.pagina ? ' · ' + esc(f.pagina) : ''}</span>`).join('')}</div>` : ''}
+          ${(m.acoes || []).length ? `<div class="acoes-msg">${m.acoes.map((a, j) => `<button class="btn pequeno${a.tipo === 'reprocessar' || a.tipo === 'recruzar_memoriais' ? ' primario' : ''}" data-acao="acaoAssistente" data-i="${i}" data-j="${j}" title="${esc(a.motivo || '')}">${esc(ROTULO_ACAO[a.tipo] || a.tipo)}${a.alvo ? ': ' + esc(a.alvo.slice(0, 40)) : ''}</button>`).join('')}</div>` : ''}
+          <div class="sub">${esc(new Date(m.quando).toLocaleString('pt-BR'))}${m.confianca ? ' · confiança ' + esc(m.confianca) : ''}${m.erro ? ' · <b>falhou</b>' : ''}${(m.omitidos || []).length ? ` · <b>fora do contexto por tamanho:</b> ${esc(m.omitidos.join(', '))}` : ''}</div></div>`
+      : `<div class="msg pessoa"><div class="corpo-msg">${textoParaHtml(m.texto)}</div><div class="sub">${esc(new Date(m.quando).toLocaleString('pt-BR'))}</div></div>`;
+    return `
+      <div class="cabeca"><div><h1>Assistente</h1><p class="desc">Pergunte sobre este empreendimento. A resposta vem só do que o sistema tem: ${e.documentos.length} documento(s), ${indexados} com texto indexado, ${locaisVivos(e).length} locais${naoLidos.length ? `, e ${naoLidos.length} arquivo(s) no Drive ainda não lidos` : ''}. O que não está nos documentos, ele diz que não está. Quando algo está errado, ele propõe reler ou recruzar — e você decide.</p></div>
+        <div class="acoes">
+          ${msgs.length ? '<button class="btn discreto" data-acao="limparConversa">Limpar conversa</button>' : ''}
+          <button class="btn" data-acao="verContexto" title="O texto exato que vai para a IA">Ver o contexto</button>
+          ${disponivel && temAreasComuns(e) ? '<button class="btn" data-acao="mapear" data-escopo="comum" title="A IA lê todos os documentos e propõe o levantamento das áreas comuns: locais, acabamentos e esquadrias, com a fonte">Mapear áreas comuns</button>' : ''}
+          ${disponivel ? '<button class="btn primario" data-acao="mapear" data-escopo="privativa" title="A IA lê todos os documentos e propõe o levantamento das unidades, por tipologia e por opcional, com a fonte">Mapear unidades</button>' : ''}
+        </div></div>
+      ${!disponivel ? '<div class="aviso-faixa"><span class="ico-aviso" aria-hidden="true">!</span><div><b>O assistente precisa do servidor de IA.</b> Ligue o motor multimodal em Configurações; sem ele a leitura vetorial continua funcionando, mas não há com quem conversar.</div></div>' : ''}
+      <div class="cartao conversa"><div class="corpo" id="conversa">
+        ${msgs.length ? msgs.map(bolha).join('') : `<p class="nota-prova" style="margin:0">Exemplos: “qual o piso da suíte do final 3?”, “que esquadrias tem a cozinha?”, “o que falta especificar no banho?”, “a planilha está errada: o BANHO 2 não é do apto 201”.</p>`}
+        ${estado.assistentePensando ? `<div class="msg ia pensando"><div class="corpo-msg">${esc(estado.assistenteProgresso || 'lendo os documentos…')}</div></div>` : ''}
+      </div>
+      <form id="formAssistente" class="linha-pergunta">
+        <textarea id="pergunta" rows="2" placeholder="Pergunte sobre locais, esquadrias, acabamentos, documentos…" ${disponivel && !estado.assistentePensando ? '' : 'disabled'}></textarea>
+        <button class="btn primario" type="submit" ${disponivel && !estado.assistentePensando ? '' : 'disabled'}>Perguntar</button>
+      </form></div>`;
+  },
+  depois(e, alvo) {
+    const f = alvo.querySelector('#formAssistente');
+    const ta = alvo.querySelector('#pergunta');
+    if (!f || !ta) return;
+    const enviar = () => { const t = ta.value.trim(); if (t) { ta.value = ''; assistente.acoes.perguntar({ texto: t }); } };
+    f.addEventListener('submit', ev => { ev.preventDefault(); enviar(); });
+    ta.addEventListener('keydown', ev => { if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); enviar(); } });
+    const c = alvo.querySelector('#conversa'); if (c) c.scrollTop = c.scrollHeight;
+    if (!estado.assistentePensando) ta.focus();
+  },
+  acoes: {
+    async perguntar({ texto }) {
+      const e = emp(); if (!e || !texto) return;
+      e.assistente = e.assistente || { mensagens: [] };
+      e.assistente.mensagens.push({ de: 'pessoa', texto, quando: new Date().toISOString() });
+      estado.assistentePensando = true; render();
+      const naoLidos = (e.driveArquivos || []).filter(x => !e.documentos.some(d => d.nome === x.nome || (d.drive && d.drive.id === x.id)));
+      try {
+        const msg = await perguntarAoAssistente(e, texto, { drive: naoLidos });
+        e.assistente.mensagens.push(msg);
+      } catch (err) {
+        e.assistente.mensagens.push({ de: 'ia', texto: 'Não consegui responder: ' + err.message, erro: true, quando: new Date().toISOString(), fontes: [], acoes: [] });
+      }
+      estado.assistentePensando = false;
+      await salvar(); render();
+    },
+    async acaoAssistente({ i, j }) {
+      const e = emp(); if (!e) return;
+      const m = ((e.assistente || {}).mensagens || [])[Number(i)];
+      const a = m && (m.acoes || [])[Number(j)];
+      if (!a) return;
+      const acha = nome => e.documentos.filter(d => !nome || normalizar(d.nome).includes(normalizar(nome)) || normalizar(nome).includes(normalizar(d.nome).replace(/\.(pdf|dwg)$/, '')));
+      if (a.tipo === 'reprocessar') {
+        if (estado.processando) { aviso('Espere o processamento atual terminar.'); return; }
+        const alvos = acha(a.alvo).filter(d => !d.foraDoEscopo);
+        if (!alvos.length) { aviso('Não encontrei o documento citado.'); return; }
+        if (!await confirmar({ titulo: `Reler ${alvos.length} documento(s)?`, texto: `${alvos.map(d => d.nome).join(', ')}. Os itens que só existem por causa deles são refeitos; o que você já revisou à mão em outros documentos fica.`, ok: 'Reler' })) return;
+        for (const d of alvos) {
+          const daquele = ev => ((ev.documentoOrigem || {}).docId) === d.id;
+          for (const l of (e.locais || [])) {
+            l.especificacoes = (l.especificacoes || []).filter(x => !(x.evidencias || []).every(daquele));
+            for (const x of l.especificacoes) x.evidencias = (x.evidencias || []).filter(ev => !daquele(ev));
+          }
+          e.especificacoesSemLocal = (e.especificacoesSemLocal || []).filter(x => !(x.evidencias || []).every(daquele));
+          e.tabelas = (e.tabelas || []).filter(t => t.documentoId !== d.id);
+          e.legendas = (e.legendas || []).filter(t => t.documentoId !== d.id);
+          d.processadoEm = null; d.tags = 0;
+          irPara('documentos');
+          await processarDocumento(d);
+        }
+        const aud = await auditarNoProcessamento(e);
+        await salvar(); irPara('assistente'); aviso(`Releitura concluída: ${aud.r.abertas} pendência(s) para revisão.`);
+        return;
+      }
+      if (a.tipo === 'recruzar_memoriais') { irPara('documentos'); await documentos.acoes.reprocessarMemoriais(); irPara('assistente'); return; }
+      if (a.tipo === 'mapear') { await assistente.acoes.mapear({ escopo: /priv|unid|apart/i.test(a.alvo || '') ? 'privativa' : 'comum' }); return; }
+      if (a.tipo === 'importar') { irPara('documentos'); aviso(`Importe “${a.alvo || 'o arquivo'}” pelo Google Drive ou por “Colar link”${e.drivePasta ? ` (pasta ${e.drivePasta.nome})` : ''}.`); return; }
+      if (a.tipo === 'revisar') { irPara('pendencias'); return; }
+      if (a.tipo === 'exportar') { irPara('planilhas'); return; }
+      if (a.tipo === 'abrir_local') {
+        const l = locaisVivos(e).find(x => normalizar(x.nome) === normalizar(a.alvo)) || locaisVivos(e).find(x => normalizar(x.nome).includes(normalizar(a.alvo)));
+        if (l) irPara('locais', l.id); else { irPara('locais'); aviso(`Local “${a.alvo}” não encontrado.`); }
+      }
+    },
+    /* o mapeamento inteiro: a IA lê o corpus e propõe locais, acabamentos e
+       esquadrias; tudo entra a revisar, com a fonte, e sai pela exportação
+       com as regras da planilha (cores, fórmulas, linhas obrigatórias) */
+    async mapear({ escopo }) {
+      const e = emp(); if (!e) return;
+      if (estado.processando || estado.assistentePensando) { aviso('Espere o processamento atual terminar.'); return; }
+      if (!e.documentos.some(d => d.textoIndexado)) { aviso('Nenhum documento lido ainda: importe as pranchas, o memorial e os cadernos antes de mapear.'); return; }
+      const comum = escopo === 'comum';
+      if (!await confirmar({
+        titulo: comum ? 'Mapear as áreas comuns pela IA?' : 'Mapear as unidades pela IA?',
+        texto: `A IA lê todos os documentos deste empreendimento e propõe ${comum ? 'os locais, acabamentos e esquadrias das áreas comuns' : 'os locais, acabamentos e esquadrias de cada tipologia e de cada opcional de personalização'}. Tudo entra como item a revisar, com o documento e o trecho de origem; nada do que já foi lido é apagado. Pode levar alguns minutos.`,
+        ok: 'Mapear',
+      })) return;
+      e.assistente = e.assistente || { mensagens: [] };
+      const progresso = (t) => { estado.assistenteProgresso = t; const c = document.querySelector('#conversa .msg.pensando .corpo-msg'); if (c) c.textContent = t; };
+      estado.assistentePensando = true; estado.assistenteProgresso = 'lendo os documentos…'; render();
+      const naoLidos = (e.driveArquivos || []).filter(x => !e.documentos.some(d => d.nome === x.nome || (d.drive && d.drive.id === x.id)));
+      try {
+        const contexto = montarContexto(e, { drive: naoLidos });
+        const omitidos = montarContexto.ultimosOmitidos.slice();
+        const total = { linhas: 0, itens: 0, locaisNovos: 0, tipologiasNovas: 0, repetidas: 0, recusadas: {} };
+        const soma = (r, inc) => {
+          total.linhas += r.linhas.length; total.itens += inc.itens; total.locaisNovos += inc.locaisNovos; total.tipologiasNovas += inc.tipologiasNovas; total.repetidas += inc.repetidas;
+          for (const [k, n] of Object.entries(r.recusadas || {})) if (n) total.recusadas[k] = (total.recusadas[k] || 0) + n;
+        };
+        const falhas = [];
+        let alvos = [];
+        if (comum) {
+          progresso('mapeando as áreas comuns…');
+          const r = await mapearComIA(e, 'comum', { contexto });
+          soma(r, incorporarMapeamento(e, r.linhas, 'comum'));
+        } else {
+          /* 1) o inventário; 2) uma chamada por tipologia e por opcional —
+             a resposta cabe no limite do modelo e uma falha não derruba as outras */
+          progresso('inventariando tipologias e opcionais…');
+          const inv = await inventarioComIA(e, { drive: naoLidos });
+          total.tipologiasNovas += incorporarInventario(e, inv.entradas);
+          alvos = inv.entradas;
+          if (!alvos.length) throw new Error('a IA não encontrou tipologias nem opcionais nos documentos lidos — importe as plantas das unidades e o memorial');
+          for (let i = 0; i < alvos.length; i++) {
+            const a = alvos[i];
+            progresso(`mapeando ${i + 1} de ${alvos.length}: ${a.tipo === 'opcional' ? 'opcional ' : ''}${a.nome}…`);
+            try {
+              const r = await mapearComIA(e, 'privativa', { contexto, filtro: { nome: a.nome, tipo: a.tipo, base: a.base || '' } });
+              soma(r, incorporarMapeamento(e, r.linhas, 'privativa'));
+            } catch (err) { falhas.push(`${a.nome}: ${err.message}`); }
+            await salvar();
+          }
+        }
+        sincronizar(e);
+        const rec = Object.entries(total.recusadas).map(([k, n]) => `${k}: ${n}`).join(', ');
+        e.assistente.mensagens.push({
+          de: 'ia', quando: new Date().toISOString(), confianca: 'media', omitidos,
+          texto: `Mapeamento ${comum ? 'das áreas comuns' : 'das unidades'} concluído${alvos.length ? ` em ${alvos.length} chamada(s) (${alvos.map(a => (a.tipo === 'opcional' ? 'opcional ' : '') + a.nome).join('; ')})` : ''}: ${total.linhas} linha(s) lidas dos documentos, ${total.itens} item(ns) novo(s) em ${total.locaisNovos} local(is) novo(s)${total.tipologiasNovas ? `, ${total.tipologiasNovas} tipologia(s)/opcional(is) nova(s)` : ''}${total.repetidas ? `, ${total.repetidas} já existiam` : ''}.${rec ? `\nLinhas recusadas pelo servidor (sem fonte, sem categoria ou vazias): ${rec}.` : ''}${falhas.length ? `\nFalharam: ${falhas.join(' | ')}.` : ''}\nTudo entrou como "a revisar", com a fonte em cada item. Confira na Revisão e exporte a planilha.`,
+          fontes: [], acoes: [{ tipo: 'revisar', alvo: '', motivo: 'conferir o que a IA propôs' }, { tipo: 'exportar', alvo: '', motivo: 'gerar a planilha com o mapeamento' }],
+        });
+      } catch (err) {
+        e.assistente.mensagens.push({ de: 'ia', texto: 'O mapeamento falhou: ' + err.message, erro: true, quando: new Date().toISOString(), fontes: [], acoes: [] });
+      }
+      estado.assistentePensando = false; estado.assistenteProgresso = '';
+      const aud = await auditarNoProcessamento(e);
+      await salvar(); render();
+      aviso(`Mapeamento concluído: ${aud.r.abertas} pendência(s) para revisão.`);
+    },
+    async limparConversa() {
+      const e = emp(); if (!e) return;
+      if (!await confirmar({ titulo: 'Limpar a conversa?', texto: 'As perguntas e respostas somem; os documentos e o levantamento ficam.', ok: 'Limpar', perigo: true })) return;
+      e.assistente = { mensagens: [] };
+      await salvar(); render();
+    },
+    verContexto() {
+      const e = emp(); if (!e) return;
+      const naoLidos = (e.driveArquivos || []).filter(x => !e.documentos.some(d => d.nome === x.nome));
+      const ctx = montarContexto(e, { drive: naoLidos });
+      abrirModal(`<header><h2>O contexto do assistente</h2><p>${Math.round(ctx.length / 1024)} KB de texto: é exatamente isto que a IA recebe, e só isto.</p></header>
+        <div class="corpo"><pre style="white-space:pre-wrap;font-size:11.5px;max-height:60vh;overflow:auto;margin:0">${esc(ctx.slice(0, 200000))}${ctx.length > 200000 ? '\n[… mostrando os primeiros 200 KB …]' : ''}</pre></div>
+        <footer><button type="button" class="btn" data-acao="fecharModal">Fechar</button></footer>`);
+    },
+  },
+};
+
 const rastro = {
   render(e) {
     if (!e) return '';
@@ -3064,5 +3265,5 @@ document.addEventListener('change', async (ev) => {
 export const VIEWS = {
   empreendimentos, documentos, estrutura, locais, ambientes, esquadrias,
   acabamentos, produtos, fornecedores, glossario, pendencias: pendenciasView,
-  planilhas, rastro, config,
+  planilhas, rastro, config, assistente,
 };

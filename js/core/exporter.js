@@ -211,9 +211,31 @@ export function nomeAbaTipologia(emp, tip, base = 'MP') {
   if (!tip) return base;
   const t = ((emp.estrutura || {}).tipologia || []).find(x => normalizar(x.nome) === normalizar(tip));
   const unidades = t ? ((emp.estrutura || {}).unidade || []).filter(u => u.paiId === t.id).map(u => String(u.nome || '').replace(/^\s*(unidade|apto\.?|apartamento|casa|lote|loja|sala)\s*/i, '').trim()).filter(Boolean) : [];
-  if (!unidades.length) return `${base} - ${tip}`;
-  const nome = unidades.length === 1 ? unidades[0] : unidades.slice(0, -1).join(', ') + ' e ' + unidades[unidades.length - 1];
-  return `Unidade ${nome}`;
+  if (unidades.length) {
+    const nome = unidades.length === 1 ? unidades[0] : unidades.slice(0, -1).join(', ') + ' e ' + unidades[unidades.length - 1];
+    return `Unidade ${nome}`;
+  }
+  /* a unidade personalizada ("OPCIONAL - APTO 104") tem aba própria com o
+     número dela, pela regra da planilha */
+  const m = /(?:APTO|APARTAMENTO|UNIDADE|CASA|LOTE|SALA)\.?\s*(\d{1,4})/i.exec(tip);
+  if (t && t.opcional && m) return `Unidade ${m[1]}`;
+  return `${base} - ${tip}`;
+}
+
+/**
+ * Os itens de uma tipologia para a aba MP. Uma tipologia que é OPCIONAL de
+ * outra (unidade personalizada) recebe a base inteira mais o que o opcional
+ * muda: onde o opcional tem item para o mesmo local e a mesma categoria, a
+ * linha da base sai ("adicionar e remover padrão"); senão a base fica.
+ */
+export function itensDaTipologia(emp, mp, tip) {
+  const proprios = mp.filter(a => (a.tipologia || '') === tip);
+  const t = ((emp.estrutura || {}).tipologia || []).find(x => normalizar(x.nome) === normalizar(tip));
+  if (!t || !t.opcional || !t.base) return proprios;
+  const daBase = mp.filter(a => normalizar(a.tipologia || '') === normalizar(t.base));
+  const cobre = new Set(proprios.filter(a => a.origemLeitura !== 'obrigatoria').map(a => normalizar(a.localNome) + '|' + a.categoria));
+  const herdados = daBase.filter(a => !cobre.has(normalizar(a.localNome) + '|' + a.categoria));
+  return proprios.concat(herdados);
 }
 
 export function abaEsquadrias(emp) {
@@ -279,8 +301,11 @@ export function abaPendencias(emp) {
 }
 
 export function pendencias(emp) {
+  /* o que a IA propôs no mapeamento fica em revisão até uma pessoa
+     confirmar, mesmo que a auditoria automática tenha completado um campo */
   return ordenarEspecificacoes(especificacoesDe(emp)
-    .filter(a => a.status === 'revisar' || a.status === 'conflito' || a.confianca === 'baixa' || !a.sistema));
+    .filter(a => a.status === 'revisar' || a.status === 'conflito' || a.confianca === 'baixa' || !a.sistema
+      || ((a.motivos || []).includes('mapeamento_ia') && a.status !== 'confirmado')));
 }
 
 export function tipologiasComDados(emp) {
@@ -321,7 +346,7 @@ export function pastaDeAbas(emp) {
     const nome = tips[0] ? nomeAbaTipologia(emp, tips[0], base) : base;
     abas.push({ nome: nome.startsWith(base + ' - ') ? base : nome, linhas: abaMP(emp, mp) });
   }
-  else for (const t of tips) abas.push({ nome: t ? nomeAbaTipologia(emp, t, base) : `${base} - sem tipologia`, linhas: abaMP(emp, mp.filter(a => (a.tipologia || '') === t)) });
+  else for (const t of tips) abas.push({ nome: t ? nomeAbaTipologia(emp, t, base) : `${base} - sem tipologia`, linhas: abaMP(emp, itensDaTipologia(emp, mp, t)) });
   if (temAreasComuns(emp)) abas.push({ nome: 'MC', linhas: abaMC(emp, mc) });
   abas.push({ nome: NOME_FORN, linhas: abaForn(emp, especificacoesDe(emp)), ocultar: [0] });
   if (temAreasComuns(emp)) abas.push({ nome: 'MC Locais', linhas: abaLocais(emp, true) });

@@ -103,6 +103,7 @@ aberto:
 | Produtos | `#/produtos` | cada material distinto, com edição global; leva a Marcas e fornecedores (`#/fornecedores`) |
 | Revisão | `#/pendencias` | o que a leitura não decidiu sozinha, agrupado por problema, com ações em lote |
 | Exportar | `#/planilhas` | XLSX no layout da planilha, CSV, JSON e o cofre do Obsidian |
+| Assistente | `#/assistente` | conversa com a IA sobre o empreendimento, presa aos documentos lidos, ao levantamento e à lista do Drive; propõe reler, recruzar, importar |
 | Glossário | `#/glossario` | regras aprendidas, regras do processo e a lista de sistemas construtivos |
 | Configurações | `#/config` | estrutura do tipo (cada nível leva a `#/estrutura/<nivel>`), motor de leitura e onde os dados moram (com o backup do servidor) |
 
@@ -574,6 +575,85 @@ manda os projetos que o servidor não tem, com os PDFs que ainda estiverem no
 IndexedDB. O que existir nos dois lados fica para você decidir no aviso da
 tela de Empreendimentos. O caminho manual continua valendo: **Exportar →
 JSON** e importar; o servidor deduplica PDFs pelo SHA-256.
+
+## O assistente do empreendimento
+
+A tela **Assistente** é uma conversa com a IA sobre um empreendimento, ao
+estilo NotebookLM: a resposta vem só do que o Prancharia tem, e diz quando
+não tem. O contexto (`montarContexto` em `js/core/assistente.js`) é
+montado no navegador a cada pergunta e vai inteiro ao BFF
+(`POST /api/chat`, `INSTRUCAO_CHAT` em `server/prompt.js`):
+
+- **o texto de cada documento lido**, indexado na hora do processamento
+  (`meta.textoIndexado`): folhas das pranchas (rótulos, códigos, notas; até
+  40 mil caracteres) e páginas dos memoriais (até 160 mil), com o marcador
+  de página/folha para a IA citar;
+- **o levantamento atual**: cada local com tipologia e pavimento, cada item
+  com categoria, descrição, marca, código e a fonte `{documento p.N}`, as
+  linhas obrigatórias vazias marcadas como tal, a fila sem local e as
+  pendências por motivo;
+- **o que está no Drive e ainda não foi lido**: a lista da última pasta
+  varrida (`emp.driveArquivos`, com a disciplina da triagem). A IA não lê o
+  Drive sozinha — ela aponta o arquivo e propõe a ação "importar".
+
+A resposta traz **fontes** (documento, página, trecho) e, quando cabe,
+**ações** que aparecem como botões: reler documentos (`reprocessar`, apaga o
+que só existia por causa deles e processa de novo), recruzar memoriais,
+importar do Drive, abrir a revisão, abrir um local, exportar. A IA propõe;
+a pessoa executa. "Ver o contexto" mostra o texto exato que foi para a IA.
+A conversa fica em `emp.assistente.mensagens`. Sem servidor de IA a tela
+avisa e não há com quem conversar — é uma função da IA, como a leitura
+multimodal.
+
+**Mapear pela IA** (botões "Mapear áreas comuns" e "Mapear unidades" na
+mesma tela, ou a ação `mapear` proposta na conversa) é o que o NotebookLM
+faz com a pasta inteira: o corpus completo vai ao BFF (`POST /api/mapear`)
+com a instrução da equipe (`INSTRUCAO_MAPEAMENTO_COMUNS` /
+`INSTRUCAO_MAPEAMENTO_UNIDADES` em `server/prompt.js` — os dois prompts de
+áreas comuns e apartamentos, condensados nas regras MP1–MP9, mais a lista
+mestra de sistemas para o nome literal) e volta uma linha por item:
+tipologia, opcional, local, categoria (as da planilha, literais), produto,
+sistema, descrição, marca, fornecedor, e a **fonte** (documento, página,
+trecho) — linha sem fonte ou sem categoria válida é descartada no servidor
+(`sanearMapeamento`, teto de 1500 linhas). Nenhuma chamada recebe imagem:
+a IA cruza texto (legenda escrita, tabela de esquadrias, memorial), nunca a
+forma de uma tag — isso é trabalho da leitura vetorial e da IA por recorte.
+
+As unidades não vão numa chamada só: primeiro o **inventário**
+(`escopo: 'inventario'` — só os nomes das tipologias e dos opcionais, com a
+fonte), depois **uma chamada por tipologia e por opcional** (`filtro`), para
+a resposta caber no limite de saída do modelo e uma falha não derrubar as
+outras; o progresso aparece na conversa. Se ainda assim uma resposta vier
+cortada, `resgatarArrayTruncado` em `server/provedores.js` aproveita os
+objetos inteiros que chegaram antes do corte.
+
+`incorporarInventario` e `incorporarMapeamento` põem tudo na árvore: local
+existente (mesmo nome, tipologia e lado) ou local novo, tipologia nova na
+estrutura, item **a revisar** com motivo `mapeamento_ia` e a evidência
+apontando o documento; item assim fica em Revisão até alguém confirmar,
+mesmo que a auditoria automática complete um campo. Um **opcional de
+personalização** vira tipologia própria ("OPCIONAL - APTO 104", com `base`
+apontando a tipologia sobre a qual se aplica) e recebe só o que muda; na
+exportação a aba dele — "Unidade 104", pela regra da planilha — é a base
+inteira mais o que o opcional muda (onde o opcional tem item para o mesmo
+local e categoria, a linha da base sai; `itensDaTipologia` em
+`js/core/exporter.js`). Nada do que a leitura vetorial leu é substituído;
+linha igual a item existente é pulada. A planilha sai com as regras de
+sempre: cores, fórmulas da Forn., linhas obrigatórias.
+
+O texto dos documentos é entrada não confiável para o modelo: as ações vêm
+de uma lista fechada, e todas as que apagam algo pedem confirmação. É a
+chamada mais longa do sistema (prazo de 8 minutos por chamada,
+`GEMINI_TIMEOUT_MAPEAMENTO_MS`): no Render free o proxy pode encerrar a
+conexão antes disso num empreendimento muito grande — se vier "falha no
+mapeamento" sem erro do modelo no log, é isso; reduza os documentos
+indexados ou suba o plano.
+
+No memorial, um título em caixa alta que é **nome de produto** ("PORCELANATO
+PORTOBELLO 60X60", "FORRO DE GESSO ACARTONADO"), material, medida ou código
+de catálogo não vira local, mesmo seguido de linhas de especificação
+(`ehProduto` em `js/core/memorial.js`); o vocabulário de local tem a última
+palavra.
 
 ## Ler DWG
 

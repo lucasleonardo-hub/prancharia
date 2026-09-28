@@ -435,7 +435,12 @@ export async function listarDoDrive(aoProgredir = () => {}, { link = '' } = {}) 
   console.info(`[drive] escolha: ${escolhidos.length} item(ns) · ${resumo.pastas} pasta(s) varrida(s), ${resumo.itens} arquivo(s) vistos, ${fila.length} PDF(s) listados`
     + (resumo.outros.length ? ` · não-PDF nas pastas: ${resumo.outros.join(', ')}` : '')
     + (resumo.ignorados.length ? ` · ignorados: ${resumo.ignorados.join(', ')}` : ''));
-  return { itens: fila, resumo, cancelado: false };
+  /* a pasta escolhida (quando foi uma pasta): o empreendimento a guarda, para
+     o assistente saber o que há no Drive e a pessoa não precisar colar o link
+     de novo */
+  const pasta = escolhidos.length === 1 && (escolhidos[0].mimeType === MIME_PASTA || (escolhidos[0].shortcutDetails && escolhidos[0].shortcutDetails.targetMimeType === MIME_PASTA))
+    ? { id: escolhidos[0].shortcutDetails ? escolhidos[0].shortcutDetails.targetId : escolhidos[0].id, nome: escolhidos[0].name || 'pasta' } : null;
+  return { itens: fila, resumo, cancelado: false, pasta };
 }
 
 /** O DOWNLOAD do que passou pela triagem: devolve os `File`s prontos para
