@@ -16,6 +16,7 @@ import { classificarArea, marcadorDeGrupo, partesDoNome, pavimentoNoNome, famili
 import { especificacoesDe } from './exporter.js';
 import { classificar } from './glossario.js';
 import { itensEsperados } from './ambiente.js';
+import { marcaNaDescricao, temIncerteza } from './marcas.js';
 
 const ROTULOS = [
   { p: /^(piso|pisos|revestimento de piso|pavimenta[çc][ãa]o)\b/i, cat: 'Piso' },
@@ -157,11 +158,68 @@ export async function analisarMemorial(doc, docMeta, ambientesConhecidos, aoProg
     for (const l of daPagina) if (l.texto.length >= 3 && !colunaLateral(l)) linhas.push({ ...l, pagina: p, corpo });
   }
   const uteis = semCabecalhoERodape(linhas, doc.numPages);
+  const composicao = lerComposicao(uteis);
   classificarLinhas(uteis);
   /* areasComuns: true, false, ou 'auto' — no automático o memorial só divide
      comum × privativa se ele mesmo tiver os marcadores de seção */
   const modo = opcoes.areasComuns === undefined ? true : opcoes.areasComuns;
-  return montarSecoes(uteis, docMeta, ambientesConhecidos || [], { areasComuns: modo });
+  return { ...montarSecoes(uteis, docMeta, ambientesConhecidos || [], { areasComuns: modo }), composicao };
+}
+
+/* A composição do memorial de incorporação: "1º Pavimento: Composto dos
+   apartamentos 101, 102 e 103, cada um com sala de estar e jantar, lavabo,
+   …; apartamentos 104 e 105, cada um com …". É a lista das unidades com os
+   seus cômodos — a comparação local a local que a planilha pede para
+   decidir quais unidades são a mesma tipologia (a mesma aba MP) e quais
+   têm planta própria: a frase igual é a unidade igual. */
+const COMPOSICAO = /\b(apartamentos?|aptos?\.?|unidades?|casas?|lojas?|salas?(?:\s+comerciais?)?)\s+(?:n[ºo°]s?\.?\s*)?((?:\d{1,4}\s*(?:,|\be\b|\ba\b|\bao\b|\bat[ée]\b)\s*)*\d{1,4})\s*,?\s*(?:cada\s+um[a]?\s+)?com\s+(.+?)(?=\s*[;.](?:\s|$)|\s+sendo\b|\s*,\s*(?:apartamentos?|aptos?\.?|unidades?|casas?|lojas?|salas?)\s+(?:n[ºo°]s?\.?\s*)?\d|$)/gi;
+
+/**
+ * Devolve { unidades: [{ numero, prefixo, comodos: [frases], paginas }],
+ * tipologias: [{ nome: 'APTO 101', prefixo, unidades: ['101', …], comodos,
+ * paginas }] } — as tipologias são os grupos de unidades com a mesma lista
+ * de cômodos. A unidade duplex aparece em dois pavimentos e soma as duas
+ * frases. Sem composição no memorial, as duas listas saem vazias.
+ */
+export function lerComposicao(linhas) {
+  const partes = [];
+  let texto = '';
+  const paginas = [...new Set(linhas.map(l => l.pagina))].sort((a, b) => a - b);
+  for (const p of paginas) {
+    partes.push({ inicio: texto.length, pagina: p });
+    texto += linhas.filter(l => l.pagina === p).map(l => l.texto).join(' ') + ' ';
+  }
+  const paginaEm = idx => { let pg = paginas[0] || 1; for (const p of partes) if (p.inicio <= idx) pg = p.pagina; return pg; };
+  const unidades = new Map();
+  const re = new RegExp(COMPOSICAO.source, 'gi');
+  let m;
+  while ((m = re.exec(texto))) {
+    const numeros = (m[2].match(/\d{1,4}/g) || []).map(n => n.replace(/^0+(?=\d)/, ''));
+    const frase = m[3].replace(/\s+/g, ' ').trim();
+    if (!numeros.length || frase.length < 8) continue;
+    const prefixo = /^casa/i.test(m[1]) ? 'CASA' : /^loja/i.test(m[1]) ? 'LOJA' : /^sala/i.test(m[1]) ? 'SALA' : 'APTO';
+    const pagina = paginaEm(m.index);
+    for (const n of numeros) {
+      const u = unidades.get(n) || { numero: n, prefixo, comodos: [], paginas: [] };
+      if (!u.comodos.includes(frase)) u.comodos.push(frase);
+      if (!u.paginas.includes(pagina)) u.paginas.push(pagina);
+      unidades.set(n, u);
+    }
+  }
+  const grupos = new Map();
+  for (const u of unidades.values()) {
+    const k = u.prefixo + '|' + normalizar(u.comodos.join(' + ')).replace(/[^a-z0-9]+/g, ' ').trim();
+    if (!grupos.has(k)) grupos.set(k, { prefixo: u.prefixo, unidades: [], comodos: u.comodos.join(' + '), paginas: [] });
+    const g = grupos.get(k);
+    g.unidades.push(u.numero);
+    for (const p of u.paginas) if (!g.paginas.includes(p)) g.paginas.push(p);
+  }
+  const porNumero = (a, b) => Number(a) - Number(b);
+  const tipologias = [...grupos.values()].map(g => {
+    g.unidades.sort(porNumero);
+    return { ...g, nome: `${g.prefixo} ${g.unidades[0]}` };
+  }).sort((a, b) => porNumero(a.unidades[0], b.unidades[0]));
+  return { unidades: [...unidades.values()].sort((a, b) => porNumero(a.numero, b.numero)), tipologias };
 }
 
 /* Rodapé e cabeçalho da folha — endereço do escritório, telefone, a régua
@@ -487,6 +545,10 @@ function montarSecoes(linhas, docMeta, conhecidos, { areasComuns }) {
     const descricaoLimpa = item.descricao
       .replace(/\b(?:marca|fabricante|fornecedor)\s*[:\-–]\s*[^;.]*\.?$/i, '')
       .replace(/[;,\s.]+$/, '').trim();
+    /* "Porcelanato ONYX … – Portobello ou similar": a marca está na frase,
+       sem o rótulo "marca:". Reconhecida, entra no campo — a frase continua
+       sendo a evidência. Com duas marcas ("Deca ou Docol") não se escolhe. */
+    if (!campos.marca) { const { marca } = marcaNaDescricao(descricaoLimpa); if (marca) campos.marca = marca; }
     const classe = classificar(descricaoLimpa, item.categoria);
     const trecho = `${item.rotulo}: ${descricaoLimpa || item.descricao}`.slice(0, 400);
     /* item de seção geral: vai para cada local do lado que a regra de
@@ -500,7 +562,7 @@ function montarSecoes(linhas, docMeta, conhecidos, { areasComuns }) {
     const destinos = alvos.length ? alvos
       : emGeral ? destinosGerais(geral, item, arvore, especificacoes)
       : [acharAmbienteNaFrase(t, arvore)].filter(Boolean);
-    const confianca = emGeral ? 'media' : destinos.length ? (campos.marca ? 'alta' : 'media') : 'baixa';
+    const confianca = emGeral ? 'media' : destinos.length ? (campos.marca && !temIncerteza(item.descricao) ? 'alta' : 'media') : 'baixa';
 
     const montar = (alvo) => {
       const esp = criarEspecificacao({

@@ -183,12 +183,14 @@ export function lerTipologia(texto) {
   const s = String(texto || '').replace(/\s+/g, ' ').trim().toUpperCase()
     .normalize('NFD').replace(/[̀-ͯ]/g, '');
   if (s.length < 5 || s.length > 26) return null;
-  /* "APTO 201", "APARTAMENTO 1203", "UNIDADE 304": numa torre, a unidade
-     leva o número do andar na frente e o FINAL atrás — e o final é a
-     tipologia (todos os "x04" têm a mesma planta). "FINAL 4" e "FINAL 04"
-     são o mesmo. */
+  /* "APTO 201", "APARTAMENTO 1203", "UNIDADE 304": a unidade é a sua própria
+     tipologia até que a comparação local a local prove que outra unidade é
+     igual a ela — a composição do memorial ("apartamentos 201, 202 e 203,
+     cada um com…") ou a exportação fazem essa comparação. O "final" da
+     torre não decide: no Paradiso o 401 tem três suítes e o 201, duas.
+     "FINAL 4" escrito na prancha continua sendo a tipologia FINAL 4. */
   const un = /^(?:APTO|APTO\.|APARTAMENTO|AP|AP\.|UNIDADE|UNID|UNID\.)\s*(\d{3,4})$/.exec(s);
-  if (un) return `FINAL ${Number(un[1].slice(-2))}`;
+  if (un) return `APTO ${un[1].replace(/^0+(?=\d)/, '')}`;
   const fin = /^FINAL\s*[-–:]?\s*(\d{1,2})$/.exec(s);
   if (fin) return `FINAL ${Number(fin[1])}`;
   const m = /^(?:(?:APTO|APARTAMENTO|AP|UNIDADE|UNID|CASA|LOJA|SALA|QUARTO)\.?\s+)?(?:TIPO|TIPOLOGIA|TP)\.?\s*[-–:]?\s*(?:(PNE|PCD|PCR|PMR|ACESSIVEL)\s*)?[-–]?\s*(\d{1,3}|[A-Z]{1,2}\d?)(?:\s*[-–]?\s*(PNE|PCD|PCR|PMR|ACESSIVEL))?$/.exec(s);
@@ -198,6 +200,19 @@ export function lerTipologia(texto) {
      prancha (ou da leitura por imagem), não identidade */
   const numero = /^\d+$/.test(m[2]) ? String(Number(m[2])) : m[2];
   return `TIPO ${marca ? marca + ' ' : ''}${numero}`;
+}
+
+/** O número da unidade quando a tipologia É uma unidade ("APTO 201" → "201");
+    '' para TIPO 1, FINAL 4, COBERTURA. */
+export function unidadeDaTipologia(nome) {
+  const m = /^APTO\s+(\d{1,4})$/i.exec(String(nome || '').trim());
+  return m ? m[1] : '';
+}
+
+/** "Unidade 101", "Apto 101", "101" → "101". */
+export function numeroDaUnidade(nome) {
+  const m = /(\d{1,4})\s*$/.exec(String(nome || '').trim());
+  return m ? m[1].replace(/^0+(?=\d)/, '') : '';
 }
 
 /**

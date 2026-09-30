@@ -20,9 +20,9 @@ import {
   semearPavimentos, sincronizar,
   criarLocal, criarEspecificacao, criarEvidencia, novoId as novoIdModelo,
 } from '../core/model.js';
-import { analisarFolha, consolidar, incorporarEspecificacaoSolta, recorteBase64, IA, configurarIA, saudeDaIA, iaLigada } from '../core/engine.js';
+import { analisarFolha, consolidar, incorporarEspecificacaoSolta, incorporarComposicao, recorteBase64, IA, configurarIA, saudeDaIA, iaLigada } from '../core/engine.js';
 import { openPdf, abrirDocumento, ehDwgBinario } from '../core/pdfdoc.js';
-import { pendencias, pastaDeAbas, exportarXlsx, exportarCsv, exportarJson, relatorioAuditoria, tipologiasComDados, tabelaCopia, ordenarEspecificacoes, locaisDe, especificacoesDe } from '../core/exporter.js';
+import { pendencias, pastaDeAbas, exportarXlsx, exportarCsv, exportarJson, relatorioAuditoria, tipologiasComDados, tabelaCopia, ordenarEspecificacoes, locaisDe, especificacoesDe, nomeAbaTipologia } from '../core/exporter.js';
 import { auditar, lerXlsx, lerCsv, textoDePdf } from '../core/audit.js';
 import { CLASSES, analisarEmpreendimento, analisarArquivos, agrupar, resumo } from '../core/auditoria.js';
 import { provasDe, rastreio, fluxo, PAPEIS, NIVEIS, refDoc, nomeDoc, paginaDoc, idDoc, refsDe, motorDe, ehMemorial } from '../core/provas.js';
@@ -963,6 +963,10 @@ async function processarDocumento(meta, lote = null) {
         }
       }
       for (const a of r.especificacoes) incorporarEspecificacaoSolta(e, a);
+      /* a composição do memorial ("apartamentos 101, 102 e 103, cada um
+         com…") diz quais unidades são iguais: vira a estrutura de
+         tipologias e unidades — e as abas MP da planilha */
+      const comp = r.composicao && r.composicao.tipologias.length ? incorporarComposicao(e, r.composicao) : null;
       /* 2) a fusão com as pranchas: casamento semântico pela IA quando ela
             está ligada, heurística de texto quando não */
       const f = await fundirComMemorial(e, doc, meta, r.especificacoes,
@@ -980,7 +984,8 @@ async function processarDocumento(meta, lote = null) {
       const dosLocais = `${r.secoes.length} seção(ões) de local: ${novos} local(is) novo(s)`
         + (temAreasComuns(e) && novos ? ` (${comuns} de área comum, ${novos - comuns} de unidade)` : '')
         + (r.casados ? `, ${r.casados} local(is) das pranchas receberam itens` : '')
-        + ((r.gerais || []).length ? `; ${r.gerais.length} seção(ões) geral(is) (${r.gerais.map(g => g.titulo).join('; ')})` : '');
+        + ((r.gerais || []).length ? `; ${r.gerais.length} seção(ões) geral(is) (${r.gerais.map(g => g.titulo).join('; ')})` : '')
+        + (comp ? `; composição: ${r.composicao.unidades.length} unidade(s) em ${r.composicao.tipologias.length} tipologia(s) (${r.composicao.tipologias.map(t => t.unidades.join(', ')).join(' | ')})${comp.fundidas ? `, ${comp.fundidas} tipologia(s) da prancha fundida(s)` : ''}` : '');
       registrarHistorico(e, { texto: `${meta.nome} (memorial) lido: ${r.especificacoes.length} trechos · ${dosLocais} · ${comoFoi}`, tipo: 'processamento' });
       estado.processando = null; await salvar(); render();
       if (f.motor === 'multimodal_gemini') {
@@ -2019,7 +2024,13 @@ function secoesDeLocais(e, lista) {
   const porPavDentro = l => [...l].sort((a, b) => ordemNatural(a.pavimento || '', b.pavimento || '') || ordemNatural(a.nome, b.nome));
   const out = [];
   if (comuns.length) out.push({ titulo: 'Áreas comuns · Manual do Condomínio', itens: porPavDentro(comuns) });
-  for (const t of tips) out.push({ titulo: `Unidades privativas · ${t}`, itens: porPavDentro(privativas.filter(a => (a.tipologia || '') === t)) });
+  for (const t of tips) {
+    /* "APTO 201 · Unidade 201, 202, 203, 301, 302 e 303": as unidades que a
+       composição do memorial (ou o cadastro) pendurou na tipologia */
+    const aba = nomeAbaTipologia(e, t);
+    const unidades = /^Unidade /.test(aba) && normalizar(aba) !== normalizar(t) ? ` · ${aba}` : '';
+    out.push({ titulo: `Unidades privativas · ${t}${unidades}`, itens: porPavDentro(privativas.filter(a => (a.tipologia || '') === t)) });
+  }
   const semTip = privativas.filter(a => !a.tipologia);
   if (semTip.length) out.push({ titulo: tips.length ? 'Unidades privativas · todas as tipologias (memorial)' : 'Unidades privativas · Manual do Proprietário', itens: porPavDentro(semTip) });
   return out;

@@ -7,7 +7,7 @@ import { coletorDeFormas, montarTags, FORMAS } from './shapes.js';
 import { coletorDeSegmentos, filtrarSimbolosDeDesenho, seguirChamada } from './simbolos.js';
 import { lerAmbientes, lerPavimentos, lerTipologias, atribuirTipologias, criarMascara, vincularTags, janelasDePlanta, lerCodigosDeEsquadria } from './rooms.js';
 import { ladoDaFolha } from './areas.js';
-import { classificarArea, lerTipologia, partesDoNome, familiaDoNome, mesmoCerne } from './areas.js';
+import { classificarArea, lerTipologia, partesDoNome, familiaDoNome, mesmoCerne, unidadeDaTipologia, numeroDaUnidade } from './areas.js';
 import { temAreasComuns, temNivel } from './tipos.js';
 import { coletorDeFios, lerTabela } from './tables.js';
 import { lerLegendas, categoriaDe } from './legend.js';
@@ -963,6 +963,109 @@ function garantirNivel(emp, nivel, nome) {
 }
 
 /**
+ * "APTO 301" lido na prancha, quando a estrutura já sabe que o 301 é da
+ * mesma tipologia do 201 (composição do memorial, ou cadastro): o cômodo
+ * nasce na tipologia certa, e não numa cópia por andar. Sem essa
+ * informação, a unidade é a sua própria tipologia.
+ */
+export function tipologiaCanonica(emp, tip) {
+  if (!tip) return '';
+  const n = unidadeDaTipologia(tip);
+  if (!n) return tip;
+  const est = emp.estrutura || {};
+  const u = (est.unidade || []).find(x => numeroDaUnidade(x.nome) === n);
+  if (!u || !u.paiId) return tip;
+  const t = (est.tipologia || []).find(x => x.id === u.paiId);
+  return t ? t.nome : tip;
+}
+
+/**
+ * A composição do memorial ("apartamentos 101, 102 e 103, cada um com…")
+ * vira estrutura: uma tipologia por grupo de unidades iguais, com as
+ * unidades penduradas nela. A tipologia que a prancha já criou para uma
+ * dessas unidades ("APTO 301", lida antes do memorial) é fundida na do
+ * grupo, com os seus locais — o SALA do 301 e o do 201 viram um local só.
+ * É a comparação local a local que a planilha pede para separar as abas MP.
+ */
+export function incorporarComposicao(emp, composicao) {
+  const r = { tipologias: 0, unidades: 0, fundidas: 0 };
+  if (!composicao || !Array.isArray(composicao.tipologias) || !composicao.tipologias.length) return r;
+  emp.estrutura = emp.estrutura || { grupo: [], tipologia: [], unidade: [], pavimento: [] };
+  const est = emp.estrutura;
+  est.tipologia = est.tipologia || []; est.unidade = est.unidade || [];
+  const numerosDe = t => est.unidade.filter(u => u.paiId === t.id).map(u => numeroDaUnidade(u.nome)).filter(Boolean);
+  for (const g of composicao.tipologias) {
+    const numeros = (g.unidades || []).map(String);
+    if (!numeros.length) continue;
+    /* a tipologia do grupo: a que já tem uma dessas unidades, ou a que se
+       chama como uma delas (a prancha nomeia a tipologia pela unidade) */
+    const candidatas = est.tipologia.filter(t => numerosDe(t).some(n => numeros.includes(n)) || numeros.includes(unidadeDaTipologia(t.nome)));
+    let t = candidatas.find(x => normalizar(x.nome) === normalizar(g.nome)) || candidatas[0];
+    if (!t) {
+      t = { id: novoId('niv'), nome: g.nome, descricao: g.comodos || '', origem: 'memorial' };
+      est.tipologia.push(t); r.tipologias++;
+    } else if (normalizar(t.nome) !== normalizar(g.nome) && unidadeDaTipologia(t.nome)) {
+      renomearTipologia(emp, t, g.nome);
+    }
+    if (!t.descricao && g.comodos) t.descricao = g.comodos;
+    for (const outra of candidatas) if (outra !== t) { fundirTipologias(emp, outra, t); r.fundidas++; }
+    for (const n of numeros) {
+      const u = est.unidade.find(x => numeroDaUnidade(x.nome) === n);
+      if (u) { if (u.paiId !== t.id) u.paiId = t.id; continue; }
+      est.unidade.push({ id: novoId('niv'), nome: `Unidade ${n}`, paiId: t.id, origem: 'memorial' });
+      r.unidades++;
+    }
+  }
+  for (const niv of ['tipologia', 'unidade']) {
+    if (!temNivel(emp, niv)) emp.niveisExtras = [...new Set([...(emp.niveisExtras || []), niv])];
+  }
+  if (!temAreasComuns(emp)) emp.areasComunsForcado = true;
+  sincronizar(emp);
+  return r;
+}
+
+function renomearTipologia(emp, t, nome) {
+  const antigo = t.nome;
+  t.nome = nome;
+  for (const l of (emp.locais || [])) if (normalizar(l.tipologia || '') === normalizar(antigo)) { l.tipologia = nome; l.tipologiaId = t.id; }
+}
+
+function fundirTipologias(emp, de, para) {
+  for (const l of (emp.locais || [])) if (normalizar(l.tipologia || '') === normalizar(de.nome)) { l.tipologia = para.nome; l.tipologiaId = para.id; }
+  for (const u of (emp.estrutura.unidade || [])) if (u.paiId === de.id) u.paiId = para.id;
+  emp.estrutura.tipologia = emp.estrutura.tipologia.filter(x => x !== de);
+  unificarLocaisDaTipologia(emp, para.nome);
+}
+
+/* Dois cômodos com o mesmo nome na mesma tipologia — o SALA do APTO 201 e o
+   do APTO 301, agora a mesma tipologia — viram um local, com os itens dos
+   dois; o item repetido (mesma chave) sai. */
+function unificarLocaisDaTipologia(emp, tipologia) {
+  const vivos = (emp.locais || []).filter(l => l.status !== 'excluido' && !l.areaComum && normalizar(l.tipologia || '') === normalizar(tipologia));
+  const porNome = new Map();
+  for (const l of vivos) { const k = chaveNome(l.nome); if (!porNome.has(k)) porNome.set(k, []); porNome.get(k).push(l); }
+  for (const grupo of porNome.values()) {
+    if (grupo.length < 2) continue;
+    const [base, ...outros] = grupo;
+    base.especificacoes = base.especificacoes || [];
+    for (const o of outros) {
+      const pavs = [...(base.pavimentos || (base.pavimento ? [base.pavimento] : [])), ...(o.pavimentos || (o.pavimento ? [o.pavimento] : []))];
+      base.pavimentos = [...new Set(pavs)];
+      if (!base.pavimento) base.pavimento = o.pavimento || '';
+      const chaves = new Set(base.especificacoes.map(e => e.chave || chaveDaEspec(e)));
+      for (const e of (o.especificacoes || [])) {
+        e.localId = base.id; e.localNome = base.nome; e.tipologia = base.tipologia || '';
+        e.chave = chaveDaEspec(e);
+        if (chaves.has(e.chave)) { e.status = 'excluido'; continue; }
+        chaves.add(e.chave); base.especificacoes.push(e);
+      }
+      base.evidencias = (base.evidencias || []).concat(o.evidencias || []);
+      o.especificacoes = []; o.status = 'excluido'; o.fundidoEm = base.id;
+    }
+  }
+}
+
+/**
  * O local que o memorial criou e que este rótulo da prancha alcança: mesmo
  * nome (ou parte do título composto), mesma família (BANHEIRO ↔ BANHO) e o
  * mesmo lado do condomínio — área comum com área comum, unidade com unidade.
@@ -987,6 +1090,9 @@ function localDoMemorialPara(emp, a, comum) {
  */
 function propagarDoMemorial(de, para) {
   let n = 0;
+  /* o local genérico do memorial guarda para onde foi copiado: a planilha
+     sabe que ele foi achado no projeto (é molde, não linha) */
+  de.propagadoPara = [...new Set([...(de.propagadoPara || []), para.id])];
   for (const esp of (de.especificacoes || [])) {
     if (esp.status === 'excluido' || esp.origemLeitura !== 'memorial') continue;
     const c = JSON.parse(JSON.stringify(esp));
@@ -1015,7 +1121,7 @@ function propagarDoMemorial(de, para) {
 function obterOuCriarLocal(emp, a, docMeta, folha, porChave = null) {
   emp.locais = emp.locais || [];
   const mapa = porChave || new Map(emp.locais.map(l => [chaveDoLocal(l), l]));
-  const tip = a.tipologia || '';
+  const tip = tipologiaCanonica(emp, a.tipologia || '');
   const comum = ladoDoRotulo(emp, a, folha);
   const k = chaveLocal(a.nome, a.pavimento, tip, comum);
   let local = mapa.get(k);

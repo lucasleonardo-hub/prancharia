@@ -15,6 +15,7 @@
    mais que uma célula preenchida sem fonte. */
 
 import { normalizar, criarEspecificacao, criarEvidencia } from './model.js';
+import { marcaNaDescricao } from './marcas.js';
 
 /* Ambientes ABERTOS: têm piso, mas não parede nem teto que se especifique. */
 export const VOCAB_ABERTO = [
@@ -149,6 +150,30 @@ export function rotuloFornecedor(esp) {
   return `Fornecedor de ${p}`;
 }
 
+/**
+ * A marca da linha: a que o documento nomeou no campo, ou a que está escrita
+ * dentro da descrição ("Porcelanato branco Eliane 30x30" tem marca) — a
+ * planilha manda olhar a descrição antes de pintar a coluna F de amarelo.
+ * Produto que não tem marca por natureza, ou que é do fornecedor, não entra
+ * aqui. `extras`: marcas homologadas da empresa ativa.
+ */
+export function marcaDe(esp, extras = []) {
+  if (!esp) return '';
+  if (esp.marca) return esp.marca;
+  if (naturezaDaMarca(esp) !== 'marca') return '';
+  return marcaNaDescricao(`${esp.descricao || ''} ${esp.modelo || ''}`, extras).marca;
+}
+
+/* O sistema construtivo que a linha obrigatória já sabe: louça e metal
+   sanitário têm um sistema só na lista mestra, o rejunte também. Porta,
+   rodapé e bancada dependem do material, que ninguém leu — ficam para o
+   time (rosa). */
+export function sistemaEsperado(categoria, produto) {
+  if (/^rejunte/i.test(produto || '')) return 'Rejuntes';
+  if (categoria === 'Louças' || categoria === 'Metais') return 'Louças e metais sanitários';
+  return '';
+}
+
 export const ehRejunte = esp => REJUNTE.test(normalizar(`${esp.produto || ''} ${esp.descricao || ''}`));
 export const pedeRejunte = esp => !ehRejunte(esp) && COM_REJUNTE.test(normalizar(`${esp.produto || ''} ${esp.descricao || ''} ${esp.sistema || ''}`));
 export const ehObrigatoria = esp => esp && esp.origemLeitura === 'obrigatoria';
@@ -158,6 +183,7 @@ const vivo = a => a && a.status !== 'excluido';
 function linhaObrigatoria(local, categoria, { produto = '', motivo, cadeia }) {
   const esp = criarEspecificacao({
     categoria, produto,
+    sistema: sistemaEsperado(categoria, produto),
     origemLeitura: 'obrigatoria',
     confianca: 'baixa', status: 'revisar',
     motivos: [motivo],

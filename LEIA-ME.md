@@ -289,6 +289,8 @@ trata o título como o nome do local:
 | `PISCINA` seguido de "Conforme projeto de decoração específico…" | um local sem acabamentos no memorial (só depois de um marcador de grupo): existe na árvore, com a frase na evidência, e a planilha lhe dá as linhas obrigatórias vazias |
 | `Louça: Cuba de semiencaixe…` e, recuadas abaixo, `Cuba de apoio…`, `CJ BC+CX… ROCA` | uma lista: cada linha recuada sob um item rotulado é outro item da mesma categoria (mesmo em caixa alta — não é título). "CÓD:" no meio da linha não é rótulo |
 | rodapé da folha (endereço, telefone, régua de sublinhados) | sai antes da leitura quando se repete na borda de metade das páginas: era o que separava "2.12 – BARRILETE" (fim da página 8) dos seus itens (começo da 9) |
+| "1º Pavimento: Composto dos apartamentos 101, 102 e 103, cada um com sala de estar e jantar, lavabo, …; apartamentos 104 e 105, cada um com …" | a **composição** (`lerComposicao`): cada unidade com os seus cômodos; unidades com a mesma frase são a mesma tipologia (nome da primeira: "APTO 101"), com as unidades penduradas na estrutura — é o que nomeia as abas MP ("Unidade 201, 202, 203, 301, 302 e 303") e o que diz que o 401 não é o 201. O duplex soma as frases dos dois pavimentos |
+| "Piso: Porcelanato ONYX … – Portobello ou similar" | a marca escrita na frase entra no campo Marca (`marcaNaDescricao`, lista em `js/core/marcas.js`); "ou similar" mantém a confiança média, e a planilha pinta a célula. "Deca ou Docol" não escolhe |
 
 Quando a prancha chega **depois** do memorial, o caminho inverso vale
 (`obterOuCriarLocal` no engine): um rótulo de área comum adota o local que o
@@ -705,8 +707,12 @@ esquadria escrito na planta** ao lado da abertura — "EA01 - 80x80/154"
 Esquadrias do cômodo em que está desenhado, pelo mesmo vínculo espacial das
 tags (`lerCodigosDeEsquadria` em `js/core/rooms.js`, `deCodigosDaPlanta`
 em `js/core/engine.js`; só prefixos de esquadria entram, "M1" é viga);
-**"APTO 201"** e "UNIDADE 1203" viram a tipologia "FINAL 1" / "FINAL 3" —
-numa torre, o final é a planta (`lerTipologia` em `js/core/areas.js`);
+**"APTO 201"** e "UNIDADE 1203" viram a tipologia da própria unidade
+("APTO 201", "APTO 1203" — `lerTipologia` em `js/core/areas.js`): o final
+da torre não decide que duas unidades são iguais, a comparação local a
+local decide (composição do memorial ou exportação; ver "Tipologias e abas
+MP" na seção da planilha), e a unidade que a estrutura já conhece nasce na
+tipologia do seu grupo (`tipologiaCanonica`);
 shaft, duto, saliência, laje técnica, vaga numerada e as siglas de
 instalação (HID, ELET, TEL, GÁS) nunca são locais; o **arco de giro da
 porta** fica fora da máscara de paredes (`criarMascara`), senão ele fecha a
@@ -871,12 +877,35 @@ regras da planilha da Predialize. O layout de colunas (`LAYOUT` em
 fórmula e as linhas que a planilha espera.
 
 **Abas.** `Copiar` (quadro de conferência), a aba do manual da unidade —
-`MP`, ou uma por tipologia nomeada pelas unidades cadastradas na estrutura
-("Unidade 101, 201 e 301"; sem unidades, "MP - TIPO 1") — ou `SALA
-COMERCIAL` no empreendimento comercial; `MC` quando o tipo tem áreas
-comuns; `Forn.` (linha 1 com as chaves de importação, oculta); `MC Locais`
-e `MP Locais` com **todo** local lido, com ou sem item; `Esquadrias`,
+`MP`, ou uma por tipologia nomeada pelas unidades ("Unidade 101, 201 e
+301"; sem unidades, "MP - TIPO 1") — ou `SALA COMERCIAL` no empreendimento
+comercial; `MC` quando o tipo tem áreas comuns; `Personalizações` quando há
+tipologia opcional (o que a unidade personalizada muda no padrão, com a
+ação na coluna D sem título: "Adicionar e remover padrão" quando substitui
+o item da base no mesmo local e categoria, "Adicionar e manter padrão"
+quando acrescenta; garantia em amarelo); `Forn.` (linha 1 com as chaves de
+importação, oculta); `Sistemas Áreas Comuns` e `Sistemas Unidades
+Privativas` (o checklist da lista mestra do lado, com X no que o
+levantamento usou e onde); `MC Locais` e `MP Locais` com **todo** local
+lido, com ou sem item, e as unidades da tipologia; `Esquadrias`,
 `Evidências`, `Pendências`.
+
+**Tipologias e abas MP.** Uma unidade lida na planta ("APTO 201") é a sua
+própria tipologia até que a comparação local a local prove que outra é
+igual a ela — o "final" da torre não decide (no Paradiso o 401 tem três
+suítes e o 201, duas). Quem compara é a **composição do memorial**
+("apartamentos 201, 202 e 203, cada um com sala de estar e jantar,
+lavabo…": `lerComposicao` em `js/core/memorial.js`, `incorporarComposicao`
+no engine): a frase igual é a unidade igual, e as unidades iguais viram uma
+tipologia com as unidades penduradas — a aba sai "Unidade 201, 202, 203,
+301, 302 e 303". A prancha lida depois nasce na tipologia certa
+(`tipologiaCanonica`); lida antes, a tipologia "APTO 301" é fundida na do
+grupo, com os seus locais. Sem composição, a exportação compara as
+tipologias que são unidades pelos locais e produtos lidos
+(`gruposDeTipologias`) e junta as iguais; tipologia com nome próprio (TIPO
+1, COBERTURA) e opcional nunca se junta a outra. O local genérico do
+memorial ("DORMITÓRIOS") cujos itens já foram copiados para os cômodos da
+prancha é molde e não sai na planilha.
 
 **Colunas A–F são o levantamento; G em diante são fórmulas.** Local,
 Categoria, Nome do produto, Sistema construtivo, Descrição e Marca saem
@@ -889,17 +918,39 @@ forro de gesso".
 **Cores.** Amarelo = dúvida ou informação não encontrada nos documentos,
 pergunta para a construtora: descrição vazia, item com confiança baixa ou
 a revisar, marca que o documento não disse, dado de fornecedor que falta
-na `Forn.`. Rosa = decisão interna do time: categoria fora do vocabulário
+na `Forn.`, e o produto nomeado mas não decidido — "a definir", "a
+contratar", "ou similar", "ou semelhante", "conforme projeto" na frase
+pintam a descrição e a marca (`temIncerteza` em `js/core/marcas.js`).
+Rosa = decisão interna do time: categoria fora do vocabulário
 (`CATEGORIAS`) e sistema construtivo em branco. Célula vazia sem cor é a
-informação que não existe por natureza.
+informação que não existe por natureza. O local sem nenhum item sai numa
+linha só com o nome (B, C, E, F amarelas; D rosa): nenhum local fica de
+fora.
 
-**Marca (F).** Produto sem marca própria mas com fornecedor — forro de
-gesso, esquadria, marcenaria, pedra, vidro, serralheria — recebe
-"Fornecedor do forro de gesso" / "Fornecedor da esquadria de alumínio"
-(`rotuloFornecedor` em `js/core/ambiente.js`), e essa marca entra na
-`Forn.` com os dados do fornecedor real (amarelos enquanto faltarem).
-Produto sem marca e sem fornecedor (contrapiso, reboco) fica em branco,
-sem amarelo. O resto, sem marca, é amarelo.
+**Cruzamento memorial × projeto, nas duas direções.** Local que só o
+memorial (ou o mapeamento da IA) conhece, sem a prancha o desenhar
+(`localSoNoMemorial`): coluna A em amarelo, nas abas de produto e nas de
+locais. Produto que só a prancha nomeou — a tag, a legenda, o código de
+esquadria — sem memorial, caderno de acabamentos ou projeto de interiores
+o confirmar, quando o empreendimento tem um deles: C, E e F em amarelo
+(`contextoDaPlanilha`; a confirmação é a evidência `texto_memorial` ou
+qualquer evidência de um documento dessas disciplinas). O nome do local
+segue sempre o projeto; o do memorial fica em `nomeMemorial`.
+
+**Marca (F), na ordem da planilha.** (1) A marca escrita dentro da
+descrição vale — "Porcelanato branco Eliane 30x30" tem marca Eliane
+(`marcaDe` em `js/core/ambiente.js`, sobre a lista de marcas do mercado em
+`js/core/marcas.js`; a leitura do memorial já a guarda no campo). Duas
+marcas na frase ("Deca ou Docol") não decidem: marca vazia, amarela. (2)
+Produto sem marca própria mas com fornecedor — forro de gesso, esquadria,
+marcenaria, pedra, vidro, serralheria — recebe "Fornecedor do forro de
+gesso" / "Fornecedor da esquadria de alumínio" (`rotuloFornecedor`), e
+essa marca entra na `Forn.` com os dados do fornecedor real (amarelos
+enquanto faltarem); "Fornecedor de …" **nunca** fica amarelo. (3) Produto
+sem marca e sem fornecedor (contrapiso, reboco) fica em branco, sem
+amarelo. (4) O resto, sem marca, é amarelo — e a marca de verdade com "ou
+similar" na frase, ou sem o memorial confirmar, também. A linha
+obrigatória (item que ninguém leu) sai com a marca vazia e amarela.
 
 **Itens obrigatórios por ambiente** (`itensEsperados`): além de piso,
 paredes e teto de todo ambiente fechado e do rejunte de todo cerâmico, a
@@ -910,7 +961,10 @@ torneira, sifão, bancada), área de serviço (tanque, torneira), porta em
 todo cômodo fechado que não é circulação, rodapé nos cômodos secos. O
 incerto — rodapé em banho azulejado, soleira, peitoril, janela,
 equipamentos — não vira linha: é decisão da equipe, não da regra. Piso
-vinílico não pede rejunte.
+vinílico não pede rejunte. A linha obrigatória já traz o sistema
+construtivo que a lista mestra decide sozinha (louça e metal sanitário →
+"Louças e metais sanitários", rejunte → "Rejuntes"); porta, rodapé e
+bancada dependem do material e ficam em rosa.
 
 ## Pontos que valem saber antes de mexer
 
