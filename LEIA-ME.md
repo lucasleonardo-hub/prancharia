@@ -874,7 +874,11 @@ de fusão semântica. Fica como próximo passo se houver memoriais nesse formato
 O XLSX (`js/core/exporter.js`, gravado por `js/core/xlsx.js`) segue as
 regras da planilha da Predialize. O layout de colunas (`LAYOUT` em
 `js/core/vocab.js`) não muda; o que estas regras acrescentam é cor,
-fórmula e as linhas que a planilha espera.
+fórmula e as linhas que a planilha espera. Nas abas do layout a linha 1
+traz os códigos de importação (`place.name`, `memorial_systems`…), a
+linha 2 os títulos e os dados começam na linha 3 — sem as linhas de
+exemplo do modelo. A prévia da tela Exportar esconde a linha dos códigos
+e mostra os títulos (`cabecalho` em cada aba de `pastaDeAbas`).
 
 **Abas.** `Copiar` (quadro de conferência), a aba do manual da unidade —
 `MP`, ou uma por tipologia nomeada pelas unidades ("Unidade 101, 201 e

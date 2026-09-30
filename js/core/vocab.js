@@ -16,32 +16,21 @@ export const SISTEMAS = [{"n":"Alvenaria de bloco de concreto celular autoclavad
 export const NOMES_SISTEMAS = SISTEMAS.map(s => s.n);
 export const SISTEMA_POR_NOME = Object.fromEntries(SISTEMAS.map(s => [s.n, s]));
 
-/** Layout exato da planilha-padrão: linha 1 traz os códigos de importação,
-    linha 5 os títulos legíveis e os dados começam na linha 6. */
+/** Layout exato da planilha-padrão: linha 1 traz os códigos de importação
+    (só no arquivo), linha 2 os títulos legíveis e os dados começam na
+    linha 3. As linhas de exemplo do modelo ficaram de fora. */
 export const LAYOUT = {
   MP: {
     codigos: ["place.name","memorial_systems","product.component.name","maintenance_use.title","product.description","product.maker.name","provider.company_name","provider.document_number","provider.address.state","provider.address.city","provider.address.postcode","provider.address.description","provider.site","provider.responsibles.name","provider.responsibles.email","provider.responsibles.phone"],
     titulos: ["Local","Categoria","Nome do Produto/Serviço","Sistema Construtivo","Descrição/Modelo/Linha","Marca","Fornecedor (Nome Fantasia)","CNPJ","UF","Cidade","CEP","Logradouro, Nº","Site","Nome (vendedor)","E-mail","Telefone"],
-    nota: ["Exemplos","","","","","","Formúla que traz as informações da aba \"Forn\"","","","","","","","","",""],
-    exemplos: [
-      ["Banheiro - Suíte","Piso","Porcelanato","Revestimento cerâmico interno","Branco - 30x30cm - Modelo: XYZ","Eliane"],
-      ["Suíte","Paredes","Pintura","Pinturas, Texturas, Vernizes (Interna)","Branco fosco","Suvinil"],
-    ],
   },
   MC: {
     codigos: ["place.name","memorial_systems","product.component.name","maintenance_use.title","product.description","product.maker.name","provider.company_name","provider.document_number","provider.address.state","provider.address.city","provider.address.postcode","provider.address.description","provider.site","provider.responsibles.name","provider.responsibles.email","provider.responsibles.phone","invoice.code","invoice.date","product.guide_link","product.component.type","product.model"],
     titulos: ["Local","Categoria","Nome do Produto/Serviço","Sistema Construtivo","Descrição/Modelo/Linha","Marca","Fornecedor (Nome Fantasia)","CNPJ","UF","Cidade","CEP","Logradouro, Nº","Site","Nome (vendedor)","E-mail","Telefone","Nº da Nota Fiscal","Data de Emissão","Link do Manual Externo","Tipo","Modelo"],
-    nota: ["Exemplos","","","","","","Formúla que traz as informações da aba \"Forn\"","","","","","","","","","","","","","",""],
-    exemplos: [
-      ["Salão de Festas","Piso","Porcelanato","Revestimento cerâmico interno","Branco - 30x30cm - Modelo: XYZ","Eliane"],
-      ["Salão de Festas","Paredes","Pintura","Pinturas, Texturas, Vernizes (Interna)","Textura branca","Suvinil"],
-    ],
   },
   FORN: {
     codigos: ["product.maker.name","provider.company_name","provider.document_number","provider.address.state","provider.address.city","provider.address.postcode","provider.address.description","provider.site","provider.responsibles.name","provider.responsibles.email","provider.responsibles.phone"],
     titulos: ["Marca","Fornecedor (Nome Fantasia)","CNPJ","UF","Cidade","CEP","Logradouro, Nº","Site","Nome (vendedor)","E-mail","Telefone"],
-    nota: ["","","","","","","Exemplos","","","",""],
-    exemplos: [],
   },
 };
 

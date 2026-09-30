@@ -1,6 +1,7 @@
 /* Montagem das abas no layout da Planilha de Produtos e Fornecedores:
-   linha 1 com os códigos de importação, linha 5 com os títulos e os dados a
-   partir da linha 6.
+   linha 1 com os códigos de importação (só no arquivo; a tela mostra os
+   títulos), linha 2 com os títulos e os dados a partir da linha 3. As
+   linhas de exemplo do modelo não saem — não fazem sentido no levantamento.
 
    Tudo aqui lê a árvore: `emp.locais[].especificacoes[]` e, junto,
    `emp.especificacoesSemLocal[]` — o item que ainda não tem local não
@@ -158,10 +159,14 @@ function montarDescricao(a) {
   return partes.filter(Boolean).join(' — ');
 }
 
-/** As linhas de cabeçalho do layout (códigos de importação, nota, exemplos,
-    títulos) — os dados começam logo depois. */
-const cabecalho = def => [def.codigos, def.nota, ...def.exemplos, def.titulos];
+/** As linhas de cabeçalho do layout (códigos de importação e títulos) — os
+    dados começam logo depois. A última é a dos títulos: é a que a tela
+    mostra como cabeçalho. */
+const cabecalho = def => [def.codigos, def.titulos];
 const primeiraLinhaDeDados = def => cabecalho(def).length + 1;
+/** Quantas linhas de cabeçalho uma aba do layout tem (a prévia esconde as
+    anteriores à dos títulos). */
+export const LINHAS_CABECALHO = cabecalho(LAYOUT.MP).length;
 
 function moldura(def, dados) {
   const n = def.codigos.length;
@@ -495,17 +500,17 @@ export function pastaDeAbas(emp) {
        (ou SALA COMERCIAL) */
     const g = grupos[0];
     const nome = g && g.tipologias[0] ? nomeDoGrupo(emp, g, base) : base;
-    abas.push({ nome: nome.startsWith(base + ' - ') ? base : nome, linhas: abaMP(emp, g && g.tipologias.length > 1 ? g.itens : mp) });
+    abas.push({ nome: nome.startsWith(base + ' - ') ? base : nome, linhas: abaMP(emp, g && g.tipologias.length > 1 ? g.itens : mp), cabecalho: LINHAS_CABECALHO });
   } else {
     for (const g of grupos) {
       const t = g.tipologias[0];
-      abas.push({ nome: nomeDoGrupo(emp, g, base), linhas: abaMP(emp, g.tipologias.length > 1 ? g.itens : itensDaTipologia(emp, mp, t)) });
+      abas.push({ nome: nomeDoGrupo(emp, g, base), linhas: abaMP(emp, g.tipologias.length > 1 ? g.itens : itensDaTipologia(emp, mp, t)), cabecalho: LINHAS_CABECALHO });
     }
   }
-  if (temAreasComuns(emp)) abas.push({ nome: 'MC', linhas: abaMC(emp, mc) });
+  if (temAreasComuns(emp)) abas.push({ nome: 'MC', linhas: abaMC(emp, mc), cabecalho: LINHAS_CABECALHO });
   const pers = abaPersonalizacoes(emp, mp);
   if (pers.length > 1) abas.push({ nome: 'Personalizações', linhas: pers });
-  abas.push({ nome: NOME_FORN, linhas: abaForn(emp, especificacoesDe(emp)), ocultar: [0] });
+  abas.push({ nome: NOME_FORN, linhas: abaForn(emp, especificacoesDe(emp)), ocultar: [0], cabecalho: LINHAS_CABECALHO });
   if (temAreasComuns(emp)) abas.push({ nome: 'Sistemas Áreas Comuns', linhas: abaSistemas(emp, mc, true) });
   abas.push({ nome: 'Sistemas Unidades Privativas', linhas: abaSistemas(emp, mp, false) });
   if (temAreasComuns(emp)) abas.push({ nome: 'MC Locais', linhas: abaLocais(emp, true) });

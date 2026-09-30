@@ -2460,7 +2460,7 @@ const planilhas = {
     const aba = abas.find(a => a.nome === (estado.filtros.aba || abas[0]?.nome)) || abas[0];
     const pend = pendencias(e);
     return `<div class="cabeca"><div><h1>Exportar</h1>
-      <p class="desc">A Planilha de Produtos e Fornecedores no layout de importação (linha 1 com os códigos, linha 5 com os títulos, dados a partir da linha 6), mais o cofre do Obsidian e o JSON do projeto. Célula sem evidência sai vazia, nunca com “N/A”.</p></div>
+      <p class="desc">A Planilha de Produtos e Fornecedores no layout de importação (no arquivo, a linha 1 traz os códigos de importação; aqui a prévia mostra os títulos), mais o cofre do Obsidian e o JSON do projeto. Célula sem evidência sai vazia, nunca com “N/A”.</p></div>
       <div class="acoes">
         <button class="btn" data-acao="copiarAba">Copiar aba</button>
         <button class="btn" data-acao="baixarCsvAba">CSV da aba</button>
@@ -2469,21 +2469,22 @@ const planilhas = {
         <button class="btn primario" data-acao="baixarXlsx"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" stroke-linecap="round" stroke-linejoin="round">${ICONES.baixar}</svg>Baixar XLSX</button>
       </div></div>
       ${pend.length ? `<div class="aviso-faixa"><span class="ico-aviso" aria-hidden="true">!</span><div><b>${pend.length} item(ns) pendente(s).</b> Eles entram na exportação com o status e a confiança que têm hoje — a aba Pendências lista cada um. <button class="btn pequeno" data-rota="pendencias" style="margin-left:6px">Revisar agora</button></div></div>` : ''}
-      <div class="filtros">${abas.map(a => `<button class="btn pequeno ${aba.nome === a.nome ? 'primario' : ''}" data-acao="trocarAba" data-nome="${esc(a.nome)}">${esc(a.nome)} <span class="pilula" style="background:transparent">${a.linhas.length - 1}</span></button>`).join('')}</div>
+      <div class="filtros">${abas.map(a => `<button class="btn pequeno ${aba.nome === a.nome ? 'primario' : ''}" data-acao="trocarAba" data-nome="${esc(a.nome)}">${esc(a.nome)} <span class="pilula" style="background:transparent">${a.linhas.length - (a.cabecalho || 1)}</span></button>`).join('')}</div>
       <div class="cartao"><div class="rolagem"><table>
-        <thead><tr>${(aba.linhas[0] || []).map(c => `<th${/^[a-z_]+\.[a-z_.]+$|^memorial_systems$/.test(c) ? ' class="num"' : ''}>${esc(c)}</th>`).join('')}</tr></thead>
-        <tbody>${aba.linhas.slice(1, 260).map((l, i) => {
-          const moldura = i < 4 && aba.nome !== 'Copiar';
-          /* a célula da planilha pode trazer cor (amarelo: pergunta para a
-             construtora; rosa: decisão do time) ou fórmula (G em diante) */
-          return `<tr${moldura ? ' style="color:var(--ink-3)"' : ''}>${l.map(c => {
+        <thead><tr>${(aba.linhas[(aba.cabecalho || 1) - 1] || []).map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead>
+        <tbody>${aba.linhas.slice(aba.cabecalho || 1, (aba.cabecalho || 1) + 259).map(l => {
+          /* os códigos de importação (linha 1 do arquivo) ficam só no
+             arquivo; a prévia mostra os títulos. A célula pode trazer cor
+             (amarelo: pergunta para a construtora; rosa: decisão do time)
+             ou fórmula (G em diante) */
+          return `<tr>${l.map(c => {
             const cel = (c && typeof c === 'object' && !Array.isArray(c)) ? c : { v: c, cor: '', f: '' };
             if (cel.f) return '<td class="cel-formula" title="fórmula que traz da aba Forn. pela marca">ƒ</td>';
-            return `<td${cel.cor ? ` class="cel-${cel.cor}"` : ''}>${moldura ? esc(cel.v) : celula(cel.v)}</td>`;
+            return `<td${cel.cor ? ` class="cel-${cel.cor}"` : ''}>${celula(cel.v)}</td>`;
           }).join('')}</tr>`;
         }).join('')}</tbody>
       </table></div>
-      ${aba.linhas.length > 260 ? `<div style="padding:10px 14px;color:var(--ink-3);font-size:12.5px">Pré-visualização de 259 linhas. O arquivo exportado traz todas as ${aba.linhas.length - 1}.</div>` : ''}</div>`;
+      ${aba.linhas.length - (aba.cabecalho || 1) > 259 ? `<div style="padding:10px 14px;color:var(--ink-3);font-size:12.5px">Pré-visualização de 259 linhas. O arquivo exportado traz todas as ${aba.linhas.length - (aba.cabecalho || 1)}.</div>` : ''}</div>`;
   },
   acoes: {
     trocarAba({ nome }) { estado.filtros.aba = nome; render(); },
