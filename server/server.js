@@ -61,7 +61,8 @@ import { gerarComCadeia, PROVEDORES_CONFIGURADOS } from './provedores.js';
 import { ocrPdf, OCR_CONFIGURADO } from './ocr.js';
 import * as banco from './db.js';
 import armazenamento, { lerMultipart } from './armazenamento.js';
-import { montarMcp, chaveDoConector, girarChave, nucleoDisponivel, erroDoNucleo } from './mcp.js';
+import { montarMcp, chaveDoConector, girarChave, chaveConfere, nucleoDisponivel, erroDoNucleo } from './mcp.js';
+import { montarOauth } from './oauth.js';
 
 const PORTA = Number(process.env.PORT || 3000);
 /* CHAVE/MODELO continuam existindo só para o /api/health e as mensagens de
@@ -317,6 +318,7 @@ app.get('/api/health', async (_req, res) => {
       'POST /api/vision/process-local', 'POST /api/vision/process-sheet', 'POST /api/text/process-memorial',
       'POST /api/vision/classify-document', 'POST /api/pdf/ocr', 'POST /api/chat', 'POST /api/mapear',
       'POST /mcp', 'GET /api/mcp/config', 'POST /api/mcp/config/rotate',
+      'GET /.well-known/oauth-authorization-server', 'POST /oauth/register', 'GET/POST /oauth/authorize', 'POST /oauth/token',
     ],
     categorias: CATEGORIAS.length,
   });
@@ -853,10 +855,15 @@ app.get('/api/mcp/config', autenticar, rota(async (req, res) => {
 }));
 
 app.post('/api/mcp/config/rotate', autenticar, rota(async (_req, res) => {
-  res.json({ ok: true, chave: await girarChave(banco) });
+  const chave = await girarChave(banco);
+  await oauth.revogarTudo();           // os tokens emitidos com a chave antiga caem junto
+  res.json({ ok: true, chave });
 }));
 
-montarMcp(app, { banco, origens: ORIGENS_OK });
+/* o login OAuth que o claude.ai procura (a "senha" é a chave do conector) e
+   o endpoint MCP, que aceita a chave fixa ou um token emitido ali */
+const oauth = montarOauth(app, { banco, chaveDoConector, chaveConfere, urlPublica });
+montarMcp(app, { banco, origens: ORIGENS_OK, tokenValido: oauth.tokenValido, urlPublica });
 
 app.delete('/api/projects/:id', rota(async (req, res) => {
   res.json({ ok: await banco.apagarProjeto(req.params.id) });

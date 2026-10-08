@@ -3077,7 +3077,7 @@ function cartaoClaude() {
       <ol style="${p};margin:12px 0 0 18px;line-height:1.7">
         <li>No claude.ai: <b>Configurações → Conectores → Adicionar conector personalizado</b>.</li>
         <li>Nome <b>Prancharia</b>; URL <code>${esc(c.url)}</code> <button class="btn pequeno" data-acao="copiarUrlClaude">Copiar URL</button></li>
-        <li>Em autenticação, escolha a <b>credencial fixa</b> (token enviado em todo pedido, cabeçalho <code>Authorization: Bearer</code>) e cole a chave:
+        <li>Se o claude.ai abrir a tela de login do Prancharia, cole a chave abaixo nela e pronto. Ou, em <b>Configurações avançadas</b> do conector, escolha a <b>credencial fixa</b> (token enviado em todo pedido, cabeçalho <code>Authorization: Bearer</code>) e cole a mesma chave:
           <code>${mostrar ? esc(chave) : '•'.repeat(14) + esc(chave.slice(-4))}</code>
           <button class="btn pequeno" data-acao="mostrarChaveClaude">${mostrar ? 'Esconder' : 'Mostrar'}</button>
           <button class="btn pequeno" data-acao="copiarChaveClaude">Copiar chave</button></li>

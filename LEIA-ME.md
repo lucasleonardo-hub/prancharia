@@ -675,7 +675,15 @@ JSON-RPC (`initialize`, `tools/list`, `tools/call`) respondido em JSON, o
 que convive com o Render free dormindo e acordando. A autenticação é uma
 **chave fixa** em `Authorization: Bearer <chave>` (o claude.ai chama isso de
 "credencial fixa") — só no cabeçalho, nunca na URL, que iria parar nos logs
-de acesso. A chave
+de acesso. Como o claude.ai, ao receber 401, procura um **servidor de
+autorização** (metadados em `/.well-known/oauth-protected-resource`,
+registro dinâmico, OAuth 2.1 com PKCE) e sem ele acusa "não foi possível
+registrar no serviço de login", o BFF também é esse servidor
+(`server/oauth.js`): a página `/oauth/authorize` pede a chave do conector
+e, com ela, emite um token de 30 dias (com refresh de 90) que o `/mcp`
+aceita como aceita a chave; tokens e códigos ficam só como hash na tabela
+`config`, o código é de uso único e o refresh rotaciona; "Gerar nova chave"
+derruba todos os tokens. A chave
 nasce no banco (tabela `config`) na primeira consulta, aparece em
 **Configurações → Claude (conector MCP)** com o passo a passo do claude.ai,
 e "Gerar nova chave" invalida a anterior na hora; `MCP_TOKEN` no ambiente

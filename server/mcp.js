@@ -75,7 +75,7 @@ export async function girarChave(banco) {
 
 /* compara os hashes, não as strings: o tempo da comparação não depende do
    comprimento nem do conteúdo da chave recebida */
-function chaveConfere(dada, certa) {
+export function chaveConfere(dada, certa) {
   if (!dada || !certa) return false;
   const h = s => crypto.createHash('sha256').update(String(s)).digest();
   return crypto.timingSafeEqual(h(dada), h(certa));
@@ -772,23 +772,29 @@ export async function tratarMensagem(msg, ctx) {
  * Authorization. GET responde 405 (sem stream de servidor); DELETE responde
  * 200 (não há sessão a encerrar).
  */
-export function montarMcp(app, { banco, origens = ['*'] }) {
+export function montarMcp(app, { banco, origens = ['*'], tokenValido = async () => false, urlPublica = null }) {
   const origemOk = req => {
     const o = req.headers.origin;
     if (!o) return true;                                   // chamada de servidor (claude.ai), não de navegador
     return origens.includes('*') || origens.includes(o);
   };
   /* só pelo cabeçalho: chave no caminho ou na query iria parar nos logs de
-     acesso do Render e de qualquer proxy no meio */
+     acesso do Render e de qualquer proxy no meio. Vale a chave fixa ou um
+     token emitido pelo login OAuth (server/oauth.js). */
   const autorizado = async (req) => {
     const { chave } = await chaveDoConector(banco);
     const m = /^Bearer\s+(.+)$/i.exec(String(req.headers.authorization || ''));
-    return chaveConfere(texto(m ? m[1] : ''), chave);
+    const dada = texto(m ? m[1] : '');
+    if (!dada) return false;
+    return chaveConfere(dada, chave) || (await tokenValido(dada));
   };
+  /* o 401 diz onde estão os metadados do recurso: é por aí que o claude.ai
+     descobre o servidor de autorização */
+  const desafio = req => `Bearer realm="prancharia"${urlPublica ? `, resource_metadata="${urlPublica(req)}/.well-known/oauth-protected-resource"` : ''}`;
   const post = async (req, res) => {
     try {
       if (!origemOk(req)) return res.status(403).json(erro(null, -32000, 'origem não permitida'));
-      if (!(await autorizado(req))) return res.status(401).set('WWW-Authenticate', 'Bearer realm="prancharia"').json(erro(null, -32001, 'chave do conector ausente ou inválida'));
+      if (!(await autorizado(req))) return res.status(401).set('WWW-Authenticate', desafio(req)).json(erro(null, -32001, 'chave do conector ausente ou inválida'));
       const corpo = req.body;
       const ctx = { banco, nucleo: await carregarNucleo() };
       if (Array.isArray(corpo)) {
