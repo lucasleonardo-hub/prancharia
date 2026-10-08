@@ -184,7 +184,39 @@ async function migrar(d) {
       conteudo    BLOB NOT NULL,
       criado_em   TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS config (
+      chave          TEXT PRIMARY KEY,
+      valor          TEXT NOT NULL DEFAULT '',
+      atualizado_em  TEXT NOT NULL
+    );
   `);
+}
+
+/* ------------------------------------------------------------------ */
+/* configuração do servidor (a chave do conector do Claude mora aqui)   */
+/* ------------------------------------------------------------------ */
+
+export async function lerConfig(chave) {
+  const d = await abrir();
+  const r = await d.get('SELECT valor FROM config WHERE chave = ?', [String(chave)]);
+  return r ? r.valor : null;
+}
+
+export async function salvarConfig(chave, valor) {
+  const d = await abrir();
+  await d.run(`
+    INSERT INTO config (chave, valor, atualizado_em) VALUES (?, ?, ?)
+    ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor, atualizado_em = excluded.atualizado_em
+  `, [String(chave), String(valor), agora()]);
+}
+
+/** Só o carimbo de um projeto — para a tela saber se alguém (o Claude) o
+    alterou sem baixar a árvore inteira. */
+export async function carimboDoProjeto(id) {
+  const d = await abrir();
+  const r = await d.get('SELECT nome, atualizado_em FROM projetos WHERE id = ?', [String(id)]);
+  return r ? { nome: r.nome, atualizadoEm: r.atualizado_em } : null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -310,12 +342,27 @@ export async function lerProjeto(id) {
  * escrita grande e pouco frequente, que é exatamente o padrão de uso: dezenas
  * de leituras para cada gravação.
  */
-export async function salvarProjeto(emp = {}) {
+export async function salvarProjeto(emp = {}, { seCarimbo = null } = {}) {
   if (!emp || !emp.id) throw new Error('projeto sem id');
   const d = await abrir();
   const t = agora();
   const texto = JSON.stringify(emp);
-  const anterior = await d.get('SELECT criado_em FROM projetos WHERE id = ?', [String(emp.id)]);
+  const anterior = await d.get('SELECT criado_em, atualizado_em FROM projetos WHERE id = ?', [String(emp.id)]);
+
+  /* compare-and-set: grava só se o carimbo no banco ainda é o que quem
+     escreve leu. É a trava contra a tela e o Claude gravarem um por cima do
+     outro — a comparação e a escrita são um UPDATE só, sem janela entre
+     as duas. Devolve { conflito: true, atualizadoEm } quando perdeu. */
+  if (seCarimbo && anterior) {
+    const r = await d.run(`
+      UPDATE projetos SET empresa_id = ?, nome = ?, tipo = ?, dados_json = ?, bytes = ?, atualizado_em = ?
+       WHERE id = ? AND atualizado_em = ?
+    `, [emp.empresaId ? String(emp.empresaId) : null, String(emp.nome || ''), String(emp.tipo || 'outro'), texto, texto.length, t,
+      String(emp.id), String(seCarimbo)]);
+    if (Number(r.changes) > 0) return { id: emp.id, bytes: texto.length, atualizadoEm: t };
+    const atual = await d.get('SELECT atualizado_em FROM projetos WHERE id = ?', [String(emp.id)]);
+    return { id: emp.id, conflito: true, atualizadoEm: atual ? atual.atualizado_em : anterior.atualizado_em };
+  }
 
   await d.run(`
     INSERT INTO projetos (id, empresa_id, nome, tipo, dados_json, bytes, criado_em, atualizado_em)

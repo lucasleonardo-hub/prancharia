@@ -115,9 +115,61 @@ export async function salvar(motivo) {
   if (!e) return;
   e.atualizadoEm = new Date().toISOString();
   sincronizar(e);              // árvore é a verdade; as listas antigas são a vista
-  await store.salvarEmpreendimento(e);
+  try {
+    await store.salvarEmpreendimento(e);
+  } catch (err) {
+    if (err && err.name === 'ConflitoNuvem' && err.projeto) {
+      /* o Claude (ou outro navegador) gravou primeiro: a versão do servidor
+         vale, e a pessoa fica sabendo que a última alteração não entrou */
+      adotarDoServidor(err.projeto);
+      aviso('Este empreendimento foi alterado pelo Claude (ou em outro navegador) enquanto você editava. Recarreguei a versão do servidor — refaça a última alteração se ela não aparecer.');
+      return;
+    }
+    throw err;
+  }
   if (motivo) registrarHistorico(e, motivo);
 }
+
+/* a cópia que veio do servidor substitui a da memória, sem perder o que a
+   tela estava mostrando */
+function adotarDoServidor(projeto) {
+  if (!projeto || !projeto.id) return;
+  const i = estado.emps.findIndex(x => x.id === projeto.id);
+  delete projeto.resumo;
+  const pronto = migrar(projeto);
+  if (i >= 0) estado.emps[i] = pronto; else estado.emps.push(pronto);
+  store.marcarCarimbo(projeto.id, projeto.atualizadoEm);
+  render();
+}
+
+/* O Claude escreve pelo conector direto no servidor. A tela sonda o carimbo
+   do empreendimento aberto (leve: só a data) e, quando ele muda, baixa a
+   árvore e redesenha — sem a pessoa precisar recarregar a página. */
+async function conferirServidor() {
+  if (!store.naNuvem() || document.visibilityState !== 'visible' || estado.processando) return;
+  /* com um diálogo aberto a pessoa está no meio de uma edição que ainda não
+     foi gravada: trocar a árvore agora jogaria o formulário fora */
+  const modal = document.getElementById('modal');
+  if (modal && !modal.hidden) return;
+  /* e com um campo em foco a pessoa está digitando: redesenhar agora
+     apagaria o texto e a rolagem — fica para a próxima sonda */
+  const foco = document.activeElement;
+  if (foco && (foco.tagName === 'INPUT' || foco.tagName === 'TEXTAREA' || foco.tagName === 'SELECT' || foco.isContentEditable) && foco.closest('#conteudo')) return;
+  const e = emp();
+  if (!e || e.resumo) return;
+  try {
+    const v = await store.versaoNaNuvem(e.id);
+    const conhecido = store.carimboDe(e.id);
+    if (!v || !v.atualizadoEm || !conhecido || v.atualizadoEm === conhecido) return;
+    const corpo = await store.carregarEmpreendimento(e.id, { semCache: true });
+    if (!corpo) return;
+    const doClaude = (corpo.historico || []).filter(h => h.tipo === 'claude' && h.quando > conhecido).length;
+    adotarDoServidor(corpo);
+    aviso(doClaude ? `O Claude fez ${doClaude} alteração(ões) neste empreendimento — a tela foi atualizada.` : 'Este empreendimento foi atualizado no servidor — a tela foi atualizada.');
+  } catch (err) { console.warn('[nuvem] sonda do carimbo:', err.message); }
+}
+setInterval(conferirServidor, 30000);
+document.addEventListener('visibilitychange', conferirServidor);
 
 export function irPara(rota, param) {
   location.hash = '#/' + rota + (param ? '/' + encodeURIComponent(param) : '');

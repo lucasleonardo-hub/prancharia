@@ -33,7 +33,7 @@ const FALHAR = /^(1|true|sim)$/i.test(process.env.FALHAR || '');
 const CABECA = {
   'Content-Type': 'application/json; charset=utf-8',
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Content-Type, X-Empresa-Id',
+  'Access-Control-Allow-Headers': 'Content-Type, X-Empresa-Id, X-Base-Atualizado-Em, Authorization',
   'Access-Control-Allow-Methods': 'POST, GET, DELETE, OPTIONS',
 };
 const LIMITE_UPLOAD = Number(process.env.UPLOAD_MAX_BYTES || 64 * 1024 * 1024);
@@ -95,6 +95,16 @@ async function rotasDeDados(req, res) {
     enviar(res, 200, { ok: true, projetos: await banco.listarProjetos({
       empresaId: q.get('companyId') || q.get('empresaId') || null,
       limite: Math.min(Number(q.get('limit')) || 200, 500) }) }); return true;
+  }
+  if (metodo === 'GET' && m(/^\/api\/projects\/([^/]+)\/version$/)) {
+    const p = await banco.lerProjeto(decodeURIComponent(m(/^\/api\/projects\/([^/]+)\/version$/)[1]));
+    enviar(res, p ? 200 : 404, p ? { ok: true, nome: p.nome, atualizadoEm: p.atualizadoEm } : { ok: false, erro: 'projeto não encontrado' }); return true;
+  }
+  if (metodo === 'GET' && rota === '/api/mcp/config') {
+    enviar(res, 200, { ok: true, url: `http://localhost:${PORTA}/mcp`, chave: 'pr_simulada_0000000000000000', origem: 'simulado', nucleo: true, erroNucleo: '' }); return true;
+  }
+  if (metodo === 'POST' && rota === '/api/mcp/config/rotate') {
+    enviar(res, 200, { ok: true, chave: 'pr_simulada_' + Date.now().toString(36) }); return true;
   }
   if (metodo === 'GET' && m(/^\/api\/projects\/([^/]+)$/)) {
     const p = await banco.lerProjeto(decodeURIComponent(m(/^\/api\/projects\/([^/]+)$/)[1]));
@@ -284,7 +294,7 @@ const servidor = http.createServer((req, res) => {
   }
 
   /* Dados e arquivos primeiro: são rotas reais. Só o que sobrar é do modelo. */
-  if (/^\/api\/(companies|projects|glossary|upload|files)\b/.test(req.url)) {
+  if (/^\/api\/(companies|projects|glossary|upload|files|mcp)\b/.test(req.url)) {
     rotasDeDados(req, res).then((atendeu) => {
       if (!atendeu) enviar(res, 404, { ok: false, erro: 'endpoint inexistente' });
     }).catch((err) => {

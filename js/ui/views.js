@@ -83,11 +83,16 @@ const vazioDocs = `<button class="btn primario" data-rota="documentos">Enviar pr
 let _listaSis = null;
 const listaSistemas = () => (_listaSis ||= `<datalist id="listaSistemas">${NOMES_SISTEMAS.map(n => `<option value="${esc(n)}"></option>`).join('')}</datalist>`);
 
-function copiarTsv(linhas, rotulo) {
-  const txt = linhas.map(l => l.map(c => String(c === null || c === undefined ? '' : c).replace(/\t|\n/g, ' ')).join('\t')).join('\n');
-  const fim = () => aviso(`${rotulo} copiado (${linhas.length - 1} linha(s)). Cole direto na planilha.`);
+function copiar(txt, fim) {
   if (navigator.clipboard?.writeText) navigator.clipboard.writeText(txt).then(fim, () => fallbackCopia(txt, fim));
   else fallbackCopia(txt, fim);
+}
+function copiarTsv(linhas, rotulo) {
+  const txt = linhas.map(l => l.map(c => String(c === null || c === undefined ? '' : c).replace(/\t|\n/g, ' ')).join('\t')).join('\n');
+  copiar(txt, () => aviso(`${rotulo} copiado (${linhas.length - 1} linha(s)). Cole direto na planilha.`));
+}
+function copiarTexto(txt, rotulo) {
+  copiar(txt, () => aviso(`${rotulo} copiada.`));
 }
 function fallbackCopia(txt, fim) {
   const ta = document.createElement('textarea');
@@ -2946,7 +2951,9 @@ const config = {
 
       ${cartaoMotor()}
 
-      ${cartaoDados()}`;
+      ${cartaoDados()}
+
+      ${cartaoClaude()}`;
   },
   depois(e, alvo) {
     // endereço e tempo limite do motor valem no `blur`, sem precisar de botão
@@ -2992,6 +2999,20 @@ const config = {
     async salvarEmpEdicao(d, el) { await empreendimentos.acoes.salvarEmpEdicao(d, el); },
     fecharModal() { fecharModal(); },
     async religarNuvem() { await empreendimentos.acoes.religarNuvem(); },
+    mostrarChaveClaude() { estado.mostrarChaveClaude = !estado.mostrarChaveClaude; render(); },
+    copiarUrlClaude() { const c = estado.conectorClaude; if (c && c.url) copiarTexto(c.url, 'URL do conector'); },
+    copiarChaveClaude() { const c = estado.conectorClaude; if (c && c.chave) copiarTexto(c.chave, 'Chave do conector'); },
+    async girarChaveClaude() {
+      const ok = await confirmar({ titulo: 'Gerar nova chave do conector?', texto: 'A chave atual deixa de valer agora. O Claude para de responder até você colar a chave nova no conector do claude.ai.', ok: 'Gerar nova chave' });
+      if (!ok) return;
+      try {
+        const chave = await store.girarChaveClaude();
+        estado.conectorClaude = { ...(estado.conectorClaude || {}), ok: true, chave };
+        estado.mostrarChaveClaude = true;
+        aviso('Chave nova gerada. Cole-a no conector do claude.ai.');
+      } catch (err) { aviso('Não consegui gerar a chave: ' + err.message); }
+      render();
+    },
     async baixarBackup() {
       aviso('Gerando o backup no servidor…');
       try {
@@ -3026,6 +3047,49 @@ function cartaoDados() {
              <button class="btn" data-acao="religarNuvem">Tentar conectar agora</button>
              <button class="btn" data-rota="planilhas">Exportar JSON deste empreendimento</button>
            </div>`}
+    </div></div>`;
+}
+
+/* ================= CONECTOR DO CLAUDE ================= */
+/* O Claude do claude.ai entra no site por um conector MCP: a URL e a chave
+   abaixo são tudo o que ele precisa. Quem tem a chave faz tudo o que a tela
+   faz — por isso ela mora aqui, e só aqui, e pode ser trocada. */
+function cartaoClaude() {
+  const nuvem = store.naNuvem();
+  const c = estado.conectorClaude;
+  if (nuvem && c === undefined) {
+    estado.conectorClaude = null;
+    store.conectorClaude().then(r => { estado.conectorClaude = r || { ok: false, erro: 'sem resposta' }; render(); });
+  }
+  const pronto = !!(nuvem && c && c.ok);
+  const chave = pronto ? String(c.chave || '') : '';
+  const mostrar = !!estado.mostrarChaveClaude;
+  const selo = !nuvem ? '<span class="selo neutro">precisa do servidor</span>'
+    : !c ? '<span class="selo neutro">consultando…</span>'
+    : !c.ok ? '<span class="selo atencao">servidor sem o conector</span>'
+    : !c.nucleo ? '<span class="selo atencao">núcleo do site ausente no servidor</span>'
+    : '<span class="selo bom">pronto</span>';
+  const p = 'font-size:13px;color:var(--ink-2);max-width:74ch';
+  return `<div class="cartao"><header><h2>Claude (conector MCP)</h2><div class="acoes">${selo}</div></header>
+    <div class="corpo">
+      <p style="${p}">O Claude do claude.ai pode ler e editar os empreendimentos daqui: listar locais e especificações, criar empreendimentos, locais e linhas (sempre com a fonte), buscar nos documentos, listar pendências e montar a planilha. O que ele altera entra no histórico como <b>Claude</b>, e esta tela se atualiza sozinha em até 30 segundos.</p>
+      ${pronto ? `
+      <ol style="${p};margin:12px 0 0 18px;line-height:1.7">
+        <li>No claude.ai: <b>Configurações → Conectores → Adicionar conector personalizado</b>.</li>
+        <li>Nome <b>Prancharia</b>; URL <code>${esc(c.url)}</code> <button class="btn pequeno" data-acao="copiarUrlClaude">Copiar URL</button></li>
+        <li>Em autenticação, escolha a <b>credencial fixa</b> (token enviado em todo pedido, cabeçalho <code>Authorization: Bearer</code>) e cole a chave:
+          <code>${mostrar ? esc(chave) : '•'.repeat(14) + esc(chave.slice(-4))}</code>
+          <button class="btn pequeno" data-acao="mostrarChaveClaude">${mostrar ? 'Esconder' : 'Mostrar'}</button>
+          <button class="btn pequeno" data-acao="copiarChaveClaude">Copiar chave</button></li>
+        <li>Na conversa, ative o conector no botão <b>+</b> e peça, por exemplo: “liste os empreendimentos do Prancharia”.</li>
+      </ol>
+      <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <button class="btn discreto" data-acao="girarChaveClaude">Gerar nova chave</button>
+        <span style="font-size:12.5px;color:var(--ink-3)">${c.origem === 'ambiente' ? 'A chave vem da variável MCP_TOKEN do servidor e só muda lá.' : 'A chave anterior deixa de valer na hora; refaça o passo 3 no claude.ai.'}</span>
+      </div>
+      ${c.nucleo ? '' : `<p style="${p};margin-top:12px;color:var(--atencao)">O servidor não encontrou <code>js/core</code> (${esc(c.erroNucleo || '')}): o conector responde, mas as ferramentas falham. Publique o repositório inteiro.</p>`}`
+      : nuvem && c && !c.ok ? `<p style="${p}">O servidor respondeu sem a rota do conector${c.erro ? ` (${esc(c.erro)})` : ''}. Publique a versão atual do servidor.</p>`
+      : !nuvem ? `<p style="${p}">O conector mora no servidor compartilhado. Ligue a nuvem (cartão Dados) para ver a URL e a chave.</p>` : ''}
     </div></div>`;
 }
 

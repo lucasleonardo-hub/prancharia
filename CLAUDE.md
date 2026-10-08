@@ -32,4 +32,6 @@ Leia antes de mexer:
 - MCP em `.mcp.json`: `context7` (docs de Gemini SDK, Express, libsql) e `playwright` (navegar o `local.html`).
 - Sem bundler, sem linter, sem TypeScript. ES modules puros; precisa de servidor estático (`node static-server.mjs 8000`).
 - `vendor/libredwg` é o LibreDWG em WebAssembly (GPL, 9,5 MB), carregado sob demanda por `js/core/dwg.js`; não o importe no carregamento da página. DXF não é lido.
+- **O servidor importa `js/core`** (`server/mcp.js` → `../js/core/*`) para o conector do Claude. Nenhum módulo de `js/core` importado ali pode puxar `pdfdoc.js`/`vendor/pdf.js` ou `ia.js` (dependem do navegador); `memorial.js` e `assistente.js` ficam de fora. No Render o repositório inteiro é clonado (rootDir `server`, `buildFilter` em `render.yaml`).
+- **Conector MCP:** `POST /mcp` com chave fixa (`Authorization: Bearer`), chave em Configurações do site; escrita pelo Claude passa pelas mesmas regras (fonte ou justificativa, vocabulário controlado, `confirmar: true` para excluir). A tela detecta a concorrência pelo carimbo (`X-Base-Atualizado-Em` → 409) e sonda `/version` a cada 30 s.
 - Commits em português, no imperativo, uma linha dizendo o efeito para o usuário (ver `git log`).

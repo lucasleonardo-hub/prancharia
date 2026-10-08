@@ -77,6 +77,12 @@ curl -s "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys?limit=1" 
 `status` termina em `live` (ok) ou `build_failed` / `update_failed` (abra os
 logs no painel e relate o erro; não tente redeploy cego).
 
+O conector do Claude (`server/mcp.js`) importa `../js/core`: mudança em
+`js/core/` que o servidor usa (model, exporter, ambiente, vocab, tipos,
+areas, marcas, xlsx) também pede deploy no Render. Depois do deploy, o
+`/api/health` deve trazer `mcp.nucleo: true`; `false` quer dizer que o
+clone no Render não trouxe `js/core` (ver `buildFilter` em `render.yaml`).
+
 ## 4. Conferir
 
 ```bash
@@ -85,7 +91,13 @@ curl -s https://prancharia-bff.onrender.com/api/health
 
 A resposta lista as rotas e `persistente: true` (Turso ligado). Se vier
 `persistente: false`, os dados vão sumir na hibernação: avise, é bloqueante
-(ver `LEIA-ME.md`, "Banco persistente").
+(ver `LEIA-ME.md`, "Banco persistente"). Confira também `mcp.nucleo: true`
+e, com a chave de Configurações, que `POST /mcp` responde ao `ping`:
+
+```bash
+curl -s -X POST https://prancharia-bff.onrender.com/mcp -H "Authorization: Bearer $CHAVE" \
+  -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"ping"}'
+```
 
 Abra https://prancharia.vercel.app e confirme que o rodapé da barra lateral
 mostra o servidor compartilhado, não "só este navegador".

@@ -61,6 +61,7 @@ import { gerarComCadeia, PROVEDORES_CONFIGURADOS } from './provedores.js';
 import { ocrPdf, OCR_CONFIGURADO } from './ocr.js';
 import * as banco from './db.js';
 import armazenamento, { lerMultipart } from './armazenamento.js';
+import { montarMcp, chaveDoConector, girarChave, nucleoDisponivel, erroDoNucleo } from './mcp.js';
 
 const PORTA = Number(process.env.PORT || 3000);
 /* CHAVE/MODELO continuam existindo só para o /api/health e as mensagens de
@@ -308,12 +309,14 @@ app.get('/api/health', async (_req, res) => {
        e tudo o que está em /server/dados some na próxima hibernação */
     persistente: bd ? !!bd.persistente : false,
     armazenamento: armazenamento.nome,
-    autenticacao: 'nenhuma',
+    autenticacao: 'nenhuma nas rotas /api; chave fixa (Bearer) no conector /mcp',
+    mcp: { rota: 'POST /mcp', nucleo: await nucleoDisponivel(), erroNucleo: erroDoNucleo() || '' },
     rotas: [
-      'GET/POST /api/companies', 'GET/POST /api/projects', 'GET/POST /api/glossary',
+      'GET/POST /api/companies', 'GET/POST /api/projects', 'GET /api/projects/:id/version', 'GET/POST /api/glossary',
       'POST /api/upload', 'GET /api/files/:id', 'GET /api/backup',
       'POST /api/vision/process-local', 'POST /api/vision/process-sheet', 'POST /api/text/process-memorial',
       'POST /api/vision/classify-document', 'POST /api/pdf/ocr', 'POST /api/chat', 'POST /api/mapear',
+      'POST /mcp', 'GET /api/mcp/config', 'POST /api/mcp/config/rotate',
     ],
     categorias: CATEGORIAS.length,
   });
@@ -815,8 +818,45 @@ app.post('/api/projects', rota(async (req, res) => {
   const corpo = req.body || {};
   const emp = corpo.projeto || corpo;
   if (!emp || !emp.id) return res.status(400).json({ ok: false, erro: 'projeto sem id' });
-  res.json({ ok: true, ...(await banco.salvarProjeto(emp)) });
+  /* A tela manda o carimbo que leu por último. A gravação é um
+     compare-and-set no banco: se o servidor já tem outro carimbo — o Claude
+     (conector) ou outro navegador gravou no meio —, nada é escrito e a
+     resposta é 409 com a versão atual, que a tela adota. */
+  const base = String(req.get('X-Base-Atualizado-Em') || '').trim();
+  const r = await banco.salvarProjeto(emp, { seCarimbo: base || null });
+  if (r.conflito) {
+    return res.status(409).json({
+      ok: false, conflito: true, atualizadoEm: r.atualizadoEm,
+      erro: 'o empreendimento foi alterado no servidor depois da sua última leitura',
+      projeto: await banco.lerProjeto(emp.id),
+    });
+  }
+  res.json({ ok: true, ...r });
 }));
+
+/* o carimbo de um projeto, leve, para a tela perceber uma alteração do
+   Claude sem baixar a árvore */
+app.get('/api/projects/:id/version', rota(async (req, res) => {
+  const c = await banco.carimboDoProjeto(req.params.id);
+  if (!c) return res.status(404).json({ ok: false, erro: 'projeto não encontrado' });
+  res.json({ ok: true, ...c });
+}));
+
+/* ---------- conector do Claude (MCP) ---------- */
+
+const urlPublica = req => (process.env.PUBLIC_URL || '').replace(/\/$/, '')
+  || `${req.get('x-forwarded-proto') || req.protocol}://${req.get('host')}`;
+
+app.get('/api/mcp/config', autenticar, rota(async (req, res) => {
+  const { chave, origem } = await chaveDoConector(banco);
+  res.json({ ok: true, url: urlPublica(req) + '/mcp', chave, origem, nucleo: await nucleoDisponivel(), erroNucleo: erroDoNucleo() || '' });
+}));
+
+app.post('/api/mcp/config/rotate', autenticar, rota(async (_req, res) => {
+  res.json({ ok: true, chave: await girarChave(banco) });
+}));
+
+montarMcp(app, { banco, origens: ORIGENS_OK });
 
 app.delete('/api/projects/:id', rota(async (req, res) => {
   res.json({ ok: await banco.apagarProjeto(req.params.id) });
@@ -941,7 +981,8 @@ app.listen(PORTA, () => {
     console.log(`  ATENÇÃO ............ DISCO EFÊMERO: este host apaga /server/dados a cada reinício/hibernação.`);
     console.log(`                       Os projetos vão SUMIR. Configure TURSO_DATABASE_URL + TURSO_AUTH_TOKEN (ver LEIA-ME).`);
   }
-  console.log(`  autenticação ....... NENHUMA — não exponha esta porta na internet`);
+  console.log(`  autenticação ....... NENHUMA nas rotas /api — não exponha esta porta na internet`);
+  console.log(`  conector do Claude . POST /mcp com chave fixa (Bearer); a chave está em Configurações do site`);
   console.log('');
   console.log(`  dados .............. GET/POST /api/companies · /api/projects · /api/glossary`);
   console.log(`  arquivos ........... POST /api/upload · GET /api/files/:id`);

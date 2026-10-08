@@ -104,18 +104,36 @@ function comPrazo(ms) {
  * Uma chamada ao BFF. Lança em qualquer falha — quem chama decide, e para as
  * gravações a decisão é sempre: avisa e não finge que salvou.
  */
-async function api(rota, { metodo = 'GET', corpo, cru, timeoutMs = NUVEM.timeoutMs } = {}) {
+/* O servidor recusou gravar porque alguém — o Claude pelo conector, ou outro
+   navegador — alterou o empreendimento depois da nossa última leitura. A
+   versão atual vem junto, para a tela adotar. */
+export class ConflitoNuvem extends Error {
+  constructor(projeto, atualizadoEm) {
+    super('o empreendimento foi alterado no servidor depois da última leitura');
+    this.name = 'ConflitoNuvem'; this.projeto = projeto; this.atualizadoEm = atualizadoEm;
+  }
+}
+
+/* o carimbo (atualizado_em) que o servidor devolveu por último para cada
+   projeto: vai no cabeçalho da próxima gravação, e é o que a sonda compara */
+const carimbos = new Map();
+export const carimboDe = id => carimbos.get(id) || '';
+export const marcarCarimbo = (id, quando) => { if (id && quando) carimbos.set(id, quando); };
+
+async function api(rota, { metodo = 'GET', corpo, cru, timeoutMs = NUVEM.timeoutMs, cabecalhosExtra = null } = {}) {
   const prazo = comPrazo(timeoutMs);
   try {
     const cabecalhos = {};
     if (corpo !== undefined) cabecalhos['Content-Type'] = 'application/json';
     if (NUVEM.empresaId) cabecalhos['X-Empresa-Id'] = NUVEM.empresaId;
+    if (cabecalhosExtra) for (const [k, v] of Object.entries(cabecalhosExtra)) if (v) cabecalhos[k] = v;
     const r = await fetch(NUVEM.base + rota, {
       method: metodo, headers: cabecalhos, signal: prazo.signal,
       body: cru !== undefined ? cru : (corpo !== undefined ? JSON.stringify(corpo) : undefined),
     });
     if (r.status === 404 && metodo === 'GET') return null;
     const dados = await r.json().catch(() => null);
+    if (r.status === 409 && dados && dados.conflito) throw new ConflitoNuvem(dados.projeto || null, dados.atualizadoEm || '');
     if (!r.ok || (dados && dados.ok === false)) {
       throw new Error((dados && dados.erro) || `servidor respondeu ${r.status}`);
     }
@@ -400,7 +418,11 @@ export async function salvarEmpreendimento(emp) {
     /* o mesmo filtro do modo local: o derivado não sobe */
     const limpo = JSON.parse(paraTexto(emp));
     if (NUVEM.empresaId && !limpo.empresaId) limpo.empresaId = NUVEM.empresaId;
-    await api('/api/projects', { metodo: 'POST', corpo: limpo });
+    /* com o carimbo da última leitura: o servidor devolve 409 (ConflitoNuvem)
+       se o Claude ou outro navegador gravou no meio, em vez de deixar
+       esta cópia passar por cima */
+    const r = await api('/api/projects', { metodo: 'POST', corpo: limpo, cabecalhosExtra: { 'X-Base-Atualizado-Em': carimbos.get(emp.id) || '' } });
+    if (r && r.atualizadoEm) carimbos.set(emp.id, r.atualizadoEm);
     invalidarCache('projetos');
     invalidarCache(`projeto:${emp.id}`);
     /* CÓPIA LOCAL TAMBÉM (write-through). Se o servidor perder os dados — o
@@ -451,12 +473,15 @@ export async function listarEmpreendimentos() {
     return doCache('projetos', NUVEM.cacheMs, async () => {
       const r = await api('/api/projects'
         + (NUVEM.empresaId ? `?companyId=${encodeURIComponent(NUVEM.empresaId)}` : ''));
-      return (r?.projetos || []).map(p => ({
-        id: p.id, empresaId: p.empresaId, nome: p.nome, tipo: p.tipo,
-        criadoEm: p.criadoEm, atualizadoEm: p.atualizadoEm,
-        bytes: p.bytes, resumo: true,      // marca de esqueleto: o corpo ainda não veio
-        documentos: [], locais: [], especificacoesSemLocal: [],
-      }));
+      return (r?.projetos || []).map(p => {
+        if (p.atualizadoEm) carimbos.set(p.id, p.atualizadoEm);
+        return {
+          id: p.id, empresaId: p.empresaId, nome: p.nome, tipo: p.tipo,
+          criadoEm: p.criadoEm, atualizadoEm: p.atualizadoEm,
+          bytes: p.bytes, resumo: true,      // marca de esqueleto: o corpo ainda não veio
+          documentos: [], locais: [], especificacoesSemLocal: [],
+        };
+      });
     });
   }
 
@@ -527,7 +552,8 @@ export async function enviarLocaisParaNuvem({ soNovos = true } = {}) {
   const feito = { projetos: 0, arquivos: 0, falhas: [] };
   for (const e of fila) {
     try {
-      await api('/api/projects', { metodo: 'POST', corpo: e });
+      const r = await api('/api/projects', { metodo: 'POST', corpo: e });
+      if (r && r.atualizadoEm) carimbos.set(e.id, r.atualizadoEm);
       feito.projetos++;
       for (const d of (e.documentos || [])) {
         const blob = await lerLocalmente(d.id);
@@ -550,12 +576,36 @@ export async function enviarLocaisParaNuvem({ soNovos = true } = {}) {
  * O corpo de um projeto. Fora da nuvem devolve null — ali `listarEmpreendimentos`
  * já entrega o objeto inteiro e não há segundo passo.
  */
-export async function carregarEmpreendimento(id) {
+export async function carregarEmpreendimento(id, { semCache = false } = {}) {
   if (!NUVEM.ligada) return null;
+  if (semCache) invalidarCache(`projeto:${id}`);
   return doCache(`projeto:${id}`, NUVEM.cacheMs, async () => {
     const r = await api(`/api/projects/${encodeURIComponent(id)}`);
-    return r?.projeto || null;
+    const p = r?.projeto || null;
+    if (p && p.atualizadoEm) carimbos.set(id, p.atualizadoEm);
+    return p;
   });
+}
+
+/** O carimbo atual de um projeto no servidor, sem baixar a árvore. */
+export async function versaoNaNuvem(id) {
+  if (!NUVEM.ligada) return null;
+  const r = await api(`/api/projects/${encodeURIComponent(id)}/version`);
+  return r && r.ok ? { nome: r.nome, atualizadoEm: r.atualizadoEm } : null;
+}
+
+/* ---------- conector do Claude (MCP) ---------- */
+
+/** URL e chave do conector, como o servidor as entrega; null sem servidor. */
+export async function conectorClaude() {
+  if (!NUVEM.ligada) return null;
+  try { return await api('/api/mcp/config'); } catch (e) { return { ok: false, erro: e.message }; }
+}
+
+/** Gera uma chave nova — a anterior deixa de valer no mesmo instante. */
+export async function girarChaveClaude() {
+  const r = await api('/api/mcp/config/rotate', { metodo: 'POST', corpo: {} });
+  return r && r.chave;
 }
 
 function apagarLocal(id) {

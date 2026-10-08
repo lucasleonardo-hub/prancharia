@@ -666,6 +666,60 @@ palavra. O nome de local que o mapeamento devolve passa pela mesma limpeza
 de numeração do memorial (`tituloLimpo`): "2.6 – DAS GARAGENS" entra como
 `GARAGENS`, igual à leitura vetorial.
 
+## O Claude pelo conector MCP
+
+O claude.ai entra no Prancharia por um **conector personalizado** que fala
+MCP (Model Context Protocol) pelo transporte Streamable HTTP: o BFF expõe
+`POST /mcp` (`server/mcp.js`), sem estado e sem stream — cada chamada é um
+JSON-RPC (`initialize`, `tools/list`, `tools/call`) respondido em JSON, o
+que convive com o Render free dormindo e acordando. A autenticação é uma
+**chave fixa** em `Authorization: Bearer <chave>` (o claude.ai chama isso de
+"credencial fixa") — só no cabeçalho, nunca na URL, que iria parar nos logs
+de acesso. A chave
+nasce no banco (tabela `config`) na primeira consulta, aparece em
+**Configurações → Claude (conector MCP)** com o passo a passo do claude.ai,
+e "Gerar nova chave" invalida a anterior na hora; `MCP_TOKEN` no ambiente
+do servidor a substitui. Quem tem a chave faz **tudo** o que a tela faz —
+é a decisão do produto, e por isso a chave só se vê nessa tela. Ressalva
+que a auditoria deixou escrita: `GET /api/mcp/config` entrega a chave sem
+login, como todas as rotas `/api` (o BFF não tem autenticação, por decisão
+documentada em `server/server.js`); a chave não dá mais do que `/api/projects`
+já dá a quem conhece o endereço. O próximo passo de segurança, quando
+houver, é login no BFF — e aí essas duas rotas são o primeiro lugar a
+proteger. Lotes JSON-RPC têm teto de 20 mensagens. Publicar o servidor sem
+`CORS_ORIGIN` configurado abre o CORS para qualquer site (o `render.yaml`
+fixa a Vercel).
+
+As 27 ferramentas reutilizam o núcleo do site (`js/core`, importado pelo
+servidor via `../js/core`; sem ele no disco o `/api/health` mostra
+`mcp.nucleo: false` e as ferramentas respondem o erro): empreendimentos
+(listar, abrir, criar, editar, excluir), locais (listar, ficha, criar,
+editar, excluir), especificações (listar, criar, editar, confirmar, mover,
+excluir), pendências com o que fazer, documentos (listar, ler o texto
+indexado em fatias, buscar um termo com a página), histórico, tipologias e
+unidades, marcas e fornecedores (aba Forn.), a planilha montada como o site
+exporta (abas e linhas, com `[amarelo]`/`[rosa]`), a lista mestra de
+sistemas e o glossário. As regras do produto valem para o Claude: nada
+entra sem fonte (documento, página, trecho) ou justificativa — vira
+evidência com `motor_ia: claude_mcp`; linha sem fonte literal entra a
+revisar com o motivo `claude`; categoria e sistema fora do vocabulário são
+recusados; exclusões exigem `confirmar: true`. Toda escrita entra no
+histórico com `tipo: 'claude'`.
+
+**Tela e Claude no mesmo empreendimento.** A gravação da tela manda o
+carimbo (`atualizado_em`) que leu por último no cabeçalho
+`X-Base-Atualizado-Em`; se o servidor já tem outro, responde 409 com a
+versão atual, a tela a adota e avisa que a última alteração não entrou
+(`ConflitoNuvem` em `js/core/storage.js`, tratado em `salvar` no app). A
+cada 30 s, e ao voltar à aba, a tela sonda `GET /api/projects/:id/version`
+e, quando o carimbo mudou, baixa a árvore e redesenha, dizendo quantas
+alterações do Claude chegaram. O servidor serializa as escritas do Claude
+por empreendimento (fila por id em `mcp.js`).
+
+Para testar sem o claude.ai: `scratchpad/testa-mcp.mjs` sobe o
+`server/server.js` com banco temporário e exercita autenticação, ciclo de
+vida, as ferramentas, o 409 e a troca de chave (44 verificações).
+
 ## Ler DWG
 
 O DWG entra pelo mesmo caminho do PDF — botão, arrastar, Google Drive, "Colar

@@ -83,6 +83,13 @@ confira os bytes com `grep` antes de rodar. Padrões que já se provaram:
   chave do Gemini.
 - **Modo lento/falha do simulador**: `LENTO=1` e `FALHAR=1` no ambiente do
   simulador testam a barra de progresso e o disjuntor.
+- **Cabeçalho novo no `fetch` do site** (como `X-Base-Atualizado-Em`): o
+  servidor real usa o pacote `cors`, que reflete o que o navegador pede; o
+  simulador tem a lista fixa em `Access-Control-Allow-Headers`. Sem
+  acrescentar lá, o preflight falha, `salvar()` lança "Failed to fetch" e o
+  lote nunca termina — o sintoma é "o lote não terminou a tempo" sem nenhum
+  `ok` antes. Para ver a causa na hora, o script imprime `console.error` e
+  `pageerror` da página conforme chegam.
 
 Relate: o que foi verificado, erros de console (se houver) e o caminho da
 captura. Se o Chromium não abrir, informe a versão da pasta `ms-playwright`

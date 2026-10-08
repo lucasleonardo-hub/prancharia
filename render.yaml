@@ -8,6 +8,13 @@ services:
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /api/health
+    # O conector do Claude (server/mcp.js) importa o núcleo do site em
+    # ../js/core: o repositório inteiro é clonado, e estas rotas fora de
+    # rootDir também contam como mudança para o deploy automático.
+    buildFilter:
+      paths:
+        - server/**
+        - js/core/**
     envVars:
       # Preenchida à mão no painel do Render (Environment) — nunca aqui no arquivo.
       - key: GEMINI_API_KEY
