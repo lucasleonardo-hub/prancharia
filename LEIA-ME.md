@@ -698,7 +698,7 @@ proteger. Lotes JSON-RPC têm teto de 20 mensagens. Publicar o servidor sem
 `CORS_ORIGIN` configurado abre o CORS para qualquer site (o `render.yaml`
 fixa a Vercel).
 
-As 27 ferramentas reutilizam o núcleo do site (`js/core`, importado pelo
+As 28 ferramentas reutilizam o núcleo do site (`js/core`, importado pelo
 servidor via `../js/core`; sem ele no disco o `/api/health` mostra
 `mcp.nucleo: false` e as ferramentas respondem o erro): empreendimentos
 (listar, abrir, criar, editar, excluir), locais (listar, ficha, criar,
@@ -707,7 +707,18 @@ excluir), pendências com o que fazer, documentos (listar, ler o texto
 indexado em fatias, buscar um termo com a página), histórico, tipologias e
 unidades, marcas e fornecedores (aba Forn.), a planilha montada como o site
 exporta (abas e linhas, com `[amarelo]`/`[rosa]`), a lista mestra de
-sistemas e o glossário. As regras do produto valem para o Claude: nada
+sistemas, o glossário e a **conferência dos sistemas construtivos**
+(`conferir_sistemas`): recebe a lista que a construtora manteve e o manual,
+procura no texto indexado dos documentos os termos de cada sistema da lista
+mestra do lado (`js/core/sistemas-busca.js`: nome, sinônimos e siglas) e devolve,
+por sistema, se está na lista, as ocorrências e até três trechos com documento e
+página — os candidatos a MANTIDO INCORRETAMENTE (na lista, sem evidência) e a
+EXCLUÍDO INCORRETAMENTE (fora da lista, com evidência). É a etapa 1 da assessoria
+feita onde o texto já está; evidência textual não prova existência (memorial de
+modelo, prancha raster fora do índice), por isso o resultado é a lista de
+candidatos com fonte, nunca a decisão. A lista mestra em `vocab.js` segue a
+lista da equipe (2026-10): 209 nomes com o lado de cada manual, mais 28 nomes
+antigos marcados `legado` — aceitos, mas fora dos checklists e dos filtros por lado. As regras do produto valem para o Claude: nada
 entra sem fonte (documento, página, trecho) ou justificativa — vira
 evidência com `motor_ia: claude_mcp`; linha sem fonte literal entra a
 revisar com o motivo `claude`; categoria e sistema fora do vocabulário são

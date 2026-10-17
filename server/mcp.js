@@ -39,10 +39,10 @@ export async function carregarNucleo() {
   try {
     const base = new URL('../js/core/', import.meta.url);
     const mod = n => import(new URL(n, base).href);
-    const [model, exporter, ambiente, tipos, vocab, areas] = await Promise.all([
-      mod('model.js'), mod('exporter.js'), mod('ambiente.js'), mod('tipos.js'), mod('vocab.js'), mod('areas.js'),
+    const [model, exporter, ambiente, tipos, vocab, areas, busca] = await Promise.all([
+      mod('model.js'), mod('exporter.js'), mod('ambiente.js'), mod('tipos.js'), mod('vocab.js'), mod('areas.js'), mod('sistemas-busca.js'),
     ]);
-    nucleo = { model, exporter, ambiente, tipos, vocab, areas };
+    nucleo = { model, exporter, ambiente, tipos, vocab, areas, busca };
   } catch (e) {
     erroNucleo = e.message || String(e);
     console.error('[mcp] núcleo js/core indisponível:', erroNucleo);
@@ -687,6 +687,26 @@ export const FERRAMENTAS = [
     }),
   },
   {
+    name: 'conferir_sistemas', title: 'Conferir os sistemas construtivos mantidos pela construtora',
+    description: 'Etapa 1 da assessoria: cruza a lista de sistemas construtivos que a construtora manteve na plataforma com as evidências no texto indexado dos documentos. Para cada sistema da lista mestra do lado do manual devolve se está na lista, quantas ocorrências dos termos do sistema há nos documentos e até 3 trechos (documento, página, trecho). Resume os candidatos a MANTIDO INCORRETAMENTE (na lista, sem evidência) e a EXCLUÍDO INCORRETAMENTE (fora da lista, com evidência). Evidência textual não prova existência: é a lista de candidatos com fonte, para decidir com os documentos abertos.',
+    inputSchema: obj({
+      empreendimentoId: ID_EMP,
+      manual: str('proprietario | condominio | comercial | infraestrutura (define o lado da lista mestra: privativa ou comum)'),
+      lista: { type: 'array', items: { type: 'string' }, description: 'os sistemas que a construtora manteve, um nome por item (grafia da plataforma; nomes aproximados são resolvidos quando únicos)' },
+      maxTrechos: num('trechos por sistema (padrão 3)'),
+    }, ['empreendimentoId', 'manual', 'lista']),
+    annotations: leitura,
+    executar: (a, ctx) => comProjeto(ctx, a.empreendimentoId, emp => {
+      const LADOS = { proprietario: 'privativa', comercial: 'privativa', condominio: 'comum', infraestrutura: 'comum' };
+      const lado = LADOS[semAcento(a.manual)];
+      if (!lado) throw new Error('manual deve ser proprietario, comercial, condominio ou infraestrutura');
+      if (!Array.isArray(a.lista) || !a.lista.length) throw new Error('lista vazia: envie os sistemas que a construtora manteve');
+      if (a.lista.length > ctx.nucleo.busca.LIMITE_LISTA) throw new Error(`lista com ${a.lista.length} itens; o máximo é ${ctx.nucleo.busca.LIMITE_LISTA}`);
+      const r = ctx.nucleo.busca.conferirSistemas(emp, { lado, lista: a.lista, maxTrechos: Math.max(1, Math.min(10, Number(a.maxTrechos) || 3)) });
+      return { manual: a.manual, ...r };
+    }),
+  },
+  {
     name: 'listar_sistemas', title: 'Lista mestra de sistemas construtivos',
     description: 'Os sistemas construtivos oficiais (coluna Sistema Construtivo), com filtro por texto. Só esses nomes são aceitos.',
     inputSchema: obj({ texto: str('filtro (opcional)'), lado: str('comum | privativa (opcional)') }), annotations: leitura,
@@ -712,7 +732,7 @@ export function definicoes() {
 
 const INSTRUCOES = `Você está ligado ao Prancharia, o sistema da Predialize que lê pranchas e memoriais e monta a Planilha de Produtos e Fornecedores (abas MC = áreas comuns/Manual do Condomínio, MP = unidades/Manual do Proprietário, uma aba por tipologia nomeada pelas unidades).
 Modelo: empreendimento → documentos (pranchas, memoriais, cadernos) → locais (ambientes; areaComum=true vai para a MC) → especificações (categoria, produto, sistema construtivo da lista mestra, descrição, marca), cada uma com evidências (documento, página, trecho).
-Regras: nada entra sem respaldo — ao criar ou alterar, cite a fonte (documento, página, trecho literal) ou justifique. O nome do local segue o projeto, nunca o memorial. Antes de afirmar o que um documento diz, use buscar_nos_documentos ou ler_documento. Pendência = linha com status "revisar", "conflito" ou confiança baixa; na planilha, célula amarela é pergunta para a construtora e rosa é decisão do time. Exclusões exigem confirmar=true e devem ser pedidas pela pessoa. Responda em português do Brasil. Comece por listar_empreendimentos para achar o id.`;
+Regras: nada entra sem respaldo — ao criar ou alterar, cite a fonte (documento, página, trecho literal) ou justifique. O nome do local segue o projeto, nunca o memorial. Antes de afirmar o que um documento diz, use buscar_nos_documentos ou ler_documento. Para a etapa 1 da assessoria (lista de sistemas mantidos pela construtora), use conferir_sistemas: ela devolve os candidatos com a evidência. Pendência = linha com status "revisar", "conflito" ou confiança baixa; na planilha, célula amarela é pergunta para a construtora e rosa é decisão do time. Exclusões exigem confirmar=true e devem ser pedidas pela pessoa. Responda em português do Brasil. Comece por listar_empreendimentos para achar o id.`;
 
 /* ------------------------------------------------------------------ */
 /* o protocolo                                                          */
